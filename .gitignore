@@ -1,0 +1,29 @@
+# Reference projects and local research material
+references/
+
+# Dependencies
+node_modules/
+vendor/
+
+# Build outputs
+dist/
+build/
+.next/
+.nuxt/
+coverage/
+
+# Runtime and logs
+runtime/
+storage/
+logs/
+*.log
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS and editor
+.DS_Store
+.idea/
+.vscode/
