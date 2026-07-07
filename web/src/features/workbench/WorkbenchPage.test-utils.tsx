@@ -2,9 +2,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
 import { Toaster } from "sonner";
 import { vi } from "vitest";
-import { WorkbenchPage } from "./WorkbenchPage";
+import { WorkbenchPage, type WorkbenchPageProps } from "./WorkbenchPage";
 
-export function renderWorkbenchPage() {
+export function renderWorkbenchPage(props: WorkbenchPageProps = {}) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -12,12 +12,23 @@ export function renderWorkbenchPage() {
     },
   });
 
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <WorkbenchPage />
-      <Toaster richColors position="top-right" />
-    </QueryClientProvider>,
-  );
+  function WorkbenchPageHarness(harnessProps: WorkbenchPageProps) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <WorkbenchPage {...harnessProps} />
+        <Toaster richColors position="top-right" />
+      </QueryClientProvider>
+    );
+  }
+
+  const result = render(<WorkbenchPageHarness {...props} />);
+
+  return {
+    ...result,
+    rerenderWorkbenchPage(nextProps: WorkbenchPageProps = {}) {
+      result.rerender(<WorkbenchPageHarness {...nextProps} />);
+    },
+  };
 }
 
 export function messageFixture(id: string, messageId: string, text: string, sentAt: string) {

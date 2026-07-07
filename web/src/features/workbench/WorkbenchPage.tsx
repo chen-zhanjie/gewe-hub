@@ -33,14 +33,22 @@ import {
   type MessageItem,
 } from "@/lib/workspace-data";
 
-interface WorkbenchPageProps {
+export interface WorkbenchPageProps {
   initialConversationId?: string;
+  initialAccountId?: string;
+  onAccountChange?: (accountId: string) => void;
   onOpenDeliveryLog?: (messageId: string) => void;
 }
 
-export function WorkbenchPage({ initialConversationId, onOpenDeliveryLog }: WorkbenchPageProps = {}) {
+export function WorkbenchPage({
+  initialConversationId,
+  initialAccountId,
+  onAccountChange,
+  onOpenDeliveryLog,
+}: WorkbenchPageProps = {}) {
   const initialConversationIdRef = useRef(initialConversationId);
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(() => readInitialAccountId());
+  const initialAccountIdRef = useRef(initialAccountId);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(initialAccountId ?? null);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(initialConversationId ?? null);
   const [debugMessageId, setDebugMessageId] = useState<string | null>(null);
   const [managementConversationId, setManagementConversationId] = useState<string | null>(null);
@@ -150,6 +158,15 @@ export function WorkbenchPage({ initialConversationId, onOpenDeliveryLog }: Work
     refreshMessages,
     sendText: sendWorkbenchText,
   });
+
+  useEffect(() => {
+    if (initialAccountId === initialAccountIdRef.current) return;
+    initialAccountIdRef.current = initialAccountId;
+    setSelectedAccountId(initialAccountId ?? null);
+    setSelectedConversationId(null);
+    messageState.clearSelectedMessage();
+  }, [initialAccountId, messageState.clearSelectedMessage]);
+
   const composer = useWorkbenchComposerController({
     selectedConversation,
     refreshMessages,
@@ -186,7 +203,7 @@ export function WorkbenchPage({ initialConversationId, onOpenDeliveryLog }: Work
     setSelectedAccountId(accountId);
     const nextConversationId = filterConversationsForAccount(managedConversations, accountId)[0]?.id ?? null;
     setSelectedConversationId(nextConversationId);
-    syncAccountIdToUrl(accountId);
+    onAccountChange?.(accountId);
     messageState.clearSelectedMessage();
   }
 
@@ -365,18 +382,6 @@ export function WorkbenchPage({ initialConversationId, onOpenDeliveryLog }: Work
       </div>
     </div>
   );
-}
-
-function readInitialAccountId(): string | null {
-  if (typeof window === "undefined") return null;
-  return new URLSearchParams(window.location.search).get("accountId");
-}
-
-function syncAccountIdToUrl(accountId: string) {
-  if (typeof window === "undefined") return;
-  const url = new URL(window.location.href);
-  url.searchParams.set("accountId", accountId);
-  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 function filterConversationsForAccount(conversations: ConversationSummary[], accountId: AccountSummary["id"] | null) {

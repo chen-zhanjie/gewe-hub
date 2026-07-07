@@ -145,6 +145,15 @@ function WorkbenchPageRoute() {
   return (
     <WorkbenchPage
       initialConversationId={typeof search.conversationId === "string" ? search.conversationId : undefined}
+      initialAccountId={typeof search.accountId === "string" ? search.accountId : undefined}
+      onAccountChange={(accountId) => {
+        void navigate({
+          search: {
+            accountId,
+            conversationId: undefined,
+          },
+        });
+      }}
       onOpenDeliveryLog={(messageId) => {
         void navigate({
           to: pageRoutes.deliveries,

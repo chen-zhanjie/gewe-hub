@@ -42,6 +42,14 @@ export function useWorkbenchConversationActions({
     });
   }
 
+  function clearOverlay(conversationId: string) {
+    setOverlays((current) => {
+      if (!current[conversationId]) return current;
+      const { [conversationId]: _removed, ...next } = current;
+      return next;
+    });
+  }
+
   async function togglePinned(conversation: ConversationSummary) {
     const pinned = !conversation.raw.pinnedAt;
     setOverlays((current) => ({
@@ -57,6 +65,8 @@ export function useWorkbenchConversationActions({
     } catch {
       await refreshWorkspace();
       toast.error("更新置顶状态失败");
+    } finally {
+      clearOverlay(conversation.id);
     }
   }
 
@@ -73,6 +83,8 @@ export function useWorkbenchConversationActions({
     } catch {
       await refreshWorkspace();
       toast.error("隐藏会话失败");
+    } finally {
+      clearOverlay(conversation.id);
     }
   }
 

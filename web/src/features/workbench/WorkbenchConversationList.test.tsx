@@ -58,7 +58,14 @@ describe("WorkbenchPage conversation list", () => {
       ],
     });
 
-    renderWorkbenchPage();
+    renderWorkbenchPage({
+      initialAccountId: "acc_2",
+      onAccountChange: (accountId) => {
+        const url = new URL(window.location.href);
+        url.searchParams.set("accountId", accountId);
+        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      },
+    });
 
     const conversationList = screen.getByLabelText("会话列表");
     expect(await within(conversationList).findByText("售后号")).toBeInTheDocument();
@@ -82,6 +89,72 @@ describe("WorkbenchPage conversation list", () => {
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/conversations/conv_alpha/messages?take=50",
+        expect.objectContaining({ credentials: "include" }),
+      ),
+    );
+  });
+
+  it("账号参数由路由层传入并可在运行中切换", async () => {
+    const fetchMock = mockFetch({
+      "/api/accounts": [
+        {
+          id: "acc_1",
+          wxid: "wxid_alpha_bot",
+          nickname: "客服一号",
+          platformRemark: "销售号",
+          onlineStatus: "online",
+        },
+        {
+          id: "acc_2",
+          wxid: "wxid_beta_bot",
+          nickname: "客服二号",
+          platformRemark: "售后号",
+          onlineStatus: "offline",
+        },
+      ],
+      "/api/conversations": [
+        {
+          id: "conv_alpha",
+          accountId: "acc_1",
+          peerWxid: "wxid_alpha_customer",
+          type: "private",
+          platformRemark: "Alpha 客户",
+          lastMessageText: "Alpha 最近消息",
+          lastMessageAt: "2026-07-06T07:16:37.000Z",
+          status: "active",
+        },
+        {
+          id: "conv_beta",
+          accountId: "acc_2",
+          peerWxid: "wxid_beta_customer",
+          type: "private",
+          platformRemark: "Beta 客户",
+          lastMessageText: "Beta 最近消息",
+          lastMessageAt: "2026-07-06T07:18:37.000Z",
+          status: "active",
+        },
+      ],
+      "/api/conversations/conv_beta/messages?take=50": [
+        messageFixture("row_beta", "msg_beta", "Beta 消息", "2026-07-06T07:18:37.000Z"),
+      ],
+      "/api/conversations/conv_alpha/messages?take=50": [
+        messageFixture("row_alpha", "msg_alpha", "Alpha 消息", "2026-07-06T07:16:37.000Z"),
+      ],
+    });
+
+    const { rerenderWorkbenchPage } = renderWorkbenchPage({ initialAccountId: "acc_1" });
+
+    const conversationList = screen.getByLabelText("会话列表");
+    expect(await within(conversationList).findByText("Alpha 客户")).toBeInTheDocument();
+    expect(within(conversationList).queryByText("Beta 客户")).not.toBeInTheDocument();
+
+    rerenderWorkbenchPage({ initialAccountId: "acc_2" });
+
+    expect(await within(conversationList).findByText("Beta 客户")).toBeInTheDocument();
+    expect(within(conversationList).queryByText("Alpha 客户")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/conversations/conv_beta/messages?take=50",
         expect.objectContaining({ credentials: "include" }),
       ),
     );
@@ -255,6 +328,62 @@ describe("WorkbenchPage conversation list", () => {
         }),
       ),
     );
+  });
+
+  it("隐藏会话乐观状态在服务端刷新后清理，允许新消息重新显示", async () => {
+    let conversationHidden = false;
+    const fetchMock = mockFetch(conversationActionRoutes());
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input).replace("http://localhost", "");
+      if (path === "/api/conversations/conv_1" && init?.method === "PATCH") {
+        conversationHidden = true;
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (path === "/api/conversations") {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "conv_1",
+              accountId: "acc_1",
+              peerWxid: "wxid_target",
+              type: "private",
+              platformRemark: "陈可乐",
+              lastMessageText: conversationHidden ? "新消息后重新显示" : "待处理消息",
+              lastMessageAt: "2026-07-06T07:16:37.000Z",
+              unreadCount: 3,
+              isHidden: false,
+              status: "active",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify(conversationActionRoutes()[path as keyof ReturnType<typeof conversationActionRoutes>]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderWorkbenchPage();
+
+    const conversationList = screen.getByLabelText("会话列表");
+    const row = await within(conversationList).findByRole("button", { name: "打开会话 陈可乐" });
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "隐藏会话" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/conversations/conv_1",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ hidden: true }),
+        }),
+      ),
+    );
+    expect(await within(conversationList).findByText("新消息后重新显示")).toBeInTheDocument();
   });
 
   it("会话管理抽屉集中展示信息、绑定应用、投递统计和解绑流程", async () => {
