@@ -22,7 +22,7 @@ describe("App", () => {
     expect(screen.queryByRole("heading", { name: "聊天工作台" })).not.toBeInTheDocument();
   });
 
-  it("登录成功后渲染第一版控制台壳层和聊天三栏", async () => {
+  it("登录成功后渲染第一版控制台壳层和聊天主工作区", async () => {
     const fetchMock = mockFetch({
       "/api/auth/me": response(401, { error: { message: "未登录" } }),
       "/api/auth/login": response(200, { ok: true, user: { username: "admin", role: "admin" } }),
@@ -41,7 +41,8 @@ describe("App", () => {
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
     expect(screen.getByLabelText("会话列表")).toBeInTheDocument();
     expect(screen.getByLabelText("消息区")).toBeInTheDocument();
-    expect(screen.getByLabelText("会话详情")).toBeInTheDocument();
+    expect(screen.queryByLabelText("会话详情")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("群成员面板")).not.toBeInTheDocument();
   });
 
   it("可以切换到管理页壳", async () => {
@@ -283,7 +284,10 @@ describe("App", () => {
     const messageRegion = await screen.findByLabelText("消息区");
     expect(await within(messageRegion).findByText("需要看推送日志")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "查看投递状态 failed" }));
-    const dialog = await screen.findByRole("dialog", { name: "消息调试详情" });
+    const dialog = await screen.findByRole("dialog", { name: "消息详情" });
+    const deliveriesTab = within(dialog).getByRole("tab", { name: "投递记录" });
+    fireEvent.keyDown(deliveriesTab, { key: "Enter" });
+    await waitFor(() => expect(deliveriesTab).toHaveAttribute("aria-selected", "true"));
     fireEvent.click(within(dialog).getByRole("link", { name: "在推送日志查看 msg_debug_delivery" }));
 
     await waitFor(() => expect(window.location.pathname).toBe("/deliveries"));

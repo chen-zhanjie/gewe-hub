@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ContactProfileDialog } from "@/features/workbench/ContactProfileDialog";
 import { ConversationList } from "@/features/workbench/ConversationList";
-import { DetailPanel } from "@/features/workbench/DetailPanel";
+import { GroupMembersPanel } from "@/features/workbench/GroupMembersPanel";
 import { MessageComposer } from "@/features/workbench/MessageComposer";
 import { MessageDebugDialog } from "@/features/workbench/MessageDebugDialog";
 import { MessagePanel } from "@/features/workbench/MessagePanel";
@@ -20,11 +21,7 @@ import { useConversationUnreadState } from "@/features/workbench/useConversation
 import { useWorkbenchComposerController } from "@/features/workbench/useWorkbenchComposerController";
 import { useWorkbenchDetailController } from "@/features/workbench/useWorkbenchDetailController";
 import { useWorkbenchMessagesController } from "@/features/workbench/useWorkbenchMessagesController";
-import {
-  readCopyableMessageText,
-  readQueryError,
-  readStandardJsonForCopy,
-} from "@/features/workbench/workbench-helpers";
+import { readQueryError } from "@/features/workbench/workbench-helpers";
 import {
   mapAccountSummary,
   mapConversationSummary,
@@ -52,6 +49,7 @@ export function WorkbenchPage({
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(initialConversationId ?? null);
   const [debugMessageId, setDebugMessageId] = useState<string | null>(null);
   const [managementConversationId, setManagementConversationId] = useState<string | null>(null);
+  const [contactProfileWxid, setContactProfileWxid] = useState<string | null>(null);
   const [eventSourceStatus, setEventSourceStatus] = useState<AdminEventSourceStatusDetail["status"]>("connected");
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const workspaceQuery = useWorkbenchWorkspaceQuery();
@@ -164,8 +162,7 @@ export function WorkbenchPage({
     initialAccountIdRef.current = initialAccountId;
     setSelectedAccountId(initialAccountId ?? null);
     setSelectedConversationId(null);
-    messageState.clearSelectedMessage();
-  }, [initialAccountId, messageState.clearSelectedMessage]);
+  }, [initialAccountId]);
 
   const composer = useWorkbenchComposerController({
     selectedConversation,
@@ -195,7 +192,6 @@ export function WorkbenchPage({
     const conversation = managedConversations.find((item) => item.id === conversationId);
     if (conversation) void conversationActions.markRead(conversation);
     setSelectedConversationId(conversationId);
-    messageState.clearSelectedMessage();
   }
 
   function selectAccount(accountId: string) {
@@ -204,16 +200,14 @@ export function WorkbenchPage({
     const nextConversationId = filterConversationsForAccount(managedConversations, accountId)[0]?.id ?? null;
     setSelectedConversationId(nextConversationId);
     onAccountChange?.(accountId);
-    messageState.clearSelectedMessage();
   }
 
   function showMessageDetail(message: MessageItem) {
-    messageState.showMessageDetail(message);
     setDebugMessageId(message.id);
   }
 
-  async function copyToClipboard(value: string) {
-    await navigator.clipboard?.writeText(value);
+  function openContactProfile(wxid: string) {
+    setContactProfileWxid(wxid);
   }
 
   return (
@@ -253,7 +247,6 @@ export function WorkbenchPage({
           selectedConversation={selectedConversation}
           messages={messageState.messages}
           visibleMessages={messageState.visibleMessages}
-          selectedMessageId={messageState.selectedMessageId}
           newMessageCount={messageState.newMessageCount}
           attachmentDragActive={composer.attachmentDragActive}
           hasMoreHistory={messageState.hasMoreHistory}
@@ -269,15 +262,8 @@ export function WorkbenchPage({
           onLoadOlderMessages={() => {
             void messageState.handleLoadOlderMessages();
           }}
-          onSelectMessage={messageState.setSelectedMessageId}
-          onMessageContextMenu={messageState.openMessageContextMenu}
           onShowMessageDetail={showMessageDetail}
-          onCopyMessageText={(message) => {
-            void copyToClipboard(readCopyableMessageText(message));
-          }}
-          onCopyMessageJson={(message) => {
-            void copyToClipboard(JSON.stringify(readStandardJsonForCopy(message), null, 2));
-          }}
+          onOpenContactProfile={openContactProfile}
           onRetryLocalSend={messageState.retryLocalTextSend}
           onDeleteLocalSend={messageState.deleteLocalTextSend}
         >
@@ -317,45 +303,22 @@ export function WorkbenchPage({
           />
         </MessagePanel>
 
-        <DetailPanel
-          detailSections={detail.detailSections}
-          selectedConversation={selectedConversation}
-          selectedMessage={messageState.selectedMessage}
-          apps={detail.apps}
-          bindingDraft={detail.bindingDraft}
-          bindingSaving={detail.bindingSaving}
-          bindingError={detail.bindingError}
-          conversationRemarkDraft={detail.conversationRemarkDraft}
-          remarkSaving={detail.remarkSaving}
-          remarkError={detail.remarkError}
-          confirmingUnbind={detail.confirmingUnbind}
-          groupMembersData={detail.groupMembersQuery.data}
-          groupMembersLoading={detail.groupMembersQuery.isLoading}
-          groupMembersError={detail.groupMembersError}
+        <GroupMembersPanel
+          conversation={selectedConversation}
+          data={detail.groupMembersQuery.data}
+          loading={detail.groupMembersQuery.isLoading}
+          error={detail.groupMembersError}
           savingMemberId={detail.savingMemberId}
-          loadingMoreMembers={detail.loadingMoreMembers}
-          searchingMembers={detail.searchingMembers}
-          onToggleSection={detail.toggleDetailSection}
-          onBindingDraftChange={detail.setBindingDraft}
-          onRemarkChange={detail.setConversationRemarkDraft}
-          onSaveRemark={detail.handleSaveConversationRemark}
-          onSaveBinding={() => {
-            void detail.handleSaveBinding();
-          }}
-          onUnbind={detail.requestUnbindConversation}
-          onConfirmUnbind={() => {
-            void detail.confirmUnbindConversation();
-          }}
-          onCancelUnbind={() => {
-            detail.setConfirmingUnbind(false);
-          }}
-          onSaveMemberRemark={(memberId, remark) => {
+          loadingMore={detail.loadingMoreMembers}
+          searching={detail.searchingMembers}
+          onOpenContact={openContactProfile}
+          onSaveRemark={(memberId, remark) => {
             void detail.handleSaveGroupMemberRemark(memberId, remark);
           }}
-          onLoadMoreMembers={() => {
+          onLoadMore={() => {
             void detail.handleLoadMoreGroupMembers();
           }}
-          onSearchMembers={(search) => {
+          onSearch={(search) => {
             void detail.handleSearchGroupMembers(search);
           }}
         />
@@ -368,8 +331,18 @@ export function WorkbenchPage({
             if (!open) setDebugMessageId(null);
           }}
           onSelectMessage={(message) => {
-            messageState.showMessageDetail(message);
             setDebugMessageId(message.id);
+          }}
+        />
+        <ContactProfileDialog
+          accountId={selectedAccount?.id}
+          wxid={contactProfileWxid}
+          open={Boolean(contactProfileWxid)}
+          onOpenChange={(open) => {
+            if (!open) setContactProfileWxid(null);
+          }}
+          onOpenConversation={(conversationId) => {
+            selectConversation(conversationId);
           }}
         />
         <WorkbenchConversationOverlays

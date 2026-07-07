@@ -2,12 +2,13 @@ import { ArrowDown, ArrowUp, ExternalLink, FileText } from "lucide-react";
 import type { ReactNode } from "react";
 import { CopyButton } from "@/components/ui/CopyButton";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/Dialog";
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/Sheet";
 import { JsonViewer } from "@/components/ui/JsonViewer";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
@@ -37,13 +38,13 @@ export function MessageDebugDialog({
   const nextMessage = currentIndex >= 0 && currentIndex < messages.length - 1 ? messages[currentIndex + 1] : null;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl p-0">
-        <DialogHeader className="border-b px-6 py-4 pr-14">
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-[560px] p-0">
+        <SheetHeader className="pr-14">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <DialogTitle>消息调试详情</DialogTitle>
-              <DialogDescription>{message.messageId}</DialogDescription>
+              <SheetTitle>消息详情</SheetTitle>
+              <SheetDescription>{message.messageId}</SheetDescription>
             </div>
             {onSelectMessage && messages.length > 1 ? (
               <div className="flex shrink-0 items-center gap-2">
@@ -79,21 +80,13 @@ export function MessageDebugDialog({
             <CopyButton value={JSON.stringify(message.rawPayload, null, 2)} label="复制原始 payload" />
             <CopyButton value={JSON.stringify(message.deliveries, null, 2)} label="复制投递记录" />
           </div>
-        </DialogHeader>
-        <div className="min-h-0 overflow-y-auto px-6 pb-6">
+        </SheetHeader>
+        <SheetBody>
           <MessageDebugContent message={message} onOpenDeliveryLog={onOpenDeliveryLog} />
-        </div>
-      </DialogContent>
-    </Dialog>
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
   );
-}
-
-export function DebugPanel({ message }: { message: MessageItem | null }) {
-  if (!message) {
-    return <div className="text-sm text-muted-foreground">请选择消息查看调试信息</div>;
-  }
-
-  return <MessageDebugContent message={message} />;
 }
 
 function MessageDebugContent({
@@ -107,7 +100,7 @@ function MessageDebugContent({
   const deliveryLogHref = `/deliveries?status=failed&messageId=${encodeURIComponent(message.messageId)}`;
 
   return (
-    <Tabs defaultValue="deliveries" className="pt-4">
+    <Tabs defaultValue="basic">
       <TabsList>
         <TabsTrigger value="basic">概览</TabsTrigger>
         <TabsTrigger value="standard">标准 JSON</TabsTrigger>
@@ -122,6 +115,7 @@ function MessageDebugContent({
             <InfoRow label="发送者 wxid" value={message.senderProfile.wxid} />
             <InfoRow label="状态" value={message.status} />
             <InfoRow label="时间" value={<TimeText value={message.sentAtIso} />} />
+            <InfoRow label="投递记录" value={readDeliveryLabel(message.deliveries) ?? "暂无投递记录"} />
           </dl>
         </section>
       </TabsContent>

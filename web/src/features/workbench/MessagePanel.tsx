@@ -1,6 +1,6 @@
 import { observeElementRect, type Rect, type Virtualizer, useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, PanelRightClose } from "lucide-react";
-import type { DragEvent, MouseEvent, ReactNode, RefObject } from "react";
+import { ArrowDown } from "lucide-react";
+import type { DragEvent, ReactNode, RefObject } from "react";
 import { DateSeparator, MessageBubble } from "@/features/workbench/MessageFlow";
 import { buildMessageTimeline, type MessageTimelineItem } from "@/features/workbench/message-timeline";
 import type { ConversationSummary, MessageItem } from "@/lib/workspace-data";
@@ -9,7 +9,6 @@ interface MessagePanelProps {
   selectedConversation: ConversationSummary | undefined;
   messages: MessageItem[];
   visibleMessages: MessageItem[];
-  selectedMessageId: string | null;
   newMessageCount: number;
   attachmentDragActive: boolean;
   hasMoreHistory: boolean;
@@ -23,11 +22,8 @@ interface MessagePanelProps {
   onMessageListScroll: () => void;
   onJumpToNewMessages: () => void;
   onLoadOlderMessages: () => void;
-  onSelectMessage: (messageId: string) => void;
-  onMessageContextMenu: (event: MouseEvent, message: MessageItem) => void;
   onShowMessageDetail: (message: MessageItem) => void;
-  onCopyMessageText: (message: MessageItem) => void;
-  onCopyMessageJson: (message: MessageItem) => void;
+  onOpenContactProfile: (wxid: string) => void;
   onRetryLocalSend: (message: MessageItem) => void;
   onDeleteLocalSend: (message: MessageItem) => void;
   children: ReactNode;
@@ -37,7 +33,6 @@ export function MessagePanel({
   selectedConversation,
   messages,
   visibleMessages,
-  selectedMessageId,
   newMessageCount,
   attachmentDragActive,
   hasMoreHistory,
@@ -51,11 +46,8 @@ export function MessagePanel({
   onMessageListScroll,
   onJumpToNewMessages,
   onLoadOlderMessages,
-  onSelectMessage,
-  onMessageContextMenu,
   onShowMessageDetail,
-  onCopyMessageText,
-  onCopyMessageJson,
+  onOpenContactProfile,
   onRetryLocalSend,
   onDeleteLocalSend,
   children,
@@ -91,9 +83,6 @@ export function MessagePanel({
             {selectedConversation?.appName ? `已绑定 ${selectedConversation.appName}` : "未绑定应用"}
           </p>
         </div>
-        <button type="button" title="收起详情" className="rounded-md border bg-background p-2 text-muted-foreground">
-          <PanelRightClose className="size-4" />
-        </button>
       </div>
       <div ref={messageListRef} onScroll={onMessageListScroll} className="min-h-0 flex-1 overflow-y-auto p-6">
         {messages.length > 0 && hasMoreHistory ? (
@@ -132,12 +121,8 @@ export function MessagePanel({
                     <MessageBubble
                       message={item.message}
                       startsGroup={item.startsGroup}
-                      selected={item.message.id === selectedMessageId}
-                      onSelect={onSelectMessage}
-                      onContextMenu={onMessageContextMenu}
                       onShowDetail={onShowMessageDetail}
-                      onCopyText={onCopyMessageText}
-                      onCopyJson={onCopyMessageJson}
+                      onOpenContact={onOpenContactProfile}
                       onRetryLocalSend={onRetryLocalSend}
                       onDeleteLocalSend={onDeleteLocalSend}
                     />
@@ -184,7 +169,7 @@ const observeMessageListRect = observeElementRectWithFallback({ width: 720, heig
 function estimateMessageTimelineItemSize(item: MessageTimelineItem | undefined): number {
   if (!item) return 96;
   if (item.type === "date") return 40;
-  if (item.message.status === "revoked" || item.message.content.type === "system") return 48;
+  if (item.message.content.type === "system") return 48;
   if (["image", "video"].includes(item.message.content.type)) return 220;
   if (["file", "link", "mini_program", "chat_record", "quote", "card", "location", "transfer", "red_packet"].includes(item.message.content.type)) {
     return 120;

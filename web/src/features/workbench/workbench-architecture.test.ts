@@ -133,12 +133,18 @@ describe("Workbench 前端架构", () => {
     expect(source).not.toContain('from "@/features/workbench/useVoiceRecorder"');
   });
 
-  it("右侧会话详情面板拆出独立模块，WorkbenchPage 不再承载详情区渲染", () => {
+  it("旧右侧会话详情面板已删除，群成员面板和会话管理抽屉承接新详情入口", () => {
     const source = readFileSync(resolve(__dirname, "WorkbenchPage.tsx"), "utf8");
     const detailPanelPath = resolve(__dirname, "DetailPanel.tsx");
+    const groupMembersPanelPath = resolve(__dirname, "GroupMembersPanel.tsx");
+    const conversationManagementSheetPath = resolve(__dirname, "ConversationManagementSheet.tsx");
 
-    expect(existsSync(detailPanelPath)).toBe(true);
-    expect(source).toContain('from "@/features/workbench/DetailPanel"');
+    expect(existsSync(detailPanelPath)).toBe(false);
+    expect(existsSync(groupMembersPanelPath)).toBe(true);
+    expect(existsSync(conversationManagementSheetPath)).toBe(true);
+    expect(source).not.toContain('from "@/features/workbench/DetailPanel"');
+    expect(source).toContain('from "@/features/workbench/GroupMembersPanel"');
+    expect(source).toContain('from "@/features/workbench/WorkbenchConversationOverlays"');
     expect(source).not.toContain("function DetailSection(");
     expect(source).not.toContain("function ConversationBindingPanel(");
     expect(source).not.toContain("function MemberList(");

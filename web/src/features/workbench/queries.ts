@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { ContactProfileResponse } from "@gewehub/contracts";
 import { useEffect, useRef } from "react";
 import { apiFetch } from "@/lib/api";
 import type { BackendAccount, BackendConversation, BackendMessage, ConversationSummary } from "@/lib/workspace-data";
@@ -131,6 +132,7 @@ export const workbenchQueryKeys = {
   conversations: ["workbench", "conversations"] as const,
   messages: (conversationId: string) => ["workbench", "messages", conversationId] as const,
   groupMembers: (conversationId: string) => ["workbench", "group-members", conversationId] as const,
+  contactProfile: (accountId: string, wxid: string) => ["workbench", "contact-profile", accountId, wxid] as const,
 };
 
 export async function fetchWorkbenchWorkspace(): Promise<WorkbenchWorkspaceData> {
@@ -183,6 +185,11 @@ export async function fetchWorkbenchGroupMemberPage(
   const query = options.q?.trim();
   if (query) params.set("q", query);
   return apiFetch<WorkbenchGroupMembersPage>(`/api/groups/${groupId}/members?${params.toString()}`);
+}
+
+export async function fetchWorkbenchContactProfile(accountId: string, wxid: string): Promise<ContactProfileResponse> {
+  const params = new URLSearchParams({ accountId });
+  return apiFetch<ContactProfileResponse>(`/api/contacts/${encodeURIComponent(wxid)}/profile?${params.toString()}`);
 }
 
 export async function sendWorkbenchText(conversationId: string, text: string): Promise<WorkbenchSendResponse> {
@@ -267,6 +274,18 @@ export function useWorkbenchGroupMembersQuery(conversation: ConversationSummary 
       return fetchWorkbenchGroupMembers(conversation);
     },
     enabled: Boolean(conversation) && enabled,
+    staleTime: WORKBENCH_ENTITY_STALE_TIME_MS,
+  });
+}
+
+export function useWorkbenchContactProfileQuery(accountId: string | null | undefined, wxid: string | null | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: accountId && wxid ? workbenchQueryKeys.contactProfile(accountId, wxid) : ["workbench", "contact-profile", "none"],
+    queryFn: () => {
+      if (!accountId || !wxid) throw new Error("联系人详情缺少账号或 wxid");
+      return fetchWorkbenchContactProfile(accountId, wxid);
+    },
+    enabled: Boolean(accountId && wxid && enabled),
     staleTime: WORKBENCH_ENTITY_STALE_TIME_MS,
   });
 }

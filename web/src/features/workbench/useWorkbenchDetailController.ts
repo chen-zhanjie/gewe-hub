@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import type { BindingDraft, DetailSectionId, DetailSectionState } from "@/features/workbench/DetailPanel";
 import {
   bindWorkbenchConversation,
   unbindWorkbenchConversation,
@@ -10,6 +9,7 @@ import {
   type HubAppSummary,
   type WorkbenchGroupMembersData,
 } from "@/features/workbench/queries";
+import type { BindingDraft } from "@/features/workbench/workbench-detail-types";
 import {
   asBackendConversation,
   formatNullableNumber,
@@ -17,15 +17,6 @@ import {
   readQueryError,
 } from "@/features/workbench/workbench-helpers";
 import type { BackendMessage, ConversationSummary } from "@/lib/workspace-data";
-
-const detailSectionsStorageKey = "gewehub.workbench.detailSections";
-
-const defaultDetailSections: DetailSectionState = {
-  info: true,
-  binding: true,
-  members: true,
-  debug: true,
-};
 
 interface WorkbenchDetailControllerOptions {
   selectedConversation?: ConversationSummary;
@@ -44,7 +35,6 @@ export function useWorkbenchDetailController({
   searchGroupMembers,
   loadMoreGroupMembers,
 }: WorkbenchDetailControllerOptions) {
-  const [detailSections, setDetailSections] = useState<DetailSectionState>(() => readStoredDetailSections());
   const [bindingSaving, setBindingSaving] = useState(false);
   const [remarkSaving, setRemarkSaving] = useState(false);
   const [bindingError, setBindingError] = useState<string | null>(null);
@@ -61,7 +51,7 @@ export function useWorkbenchDetailController({
     debounceMs: "",
     maxWaitMs: "",
   });
-  const groupMembersQuery = useWorkbenchGroupMembersQuery(selectedConversation, detailSections.members);
+  const groupMembersQuery = useWorkbenchGroupMembersQuery(selectedConversation, selectedConversation?.type === "group");
 
   useEffect(() => {
     const raw = asBackendConversation(selectedConversation?.raw);
@@ -80,14 +70,6 @@ export function useWorkbenchDetailController({
     setLoadingMoreMembers(false);
     setSearchingMembers(false);
   }, [selectedConversation?.id, selectedConversation?.raw]);
-
-  function toggleDetailSection(sectionId: DetailSectionId) {
-    setDetailSections((current) => {
-      const next = { ...current, [sectionId]: !current[sectionId] };
-      persistDetailSections(next);
-      return next;
-    });
-  }
 
   async function handleSaveBinding() {
     if (!selectedConversation || !bindingDraft.appId || bindingSaving) return;
@@ -189,7 +171,6 @@ export function useWorkbenchDetailController({
   }
 
   return {
-    detailSections,
     apps,
     bindingDraft,
     setBindingDraft,
@@ -206,7 +187,6 @@ export function useWorkbenchDetailController({
     loadingMoreMembers,
     searchingMembers,
     groupMembersError: readQueryError(groupMembersQuery.error) ?? memberError,
-    toggleDetailSection,
     handleSaveConversationRemark,
     handleSaveBinding,
     requestUnbindConversation,
@@ -215,32 +195,4 @@ export function useWorkbenchDetailController({
     handleLoadMoreGroupMembers,
     handleSearchGroupMembers,
   };
-}
-
-function readStoredDetailSections(): DetailSectionState {
-  if (typeof window === "undefined") return defaultDetailSections;
-  try {
-    const storage = window.localStorage;
-    const raw = storage.getItem(detailSectionsStorageKey);
-    if (!raw) return defaultDetailSections;
-    const parsed = JSON.parse(raw) as Partial<Record<DetailSectionId, unknown>>;
-    return {
-      ...defaultDetailSections,
-      info: typeof parsed.info === "boolean" ? parsed.info : defaultDetailSections.info,
-      binding: typeof parsed.binding === "boolean" ? parsed.binding : defaultDetailSections.binding,
-      members: typeof parsed.members === "boolean" ? parsed.members : defaultDetailSections.members,
-      debug: typeof parsed.debug === "boolean" ? parsed.debug : defaultDetailSections.debug,
-    };
-  } catch {
-    return defaultDetailSections;
-  }
-}
-
-function persistDetailSections(sections: DetailSectionState) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(detailSectionsStorageKey, JSON.stringify(sections));
-  } catch {
-    // Ignore storage failures so the workbench remains usable in restricted browsers.
-  }
 }

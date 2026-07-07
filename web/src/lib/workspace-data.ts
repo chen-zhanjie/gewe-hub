@@ -45,6 +45,7 @@ export interface MessageItem {
   sentAt: string;
   sentAtIso: string;
   status: "normal" | "revoked";
+  revokedAtIso?: string | null;
   content: MessageNode;
   standardJson: unknown;
   rawPayload: unknown;
@@ -156,10 +157,8 @@ export function mapMessageItem(message: BackendMessage): MessageItem {
     sentAt: formatShortTime(message.sentAt),
     sentAtIso: formatIsoTime(message.sentAt),
     status: message.status,
-    content:
-      message.status === "revoked"
-        ? { type: "system", text: "[已撤回]" }
-        : content,
+    revokedAtIso: asString(payload?.revokedAt) ?? null,
+    content,
     standardJson: message.payload,
     rawPayload: message.webhookEvent?.rawPayload ?? null,
     deliveries: message.deliveries ?? [],

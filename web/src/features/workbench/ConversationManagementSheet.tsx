@@ -10,8 +10,8 @@ import {
 } from "@/components/ui/AlertDialog";
 import { Avatar } from "@/components/ui/Avatar";
 import { DetailSheet } from "@/components/ui/DetailSheet";
-import type { BindingDraft } from "@/features/workbench/DetailPanel";
 import type { HubAppSummary } from "@/features/workbench/queries";
+import type { BindingDraft } from "@/features/workbench/workbench-detail-types";
 import type { AccountSummary, ConversationSummary } from "@/lib/workspace-data";
 import type { ReactNode } from "react";
 

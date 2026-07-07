@@ -1,5 +1,5 @@
 import type { QueryObserverResult } from "@tanstack/react-query";
-import type { MouseEvent, RefObject } from "react";
+import type { RefObject } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type WorkbenchRealtimeMessageDetail,
@@ -41,7 +41,6 @@ export function useWorkbenchMessagesController({
   refreshMessages,
   sendText,
 }: WorkbenchMessagesControllerOptions) {
-  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [localTextSends, setLocalTextSends] = useState<LocalTextSend[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -53,11 +52,6 @@ export function useWorkbenchMessagesController({
   const visibleMessages = useMemo(
     () => buildVisibleMessages(messages, localTextSends, effectiveConversationId, account),
     [account, effectiveConversationId, localTextSends, messages],
-  );
-
-  const selectedMessage = useMemo(
-    () => visibleMessages.find((message) => message.id === selectedMessageId) ?? visibleMessages[0] ?? null,
-    [selectedMessageId, visibleMessages],
   );
 
   useEffect(() => {
@@ -102,14 +96,6 @@ export function useWorkbenchMessagesController({
       currentSends.filter((send) => !send.sendRequestId || !serverSendRequestIds.has(send.sendRequestId)),
     );
   }, [messages]);
-
-  useEffect(() => {
-    if (!effectiveConversationId) {
-      setSelectedMessageId(null);
-      return;
-    }
-    setSelectedMessageId((current) => current ?? visibleMessages.at(-1)?.id ?? visibleMessages[0]?.id ?? null);
-  }, [effectiveConversationId, visibleMessages]);
 
   async function handleLoadOlderMessages() {
     const oldestMessageId = messages[0]?.messageId;
@@ -200,18 +186,6 @@ export function useWorkbenchMessagesController({
     setLocalTextSends((currentSends) => currentSends.filter((send) => send.id !== message.id));
   }
 
-  function openMessageContextMenu(_event: MouseEvent, message: MessageItem) {
-    setSelectedMessageId(message.id);
-  }
-
-  function showMessageDetail(message: MessageItem) {
-    setSelectedMessageId(message.id);
-  }
-
-  function clearSelectedMessage() {
-    setSelectedMessageId(null);
-  }
-
   function scrollMessageListToBottom() {
     const list = messageListRef.current;
     if (!list) return;
@@ -228,18 +202,12 @@ export function useWorkbenchMessagesController({
   return {
     messages,
     visibleMessages,
-    selectedMessage,
-    selectedMessageId,
     newMessageCount,
     loadingHistory,
     hasMoreHistory,
     historyError,
-    setSelectedMessageId,
-    clearSelectedMessage,
     handleLoadOlderMessages,
     handleSendText,
-    openMessageContextMenu,
-    showMessageDetail,
     retryLocalTextSend,
     deleteLocalTextSend,
     scrollMessageListToBottom,
