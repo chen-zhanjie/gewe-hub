@@ -170,6 +170,12 @@ export async function fetchWorkbenchSendRequest(sendRequestId: string): Promise<
   return apiFetch<BackendSendRequest>(`/api/send-requests/${sendRequestId}`);
 }
 
+export async function revokeWorkbenchSendRequest(sendRequestId: string): Promise<unknown> {
+  return apiFetch(`/api/send/${sendRequestId}/revoke`, {
+    method: "POST",
+  });
+}
+
 export async function fetchWorkbenchGroupMembers(
   conversation: ConversationSummary,
   options: WorkbenchGroupMembersQueryOptions = {},

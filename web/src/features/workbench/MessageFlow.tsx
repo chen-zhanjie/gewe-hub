@@ -3,7 +3,9 @@ import {
   Clock3,
   Info,
   Trash2,
+  Undo2,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { isFramedMessageNode, MessageNodeView } from "@/components/message/MessageNodeView";
 import { Avatar } from "@/components/ui/Avatar";
 import { TimeText } from "@/components/ui/TimeText";
@@ -17,6 +19,7 @@ export function MessageBubble({
   onOpenContact,
   onRetryLocalSend,
   onDeleteLocalSend,
+  onRequestRevoke,
 }: {
   message: MessageItem;
   startsGroup: boolean;
@@ -24,7 +27,10 @@ export function MessageBubble({
   onOpenContact: (wxid: string) => void;
   onRetryLocalSend: (message: MessageItem) => void;
   onDeleteLocalSend: (message: MessageItem) => void;
+  onRequestRevoke: (message: MessageItem) => void;
 }) {
+  const revokable = useMessageRevokable(message);
+
   if (message.content.type === "system") {
     return (
       <div
@@ -45,7 +51,7 @@ export function MessageBubble({
     <div
       data-message-meta={metaAlwaysVisible ? "inline" : "hover-overlay"}
       className={cn(
-        "z-10 flex items-center gap-2 rounded-md bg-background/95 text-xs text-muted-foreground transition-opacity duration-120",
+        "z-10 flex items-center gap-2 whitespace-nowrap rounded-md bg-background/95 text-xs text-muted-foreground transition-opacity duration-120",
         message.isSelf && "justify-end",
         metaAlwaysVisible
           ? "opacity-100"
@@ -55,7 +61,7 @@ export function MessageBubble({
             ),
       )}
     >
-      <TimeText value={message.sentAtIso} />
+      <TimeText value={message.sentAtIso} className="shrink-0" />
       {message.status === "revoked" ? (
         <span
           title={message.revokedAtIso || undefined}
@@ -70,10 +76,21 @@ export function MessageBubble({
           type="button"
           aria-label={`查看消息详情 ${message.messageId}`}
           onClick={() => onShowDetail(message)}
-          className="inline-flex items-center gap-1 rounded-md px-2 py-1 hover:bg-muted"
+          className="inline-flex min-w-[56px] shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-md px-2 py-1 hover:bg-muted"
         >
           <Info className="size-3" />
           详情
+        </button>
+      ) : null}
+      {revokable ? (
+        <button
+          type="button"
+          aria-label={`撤回消息 ${message.messageId}`}
+          onClick={() => onRequestRevoke(message)}
+          className="inline-flex min-w-[56px] shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-destructive hover:bg-destructive/10"
+        >
+          <Undo2 className="size-3" />
+          撤回
         </button>
       ) : null}
     </div>
@@ -284,4 +301,31 @@ function LocalSendFailureRetry({
 function readDeliveryStatus(deliveries: unknown[]): string | null {
   const first = deliveries[0] as { status?: string } | undefined;
   return first?.status ?? null;
+}
+
+function useMessageRevokable(message: MessageItem): boolean {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const sentAtMs = readMessageSentAtMs(message);
+  const expiresAtMs = sentAtMs + 2 * 60 * 1000;
+  const eligible = Boolean(message.isSelf && !message.localSend && message.status === "normal" && message.sendRequestId);
+
+  useEffect(() => {
+    if (!eligible || !Number.isFinite(sentAtMs)) return;
+    const remainingMs = expiresAtMs - Date.now();
+    if (remainingMs <= 0) {
+      setNowMs(Date.now());
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setNowMs(Date.now());
+    }, remainingMs + 250);
+    return () => window.clearTimeout(timer);
+  }, [eligible, expiresAtMs, sentAtMs]);
+
+  return eligible && nowMs >= sentAtMs && nowMs <= expiresAtMs;
+}
+
+function readMessageSentAtMs(message: MessageItem): number {
+  if (!message.isSelf || message.localSend || message.status !== "normal" || !message.sendRequestId) return Number.NaN;
+  return new Date(message.sentAtIso).getTime();
 }

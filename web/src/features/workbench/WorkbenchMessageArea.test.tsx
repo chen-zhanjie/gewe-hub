@@ -132,7 +132,10 @@ describe("WorkbenchPage message area", () => {
     fireEvent.contextMenu(messageText);
     expect(screen.queryByRole("menu", { name: "消息操作" })).not.toBeInTheDocument();
 
-    fireEvent.click(within(messageRegion).getByRole("button", { name: "查看消息详情 msg_private" }));
+    const detailButton = within(messageRegion).getByRole("button", { name: "查看消息详情 msg_private" });
+    expect(detailButton).toHaveClass("whitespace-nowrap");
+    expect(detailButton.className).toContain("min-w-[56px]");
+    fireEvent.click(detailButton);
 
     const sheet = await screen.findByRole("dialog", { name: "消息详情" });
     expect(within(sheet).getAllByText("msg_private").length).toBeGreaterThan(0);
@@ -141,6 +144,97 @@ describe("WorkbenchPage message area", () => {
     expect(within(sheet).getByRole("tab", { name: "原始 payload" })).toBeInTheDocument();
     expect(within(sheet).getByRole("tab", { name: "投递记录" })).toBeInTheDocument();
     expect(within(sheet).getByText("del_private")).toBeInTheDocument();
+  });
+
+  it("2 分钟内自己发送的消息展示撤回按钮，点击后需要二次确认再调用撤回接口", async () => {
+    const recentSentAt = new Date(Date.now() - 60_000).toISOString();
+    const oldSentAt = new Date(Date.now() - 180_000).toISOString();
+    const fetchMock = mockFetch({
+      "/api/accounts": [
+        {
+          id: "acc_1",
+          wxid: "wxid_bot",
+          nickname: "客服主号",
+          onlineStatus: "online",
+        },
+      ],
+      "/api/conversations": [
+        {
+          id: "conv_1",
+          accountId: "acc_1",
+          peerWxid: "wxid_target",
+          type: "private",
+          platformRemark: "陈可乐",
+          lastMessageText: "刚发出的消息",
+          lastMessageAt: recentSentAt,
+          status: "active",
+        },
+      ],
+      "/api/conversations/conv_1/messages?take=50": [
+        {
+          id: "row_recent_self",
+          messageId: "msg_recent_self",
+          sendRequestId: "send_recent",
+          senderWxid: "wxid_bot",
+          isSelf: true,
+          status: "normal",
+          sentAt: recentSentAt,
+          renderedText: "刚发出的消息",
+          payload: {
+            sender: { wxid: "wxid_bot", name: "客服主号", isOwner: false },
+            content: { type: "text", text: "刚发出的消息" },
+          },
+          webhookEvent: null,
+          deliveries: [],
+        },
+        {
+          id: "row_old_self",
+          messageId: "msg_old_self",
+          sendRequestId: "send_old",
+          senderWxid: "wxid_bot",
+          isSelf: true,
+          status: "normal",
+          sentAt: oldSentAt,
+          renderedText: "超过两分钟的消息",
+          payload: {
+            sender: { wxid: "wxid_bot", name: "客服主号", isOwner: false },
+            content: { type: "text", text: "超过两分钟的消息" },
+          },
+          webhookEvent: null,
+          deliveries: [],
+        },
+      ],
+      "/api/send/send_recent/revoke": { id: "send_recent", status: "sent" },
+    });
+
+    renderWorkbenchPage();
+
+    const messageRegion = screen.getByLabelText("消息区");
+    expect(await within(messageRegion).findByText("刚发出的消息")).toBeInTheDocument();
+    expect(await within(messageRegion).findByText("超过两分钟的消息")).toBeInTheDocument();
+    expect(within(messageRegion).getByRole("button", { name: "撤回消息 msg_recent_self" })).toHaveClass(
+      "text-destructive",
+    );
+    expect(within(messageRegion).queryByRole("button", { name: "撤回消息 msg_old_self" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(messageRegion).getByRole("button", { name: "撤回消息 msg_recent_self" }));
+
+    const confirmDialog = await screen.findByRole("alertdialog", { name: "撤回消息" });
+    expect(within(confirmDialog).getByText("撤回后将调用 GeWe 撤回接口，微信侧消息会尝试显示为已撤回。")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/send/send_recent/revoke"))).toBe(false);
+
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: "确认撤回" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/send/send_recent/revoke",
+        expect.objectContaining({
+          method: "POST",
+          credentials: "include",
+        }),
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("alertdialog", { name: "撤回消息" })).not.toBeInTheDocument());
   });
 
   it("点击头像打开联系人详情 Dialog，hover 不展示联系人浮层", async () => {

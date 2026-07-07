@@ -5,6 +5,7 @@ import { GroupMembersPanel } from "@/features/workbench/GroupMembersPanel";
 import { MessageComposer } from "@/features/workbench/MessageComposer";
 import { MessageDebugDialog } from "@/features/workbench/MessageDebugDialog";
 import { MessagePanel } from "@/features/workbench/MessagePanel";
+import { MessageRevokeConfirmDialog } from "@/features/workbench/MessageRevokeConfirmDialog";
 import { WorkbenchConversationOverlays } from "@/features/workbench/WorkbenchConversationOverlays";
 import {
   adminEventSourceStatusEvent,
@@ -22,6 +23,7 @@ import { useWorkbenchConversationActions } from "@/features/workbench/useWorkben
 import { useConversationUnreadState } from "@/features/workbench/useConversationUnreadState";
 import { useWorkbenchComposerController } from "@/features/workbench/useWorkbenchComposerController";
 import { useWorkbenchConversationSurfaceController } from "@/features/workbench/useWorkbenchConversationSurfaceController";
+import { useWorkbenchMessageRevokeController } from "@/features/workbench/useWorkbenchMessageRevokeController";
 import { useWorkbenchMessagesController } from "@/features/workbench/useWorkbenchMessagesController";
 import { readQueryError } from "@/features/workbench/workbench-helpers";
 import {
@@ -160,6 +162,11 @@ export function WorkbenchPage({
     sendPayload: sendWorkbenchPayload,
     fetchSendRequest: fetchWorkbenchSendRequest,
   });
+  const messageRevoke = useWorkbenchMessageRevokeController({
+    selectedConversation,
+    refreshMessages,
+    refreshWorkspace,
+  });
 
   useEffect(() => {
     if (initialAccountId === initialAccountIdRef.current) return;
@@ -273,6 +280,7 @@ export function WorkbenchPage({
           onOpenContactProfile={openContactProfile}
           onRetryLocalSend={messageState.retryLocalSend}
           onDeleteLocalSend={messageState.deleteLocalSend}
+          onRequestRevoke={messageRevoke.requestRevokeMessage}
         >
           <MessageComposer
             selected={Boolean(selectedConversation)}
@@ -362,6 +370,14 @@ export function WorkbenchPage({
           conversationSurface={managementConversationSurface}
           actions={conversationActions}
           onCloseManagement={() => setManagementConversationId(null)}
+        />
+        <MessageRevokeConfirmDialog
+          message={messageRevoke.confirmingRevokeMessage}
+          revokingMessageId={messageRevoke.revokingMessageId}
+          onClose={messageRevoke.closeRevokeDialog}
+          onConfirm={() => {
+            void messageRevoke.confirmRevokeMessage();
+          }}
         />
       </div>
     </div>

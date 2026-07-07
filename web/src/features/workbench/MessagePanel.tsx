@@ -27,6 +27,7 @@ interface MessagePanelProps {
   onOpenContactProfile: (wxid: string) => void;
   onRetryLocalSend: (message: MessageItem) => void;
   onDeleteLocalSend: (message: MessageItem) => void;
+  onRequestRevoke: (message: MessageItem) => void;
   children: ReactNode;
 }
 
@@ -51,6 +52,7 @@ export function MessagePanel({
   onOpenContactProfile,
   onRetryLocalSend,
   onDeleteLocalSend,
+  onRequestRevoke,
   children,
 }: MessagePanelProps) {
   const messageTimeline = buildMessageTimeline(visibleMessages);
@@ -132,6 +134,7 @@ export function MessagePanel({
                       onOpenContact={onOpenContactProfile}
                       onRetryLocalSend={onRetryLocalSend}
                       onDeleteLocalSend={onDeleteLocalSend}
+                      onRequestRevoke={onRequestRevoke}
                     />
                   )}
                 </div>
