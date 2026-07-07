@@ -6,6 +6,7 @@ import { MessageDebugDialog } from "@/features/workbench/MessageDebugDialog";
 import { MessagePanel } from "@/features/workbench/MessagePanel";
 import {
   adminEventSourceStatusEvent,
+  markWorkbenchConversationRead,
   sendWorkbenchText,
   type AdminEventSourceStatusDetail,
   useRefreshWorkbenchQueries,
@@ -116,6 +117,7 @@ export function WorkbenchPage({ initialConversationId, onOpenDeliveryLog }: Work
 
   function selectConversation(conversationId: string) {
     clearConversationUnread(conversationId);
+    void markWorkbenchConversationRead(conversationId).catch(() => undefined);
     setSelectedConversationId(conversationId);
     messageState.clearSelectedMessage();
   }

@@ -180,17 +180,24 @@ describe("AdminPage", () => {
           _count: { conversations: 1 },
         },
       ],
-      "/api/apps/app_real/conversations": [
-        {
-          id: "conv_1",
-          platformRemark: "真实产品群",
-          name: null,
-          peerWxid: "room@chatroom",
-          deliveryFilter: "at_only",
-          debounceMs: 2000,
-          maxWaitMs: 8000,
-        },
-      ],
+      "/api/apps/app_real/conversations?take=50&skip=0": {
+        items: [
+          {
+            id: "conv_1",
+            platformRemark: "真实产品群",
+            name: null,
+            peerWxid: "room@chatroom",
+            deliveryFilter: "at_only",
+            debounceMs: 2000,
+            maxWaitMs: 8000,
+          },
+        ],
+        total: 1,
+        take: 50,
+        skip: 0,
+        nextSkip: 1,
+        hasMore: false,
+      },
     });
 
     render(<AdminPage page="apps" />);
@@ -200,7 +207,7 @@ describe("AdminPage", () => {
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/apps/app_real/conversations",
+        "/api/apps/app_real/conversations?take=50&skip=0",
         expect.objectContaining({ credentials: "include" }),
       ),
     );
@@ -231,9 +238,9 @@ describe("AdminPage", () => {
           onlineStatus: "online",
         },
       ],
-      "/api/apps/app_real/account-remarks": {
-        id: "remark_1",
-        remark: "应用主控账号",
+      "/api/apps/app_real": {
+        id: "app_real",
+        accountRemarks: [{ id: "remark_1", remark: "应用主控账号" }],
       },
     });
 
@@ -248,13 +255,17 @@ describe("AdminPage", () => {
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/apps/app_real/account-remarks",
+        "/api/apps/app_real",
         expect.objectContaining({
-          method: "POST",
+          method: "PATCH",
           body: JSON.stringify({
-            accountId: "acc_real_1",
-            remark: "应用主控账号",
-            tags: ["owner", "prod"],
+            accountRemarks: [
+              {
+                accountId: "acc_real_1",
+                remark: "应用主控账号",
+                tags: ["owner", "prod"],
+              },
+            ],
           }),
           credentials: "include",
         }),

@@ -99,6 +99,8 @@ export interface BindConversationRequest {
 
 export interface UpdateConversationRequest {
   platformRemark?: string | null;
+  pinned?: boolean;
+  hidden?: boolean;
 }
 
 export interface UpdateGroupMemberRequest {
@@ -215,6 +217,12 @@ export async function updateWorkbenchConversation(conversationId: string, payloa
   return apiFetch(`/api/conversations/${conversationId}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function markWorkbenchConversationRead(conversationId: string): Promise<unknown> {
+  return apiFetch(`/api/conversations/${conversationId}/read`, {
+    method: "POST",
   });
 }
 

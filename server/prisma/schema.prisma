@@ -1,0 +1,454 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum OnlineStatus {
+  online
+  offline
+  unknown
+}
+
+enum AccountSource {
+  auto
+  manual
+}
+
+enum SoftContactStatus {
+  active
+  deleted
+  blocked
+}
+
+enum GroupStatus {
+  active
+  disbanded
+  quit
+}
+
+enum GroupMemberStatus {
+  active
+  left
+  removed
+}
+
+enum ConversationType {
+  private
+  group
+}
+
+enum ConversationStatus {
+  active
+  inactive
+}
+
+enum DeliveryFilter {
+  all
+  at_only
+}
+
+enum WebhookEventKind {
+  message
+  contact
+  status
+  unknown
+}
+
+enum WebhookProcessStatus {
+  stored
+  processing
+  processed
+  skipped
+  failed
+}
+
+enum MessageSource {
+  callback
+  hub_send
+}
+
+enum StandardMessageType {
+  text
+  image
+  voice
+  video
+  file
+  emoji
+  link
+  mini_program
+  chat_record
+  location
+  card
+  transfer
+  red_packet
+  system
+  unsupported
+}
+
+enum MessageStatus {
+  normal
+  revoked
+}
+
+enum MediaAssetStatus {
+  pending
+  ready
+  failed
+}
+
+enum MediaAssetKind {
+  image
+  voice
+  video
+  file
+  emoji
+}
+
+enum AppStatus {
+  active
+  disabled
+}
+
+enum DeliveryStatus {
+  queued
+  delivering
+  delivered
+  acked
+  failed
+}
+
+enum DeliveryEventType {
+  message_created
+  message_revoked
+}
+
+enum SendStatus {
+  pending
+  sent
+  failed
+}
+
+enum OutboxTaskStatus {
+  pending
+  running
+  done
+  failed
+  dead
+}
+
+enum OutboxTaskType {
+  process_webhook
+  normalize
+  download_media
+  deliver
+  send
+  sync_contacts
+  sync_group_members
+}
+
+model WechatAccount {
+  id             String       @id @default(cuid())
+  appId          String       @map("app_id")
+  wxid           String       @unique
+  nickname       String?
+  avatarUrl      String?      @map("avatar_url")
+  region         String?
+  onlineStatus   OnlineStatus @default(unknown) @map("online_status")
+  source         AccountSource @default(auto)
+  platformRemark String?      @map("platform_remark")
+  lastSyncedAt   DateTime?    @map("last_synced_at")
+  discoveredAt   DateTime     @default(now()) @map("discovered_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  contacts       Contact[]
+  groups         Group[]
+  conversations  Conversation[]
+  messages       Message[]
+  mediaAssets    MediaAsset[]
+  sendRequests   SendRequest[]
+  appRemarks     AppAccountRemark[]
+
+  @@map("wechat_accounts")
+}
+
+model Contact {
+  id              String            @id @default(cuid())
+  accountId       String            @map("account_id")
+  wxid            String
+  nickname        String?
+  avatarUrl       String?           @map("avatar_url")
+  platformRemark  String?           @map("platform_remark")
+  status          SoftContactStatus @default(active)
+  statusChangedAt DateTime?         @map("status_changed_at")
+  lastSyncedAt    DateTime?         @map("last_synced_at")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  account         WechatAccount     @relation(fields: [accountId], references: [id])
+
+  @@unique([accountId, wxid])
+  @@map("contacts")
+}
+
+model Group {
+  id              String       @id @default(cuid())
+  accountId       String       @map("account_id")
+  wxid            String
+  name            String?
+  avatarUrl       String?      @map("avatar_url")
+  platformRemark  String?      @map("platform_remark")
+  ownerWxid       String?      @map("owner_wxid")
+  memberCount     Int?         @map("member_count")
+  status          GroupStatus  @default(active)
+  statusChangedAt DateTime?    @map("status_changed_at")
+  lastSyncedAt    DateTime?    @map("last_synced_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  account         WechatAccount @relation(fields: [accountId], references: [id])
+  members         GroupMember[]
+
+  @@unique([accountId, wxid])
+  @@map("groups")
+}
+
+model GroupMember {
+  id              String            @id @default(cuid())
+  groupId         String            @map("group_id")
+  wxid            String
+  nickname        String?
+  displayName     String?           @map("display_name")
+  avatarUrl       String?           @map("avatar_url")
+  platformRemark  String?           @map("platform_remark")
+  status          GroupMemberStatus @default(active)
+  statusChangedAt DateTime?         @map("status_changed_at")
+  lastSyncedAt    DateTime?         @map("last_synced_at")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  group           Group             @relation(fields: [groupId], references: [id])
+
+  @@unique([groupId, wxid])
+  @@map("group_members")
+}
+
+model Conversation {
+  id             String             @id @default(cuid())
+  accountId      String             @map("account_id")
+  peerWxid       String             @map("peer_wxid")
+  type           ConversationType
+  name           String?
+  avatarUrl      String?            @map("avatar_url")
+  platformRemark String?            @map("platform_remark")
+  appId          String?            @map("app_id")
+  deliveryFilter DeliveryFilter     @default(all) @map("delivery_filter")
+  debounceMs     Int?               @map("debounce_ms")
+  maxWaitMs      Int?               @map("max_wait_ms")
+  lastMessageAt  DateTime?          @map("last_message_at")
+  lastMessageText String?           @db.VarChar(500) @map("last_message_text")
+  messageCount   Int                @default(0) @map("message_count")
+  pinnedAt       DateTime?          @map("pinned_at")
+  isHidden       Boolean            @default(false) @map("is_hidden")
+  lastOpenedAt   DateTime?          @map("last_opened_at")
+  unreadCount    Int                @default(0) @map("unread_count")
+  status         ConversationStatus @default(active)
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  account        WechatAccount      @relation(fields: [accountId], references: [id])
+  app            HubApp?            @relation(fields: [appId], references: [id])
+  messages       Message[]
+  sendRequests   SendRequest[]
+
+  @@unique([accountId, peerWxid])
+  @@map("conversations")
+}
+
+model WebhookEvent {
+  id            String               @id @default(cuid())
+  secretOk      Boolean              @map("secret_ok")
+  rawPayload    Json                 @map("raw_payload")
+  eventKind     WebhookEventKind     @map("event_kind")
+  dedupeKey     String?              @unique @map("dedupe_key")
+  processStatus WebhookProcessStatus @default(stored) @map("process_status")
+  errorMessage  String?              @db.Text @map("error_message")
+  retryCount    Int                  @default(0) @map("retry_count")
+  nextRetryAt   DateTime?            @map("next_retry_at")
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+
+  messages      Message[]
+
+  @@map("webhook_events")
+}
+
+model Message {
+  id             String              @id @default(cuid())
+  accountId      String              @map("account_id")
+  conversationId String              @map("conversation_id")
+  webhookEventId String?             @map("webhook_event_id")
+  sendRequestId  String?             @unique @map("send_request_id")
+  source         MessageSource
+  messageId      String              @unique @map("message_id")
+  rawMessageId   String?             @map("raw_message_id")
+  dedupeKey      String              @unique @map("dedupe_key")
+  type           StandardMessageType
+  status         MessageStatus       @default(normal)
+  revokedAt      DateTime?           @map("revoked_at")
+  senderWxid     String              @map("sender_wxid")
+  isSelf         Boolean             @default(false) @map("is_self")
+  isAtMe         Boolean             @default(false) @map("is_at_me")
+  sentAt         DateTime            @map("sent_at")
+  payload        Json
+  renderedText   String?             @db.VarChar(500) @map("rendered_text")
+  payloadVersion Int                 @default(1) @map("payload_version")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+
+  account        WechatAccount       @relation(fields: [accountId], references: [id])
+  conversation   Conversation        @relation(fields: [conversationId], references: [id])
+  webhookEvent   WebhookEvent?       @relation(fields: [webhookEventId], references: [id])
+  sendRequest    SendRequest?        @relation(fields: [sendRequestId], references: [id])
+  deliveries     Delivery[]
+  mediaAssets    MediaAsset[]
+
+  @@index([conversationId, sentAt])
+  @@index([rawMessageId])
+  @@map("messages")
+}
+
+model MediaAsset {
+  id            String           @id @default(cuid())
+  accountId     String           @map("account_id")
+  messageId     String           @map("message_id")
+  nodePath      String           @map("node_path")
+  kind          MediaAssetKind
+  status        MediaAssetStatus @default(pending)
+  sourcePayload Json             @map("source_payload")
+  localPath     String?          @db.VarChar(1024) @map("local_path")
+  publicUrl     String?          @db.VarChar(1024) @map("public_url")
+  mimeType      String?          @map("mime_type")
+  fileName      String?          @map("file_name")
+  size          Int?
+  errorMessage  String?          @db.Text @map("error_message")
+  retryCount    Int              @default(0) @map("retry_count")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  account       WechatAccount    @relation(fields: [accountId], references: [id])
+  message       Message          @relation(fields: [messageId], references: [id])
+
+  @@unique([messageId, nodePath])
+  @@index([status])
+  @@index([accountId])
+  @@map("media_assets")
+}
+
+model HubApp {
+  id                  String       @id @default(cuid())
+  name                String
+  token               String       @unique
+  ownerWxid           String?      @map("owner_wxid")
+  mainConversationId  String?      @map("main_conversation_id")
+  defaultDebounceMs   Int?         @map("default_debounce_ms")
+  defaultMaxWaitMs    Int?         @map("default_max_wait_ms")
+  deliverSelfMessages Boolean      @default(false) @map("deliver_self_messages")
+  status              AppStatus    @default(active)
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+
+  conversations       Conversation[]
+  accountRemarks      AppAccountRemark[]
+  deliveries          Delivery[]
+  sendRequests        SendRequest[]
+
+  @@map("hub_apps")
+}
+
+model AppAccountRemark {
+  id        String        @id @default(cuid())
+  appId     String        @map("app_id")
+  accountId String        @map("account_id")
+  remark    String?
+  tags      Json?
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+
+  app       HubApp        @relation(fields: [appId], references: [id])
+  account   WechatAccount @relation(fields: [accountId], references: [id])
+
+  @@unique([appId, accountId])
+  @@map("app_account_remarks")
+}
+
+model Delivery {
+  id          String            @id @default(cuid())
+  appId       String            @map("app_id")
+  messageId   String            @map("message_id")
+  eventId     String            @unique @map("event_id")
+  eventType   DeliveryEventType @map("event_type")
+  payload     Json
+  status      DeliveryStatus    @default(queued)
+  attempts    Int               @default(0)
+  lastError   String?           @db.Text @map("last_error")
+  deliveredAt DateTime?         @map("delivered_at")
+  ackedAt     DateTime?         @map("acked_at")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  app         HubApp            @relation(fields: [appId], references: [id])
+  message     Message           @relation(fields: [messageId], references: [id])
+
+  @@index([appId, status])
+  @@map("deliveries")
+}
+
+model SendRequest {
+  id               String       @id @default(cuid())
+  appId            String?      @map("app_id")
+  accountId        String       @map("account_id")
+  conversationId   String       @map("conversation_id")
+  type             String
+  requestPayload   Json         @map("request_payload")
+  geweRequest      Json?        @map("gewe_request")
+  geweResponse     Json?        @map("gewe_response")
+  status           SendStatus   @default(pending)
+  errorMessage     String?      @db.Text @map("error_message")
+  resultMsgId      String?      @map("result_msg_id")
+  resultNewMsgId   String?      @map("result_new_msg_id")
+  resultCreateTime String?      @map("result_create_time")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  app              HubApp?      @relation(fields: [appId], references: [id])
+  account          WechatAccount @relation(fields: [accountId], references: [id])
+  conversation     Conversation @relation(fields: [conversationId], references: [id])
+  message          Message?
+
+  @@map("send_requests")
+}
+
+model OutboxTask {
+  id          String           @id @default(cuid())
+  taskType    OutboxTaskType   @map("task_type")
+  refId       String           @map("ref_id")
+  payload     Json
+  status      OutboxTaskStatus @default(pending)
+  priority    Int              @default(100)
+  leaseUntil  DateTime?        @map("lease_until")
+  workerId    String?          @map("worker_id")
+  retryCount  Int              @default(0) @map("retry_count")
+  maxRetry    Int              @default(5) @map("max_retry")
+  nextRetryAt DateTime?        @map("next_retry_at")
+  lastError   String?          @db.Text @map("last_error")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  @@index([status, nextRetryAt])
+  @@map("outbox_tasks")
+}

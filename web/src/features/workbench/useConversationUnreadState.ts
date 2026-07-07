@@ -10,6 +10,10 @@ export function useConversationUnreadState(
   selectedConversationId: string | null,
 ) {
   const [unreadByConversationId, setUnreadByConversationId] = useState<Record<string, number>>({});
+  const baseUnreadByConversationId = useMemo(
+    () => Object.fromEntries(conversations.map((conversation) => [conversation.id, conversation.unread])),
+    [conversations],
+  );
 
   useEffect(() => {
     function handleRealtimeMessage(event: Event) {
@@ -18,13 +22,13 @@ export function useConversationUnreadState(
       if (!conversationId || conversationId === selectedConversationId) return;
       setUnreadByConversationId((current) => ({
         ...current,
-        [conversationId]: (current[conversationId] ?? 0) + 1,
+        [conversationId]: (current[conversationId] ?? baseUnreadByConversationId[conversationId] ?? 0) + 1,
       }));
     }
 
     window.addEventListener(workbenchRealtimeMessageEvent, handleRealtimeMessage);
     return () => window.removeEventListener(workbenchRealtimeMessageEvent, handleRealtimeMessage);
-  }, [selectedConversationId]);
+  }, [baseUnreadByConversationId, selectedConversationId]);
 
   const conversationsWithUnread = useMemo(
     () =>
@@ -38,10 +42,8 @@ export function useConversationUnreadState(
   function clearConversationUnread(conversationId: string | null) {
     if (!conversationId) return;
     setUnreadByConversationId((current) => {
-      if (!current[conversationId]) return current;
-      const next = { ...current };
-      delete next[conversationId];
-      return next;
+      if (current[conversationId] === 0) return current;
+      return { ...current, [conversationId]: 0 };
     });
   }
 

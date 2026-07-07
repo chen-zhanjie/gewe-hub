@@ -118,8 +118,8 @@ export function AppsPage() {
     setBindingsLoading(true);
     setBindingsError(null);
     try {
-      const rows = await apiFetch<BackendAppConversation[]>(`/api/apps/${appId}/conversations`);
-      setBoundConversations(rows);
+      const response = await apiFetch<AppConversationsResponse | BackendAppConversation[]>(`/api/apps/${appId}/conversations?take=50&skip=0`);
+      setBoundConversations(Array.isArray(response) ? response : response.items);
     } catch (loadError) {
       setBindingsError(loadError instanceof Error ? loadError.message : "绑定会话加载失败");
     } finally {
@@ -134,12 +134,16 @@ export function AppsPage() {
     setSavingRemark(true);
     setRemarkError(null);
     try {
-      await apiFetch(`/api/apps/${appId}/account-remarks`, {
-        method: "POST",
+      await apiFetch(`/api/apps/${appId}`, {
+        method: "PATCH",
         body: JSON.stringify({
-          accountId,
-          remark: optionalText(remarkDraft.remark),
-          tags: parseTags(remarkDraft.tags),
+          accountRemarks: [
+            {
+              accountId,
+              remark: optionalText(remarkDraft.remark),
+              tags: parseTags(remarkDraft.tags),
+            },
+          ],
         }),
       });
       setRemarkDraft({ appId, accountId, remark: "", tags: "" });
@@ -457,6 +461,15 @@ interface BackendAppConversation {
   deliveryFilter?: "all" | "at_only";
   debounceMs?: number | null;
   maxWaitMs?: number | null;
+}
+
+interface AppConversationsResponse {
+  items: BackendAppConversation[];
+  total: number;
+  take: number;
+  skip: number;
+  nextSkip: number;
+  hasMore: boolean;
 }
 
 function useApiData<T>(path: string, initialValue: T) {

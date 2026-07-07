@@ -96,3 +96,151 @@ export const errorResponseSchema = z
   .strict();
 
 export type ErrorResponse = z.infer<typeof errorResponseSchema>;
+
+const nullableString = z.string().nullable().optional();
+const isoDateString = z.string().nullable().optional();
+
+export const conversationSummarySchema = z
+  .object({
+    id: z.string(),
+    accountId: z.string(),
+    peerWxid: z.string(),
+    type: z.enum(["private", "group"]),
+    name: nullableString,
+    avatarUrl: nullableString,
+    platformRemark: nullableString,
+    appId: nullableString,
+    deliveryFilter: z.enum(["all", "at_only"]),
+    debounceMs: z.number().int().nonnegative().nullable().optional(),
+    maxWaitMs: z.number().int().nonnegative().nullable().optional(),
+    lastMessageAt: isoDateString,
+    lastMessageText: nullableString,
+    messageCount: z.number().int().nonnegative(),
+    status: z.enum(["active", "inactive"]),
+    pinnedAt: isoDateString,
+    isHidden: z.boolean(),
+    lastOpenedAt: isoDateString,
+    unreadCount: z.number().int().nonnegative(),
+  })
+  .passthrough();
+
+export type ConversationSummary = z.infer<typeof conversationSummarySchema>;
+
+export const conversationUpdateRequestSchema = z
+  .object({
+    platformRemark: z.string().nullable().optional(),
+    pinned: z.boolean().optional(),
+    hidden: z.boolean().optional(),
+  })
+  .strict();
+
+export const conversationUpdateResponseSchema = conversationSummarySchema;
+export const conversationReadResponseSchema = conversationSummarySchema;
+
+export type ConversationUpdateRequest = z.infer<typeof conversationUpdateRequestSchema>;
+export type ConversationUpdateResponse = z.infer<typeof conversationUpdateResponseSchema>;
+export type ConversationReadResponse = z.infer<typeof conversationReadResponseSchema>;
+
+const contactProfileContactSchema = z
+  .object({
+    id: z.string().optional(),
+    wxid: z.string(),
+    nickname: nullableString,
+    avatarUrl: nullableString,
+    platformRemark: nullableString,
+    status: z.enum(["active", "deleted", "blocked"]).optional(),
+  })
+  .passthrough();
+
+const contactProfileGroupSchema = z
+  .object({
+    id: z.string(),
+    wxid: z.string(),
+    name: nullableString,
+    avatarUrl: nullableString,
+    platformRemark: nullableString,
+  })
+  .passthrough();
+
+const contactProfileGroupMembershipSchema = z
+  .object({
+    id: z.string(),
+    wxid: z.string(),
+    nickname: nullableString,
+    displayName: nullableString,
+    avatarUrl: nullableString,
+    platformRemark: nullableString,
+    status: z.enum(["active", "left", "removed"]).optional(),
+    group: contactProfileGroupSchema,
+  })
+  .passthrough();
+
+export const contactProfileResponseSchema = z
+  .object({
+    accountId: z.string(),
+    wxid: z.string(),
+    contact: contactProfileContactSchema.nullable(),
+    groupMemberships: z.array(contactProfileGroupMembershipSchema),
+    privateConversation: conversationSummarySchema.nullable(),
+    commonGroups: z.array(contactProfileGroupSchema),
+  })
+  .strict();
+
+export type ContactProfileResponse = z.infer<typeof contactProfileResponseSchema>;
+
+export const appAccountRemarkInputSchema = z
+  .object({
+    accountId: z.string(),
+    remark: z.string().nullable().optional(),
+    tags: z.array(z.string()).optional(),
+  })
+  .strict();
+
+export const appUpdateRequestSchema = z
+  .object({
+    name: z.string().min(1).optional(),
+    ownerWxid: z.string().optional(),
+    mainConversationId: z.string().optional(),
+    defaultDebounceMs: z.number().int().nonnegative().optional(),
+    defaultMaxWaitMs: z.number().int().nonnegative().optional(),
+    deliverSelfMessages: z.boolean().optional(),
+    status: z.enum(["active", "disabled"]).optional(),
+    accountRemarks: z.array(appAccountRemarkInputSchema).optional(),
+  })
+  .strict();
+
+export type AppUpdateRequest = z.infer<typeof appUpdateRequestSchema>;
+
+export const appConversationsQuerySchema = z
+  .object({
+    take: z.number().int().positive().max(100).optional(),
+    skip: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export const appConversationsResponseSchema = z
+  .object({
+    items: z.array(conversationSummarySchema),
+    total: z.number().int().nonnegative(),
+    take: z.number().int().positive(),
+    skip: z.number().int().nonnegative(),
+    nextSkip: z.number().int().nonnegative(),
+    hasMore: z.boolean(),
+  })
+  .strict();
+
+export type AppConversationsQuery = z.infer<typeof appConversationsQuerySchema>;
+export type AppConversationsResponse = z.infer<typeof appConversationsResponseSchema>;
+
+export const deliveryListQuerySchema = z
+  .object({
+    status: z.enum(["queued", "delivering", "delivered", "acked", "failed"]).optional(),
+    appId: z.string().optional(),
+    conversationId: z.string().optional(),
+    messageId: z.string().optional(),
+    take: z.number().int().positive().max(200).optional(),
+    skip: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export type DeliveryListQuery = z.infer<typeof deliveryListQuerySchema>;

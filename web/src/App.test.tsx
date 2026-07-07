@@ -331,17 +331,24 @@ describe("App", () => {
         },
       ]),
       "/api/observability/summary": response(200, { failedTasks: 0 }),
-      "/api/apps/app_bound/conversations": response(200, [
-        {
-          id: "conv_app_bound",
-          platformRemark: "应用绑定群",
-          name: null,
-          peerWxid: "room_app_bound@chatroom",
-          deliveryFilter: "all",
-          debounceMs: 1500,
-          maxWaitMs: 8000,
-        },
-      ]),
+      "/api/apps/app_bound/conversations?take=50&skip=0": response(200, {
+        items: [
+          {
+            id: "conv_app_bound",
+            platformRemark: "应用绑定群",
+            name: null,
+            peerWxid: "room_app_bound@chatroom",
+            deliveryFilter: "all",
+            debounceMs: 1500,
+            maxWaitMs: 8000,
+          },
+        ],
+        total: 1,
+        take: 50,
+        skip: 0,
+        nextSkip: 1,
+        hasMore: false,
+      }),
       "/api/conversations/conv_app_bound/messages?take=50": response(200, [
         {
           id: "row_app_bound",

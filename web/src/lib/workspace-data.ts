@@ -72,6 +72,10 @@ export interface BackendConversation {
   platformRemark?: string | null;
   lastMessageText?: string | null;
   lastMessageAt?: string | Date | null;
+  pinnedAt?: string | Date | null;
+  isHidden?: boolean;
+  lastOpenedAt?: string | Date | null;
+  unreadCount?: number;
   status?: "active" | "inactive";
   app?: { id: string; name: string } | null;
   deliveryFilter?: "all" | "at_only";
@@ -116,7 +120,7 @@ export function mapConversationSummary(
     lastMessage: conversation.lastMessageText || "暂无消息",
     lastAt: formatShortTime(conversation.lastMessageAt),
     appName: conversation.app?.name,
-    unread: 0,
+    unread: conversation.unreadCount ?? 0,
     avatarText: name.trim().slice(0, 1) || "?",
     avatarUrl: conversation.avatarUrl ?? null,
     status: conversation.status ?? "active",

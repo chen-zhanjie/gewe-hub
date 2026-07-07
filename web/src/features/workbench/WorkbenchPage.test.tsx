@@ -112,6 +112,59 @@ describe("WorkbenchPage", () => {
     expect(within(conversationList).getByText("Beta 客户")).toBeInTheDocument();
   });
 
+  it("会话列表展示服务端未读数，打开会话时调用已读接口并本地清零", async () => {
+    const fetchMock = mockFetch({
+      "/api/accounts": [
+        {
+          id: "acc_1",
+          wxid: "wxid_bot",
+          nickname: "客服主号",
+          onlineStatus: "online",
+        },
+      ],
+      "/api/conversations": [
+        {
+          id: "conv_1",
+          peerWxid: "wxid_alpha",
+          type: "private",
+          platformRemark: "Alpha 客户",
+          lastMessageText: "Alpha 最近消息",
+          lastMessageAt: "2026-07-06T07:16:37.000Z",
+          status: "active",
+          unreadCount: 0,
+        },
+        {
+          id: "conv_2",
+          peerWxid: "wxid_beta",
+          type: "private",
+          platformRemark: "Beta 客户",
+          lastMessageText: "Beta 最近消息",
+          lastMessageAt: "2026-07-06T07:18:37.000Z",
+          status: "active",
+          unreadCount: 4,
+        },
+      ],
+      "/api/conversations/conv_1/messages?take=50": [],
+      "/api/conversations/conv_2/messages?take=50": [],
+      "/api/conversations/conv_2/read": { id: "conv_2", unreadCount: 0 },
+    });
+
+    renderWorkbenchPage();
+
+    expect(await screen.findByLabelText("Beta 客户 4 条未读消息")).toBeInTheDocument();
+    fetchMock.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "打开会话 Beta 客户" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/conversations/conv_2/read",
+        expect.objectContaining({ method: "POST", credentials: "include" }),
+      ),
+    );
+    expect(screen.queryByLabelText("Beta 客户 4 条未读消息")).not.toBeInTheDocument();
+  });
+
   it("工作台支持用上下方向键切换当前筛选会话，输入框聚焦时不抢键盘", async () => {
     const fetchMock = mockFetch({
       "/api/accounts": [
