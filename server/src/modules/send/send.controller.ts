@@ -113,6 +113,40 @@ export class SendController {
     });
   }
 
+  @Post("/api/send/:id/cancel")
+  async cancel(@Param("id") id: string) {
+    const sendRequest = await this.prisma.sendRequest.findUniqueOrThrow({
+      where: { id },
+      select: { status: true }
+    });
+    if (sendRequest.status === "sent") {
+      throw new BadRequestException("已发送成功的消息不能取消，请使用撤回");
+    }
+
+    const message = "用户已取消后续发送重试";
+    await this.prisma.outboxTask.updateMany({
+      where: {
+        taskType: "send",
+        refId: id,
+        status: { in: ["pending", "running", "failed"] }
+      },
+      data: {
+        status: "dead",
+        nextRetryAt: null,
+        leaseUntil: null,
+        lastError: message
+      }
+    });
+
+    return this.prisma.sendRequest.update({
+      where: { id },
+      data: {
+        status: "failed",
+        errorMessage: message
+      }
+    });
+  }
+
   @Get("/api/send-requests")
   async list(
     @Query("status") status: string | undefined,

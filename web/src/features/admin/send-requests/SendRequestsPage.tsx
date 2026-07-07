@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ClipboardList, Undo2 } from "lucide-react";
+import { Ban, ClipboardList, Undo2 } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -70,9 +70,12 @@ export function SendRequestsPage({
   const sendRequestPath = buildSendRequestPath(filters);
   const { data: sendRows, loading, error, reload } = useApiData<BackendSendRequest[]>(sendRequestPath, []);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [confirmingRevoke, setConfirmingRevoke] = useState<BackendSendRequest | null>(null);
+  const [confirmingCancel, setConfirmingCancel] = useState<BackendSendRequest | null>(null);
   const [selectedSendRequest, setSelectedSendRequest] = useState<BackendSendRequest | null>(null);
   const [revokeError, setRevokeError] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const [sendSearch, setSendSearch] = useState("");
   const rows = sendRows.map(mapSendRow);
   const visibleRows = rows.filter((row) => matchesSendRequestSearch(row, sendSearch));
@@ -138,10 +141,23 @@ export function SendRequestsPage({
           >
             <Undo2 className="size-4" />
           </button>
+          <button
+            type="button"
+            title="取消发送重试"
+            aria-label="取消发送重试"
+            disabled={!canCancelSendRequest(row.original.status) || cancellingId === row.original.id}
+            onClick={() => {
+              setConfirmingCancel(row.original.source);
+              setCancelError(null);
+            }}
+            className="rounded-md border p-2 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Ban className="size-4" />
+          </button>
         </div>
       ),
     },
-  ], [revokingId]);
+  ], [cancellingId, revokingId]);
 
   function updateFilters(nextFilters: SendRequestFilters) {
     setFilters(nextFilters);
@@ -163,6 +179,21 @@ export function SendRequestsPage({
     }
   }
 
+  async function handleCancel(row: BackendSendRequest) {
+    if (!canCancelSendRequest(row.status) || cancellingId) return;
+    setCancellingId(row.id);
+    setCancelError(null);
+    try {
+      await apiFetch(`/api/send/${row.id}/cancel`, { method: "POST" });
+      await reload();
+      setConfirmingCancel(null);
+    } catch (error) {
+      setCancelError(error instanceof Error ? error.message : "取消发送重试失败");
+    } finally {
+      setCancellingId(null);
+    }
+  }
+
   return (
     <PageShell description="追踪后台和应用发起的发送请求。">
       <QuickStatusTabs
@@ -174,6 +205,7 @@ export function SendRequestsPage({
       />
       <LoadState loading={loading} error={error} empty={!loading && rows.length === 0} emptyText="暂无发送记录" />
       {revokeError ? <div className="rounded-md border border-destructive/30 bg-background px-3 py-2 text-sm text-destructive">{revokeError}</div> : null}
+      {cancelError ? <div className="rounded-md border border-destructive/30 bg-background px-3 py-2 text-sm text-destructive">{cancelError}</div> : null}
       <DataTable
         ariaLabel="发送记录列表"
         columns={sendRequestColumns}
@@ -235,6 +267,41 @@ export function SendRequestsPage({
               }}
             >
               {revokingId === confirmingRevoke?.id ? "撤回中" : "确认撤回"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={confirmingCancel !== null}
+        onOpenChange={(open) => {
+          if (!open && !cancellingId) setConfirmingCancel(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>取消发送重试</AlertDialogTitle>
+            <AlertDialogDescription>取消后会终止关联发送任务，避免同一文件或图片继续重复发送。</AlertDialogDescription>
+          </AlertDialogHeader>
+          {confirmingCancel ? (
+            <dl className="grid gap-2 rounded-md border bg-muted/40 p-3 text-sm sm:grid-cols-[88px_1fr]">
+              <dt className="text-xs text-muted-foreground">请求 ID</dt>
+              <dd className="font-mono text-xs">{confirmingCancel.id}</dd>
+              <dt className="text-xs text-muted-foreground">会话</dt>
+              <dd>{getSendRequestConversationName(confirmingCancel)}</dd>
+              <dt className="text-xs text-muted-foreground">状态</dt>
+              <dd><StatusBadge status={sendRequestBadgeStatus(confirmingCancel.status)} /></dd>
+            </dl>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(cancellingId)}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!confirmingCancel || cancellingId === confirmingCancel.id}
+              onClick={(event) => {
+                event.preventDefault();
+                if (confirmingCancel) void handleCancel(confirmingCancel);
+              }}
+            >
+              {cancellingId === confirmingCancel?.id ? "取消中" : "确认取消"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -470,6 +537,10 @@ function sendRequestResultText(row: SendRequestRow): string {
   if (row.status === "pending") return "等待中";
   if (row.status === "unknown") return "结果未知";
   return "—";
+}
+
+function canCancelSendRequest(status: string): boolean {
+  return status === "pending" || status === "failed" || status === "unknown";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

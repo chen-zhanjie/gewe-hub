@@ -496,6 +496,105 @@ describe("OutboxService 发送任务", () => {
     });
   });
 
+  it("发送任务失败后直接终止 outbox，避免有外部副作用的发送被自动重试", async () => {
+    const prisma = {
+      outboxTask: {
+        findFirst: vi.fn(async () => ({
+          id: "task_file_failed",
+          taskType: "send",
+          refId: "send_file_failed",
+          payload: { sendRequestId: "send_file_failed" },
+          retryCount: 0,
+          maxRetry: 5
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      sendRequest: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "send_file_failed",
+          accountId: "account_1",
+          conversationId: "conversation_1",
+          type: "file",
+          requestPayload: {
+            conversationId: "conversation_1",
+            type: "file",
+            contentBase64: "SGVsbG8=",
+            mimeType: "text/plain",
+            fileName: "note.txt"
+          },
+          geweRequest: {
+            path: "/gewe/v2/api/message/postFile",
+            body: {
+              appId: "wx_app",
+              toWxid: "wxid_target",
+              source: {
+                contentBase64: "SGVsbG8=",
+                mimeType: "text/plain",
+                fileName: "note.txt"
+              }
+            }
+          },
+          conversation: {
+            id: "conversation_1",
+            peerWxid: "wxid_target",
+            account: {
+              wxid: "wxid_bot"
+            }
+          }
+        })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      message: {
+        findUnique: vi.fn(async () => null),
+        upsert: vi.fn(async (_args: unknown) => ({}))
+      },
+      conversation: {
+        update: vi.fn(async () => ({}))
+      }
+    };
+    const media = {
+      prepareOutboundFile: vi.fn(async () => ({
+        url: "http://localhost:8090/files/outbound/out_file?exp=1893456000&sig=test",
+        mimeType: "text/plain",
+        fileName: "note.txt",
+        size: 5
+      }))
+    };
+    const gewe = {
+      sendByMappedRequest: vi.fn(async () => {
+        throw new Error("GeWe 返回异常但微信可能已收到");
+      })
+    };
+    const service = new OutboxService(
+      prisma as never,
+      { createForMessage: vi.fn() } as never,
+      { syncContacts: vi.fn(), syncGroupMembers: vi.fn() } as never,
+      media as never,
+      gewe as never
+    );
+
+    await service.tick();
+
+    expect(prisma.sendRequest.update).toHaveBeenCalledWith({
+      where: { id: "send_file_failed" },
+      data: {
+        status: "failed",
+        errorMessage: "GeWe 返回异常但微信可能已收到"
+      }
+    });
+    expect(prisma.outboxTask.update).toHaveBeenLastCalledWith({
+      where: { id: "task_file_failed" },
+      data: {
+        status: "dead",
+        retryCount: 1,
+        nextRetryAt: null,
+        leaseUntil: null,
+        lastError: "GeWe 返回异常但微信可能已收到"
+      }
+    });
+  });
+
   it("发送视频前将上传视频发布为签名 URL，并调用 GeWe postVideo", async () => {
     const prisma = {
       outboxTask: {
@@ -739,7 +838,7 @@ describe("OutboxService 发送任务", () => {
     });
   });
 
-  it("GeWe 发送业务失败时标记发送请求失败并保留 outbox 重试错误", async () => {
+  it("GeWe 发送业务失败时标记发送请求失败并终止 outbox，避免自动重复发送", async () => {
     const prisma = {
       outboxTask: {
         findFirst: vi.fn(async () => ({
@@ -830,8 +929,9 @@ describe("OutboxService 发送任务", () => {
     expect(prisma.outboxTask.update).toHaveBeenLastCalledWith({
       where: { id: "task_failed_image" },
       data: expect.objectContaining({
-        status: "pending",
+        status: "dead",
         retryCount: 1,
+        nextRetryAt: null,
         lastError: "GeWe 发送失败: 图片格式错误"
       })
     });

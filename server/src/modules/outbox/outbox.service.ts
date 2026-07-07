@@ -52,7 +52,7 @@ export class OutboxService implements OnModuleInit {
         }
       });
     } catch (error) {
-      if (task.taskType === "send" && error instanceof SendResultUnknownError) {
+      if (task.taskType === "send") {
         await this.prisma.outboxTask.update({
           where: { id: task.id },
           data: {
@@ -60,7 +60,7 @@ export class OutboxService implements OnModuleInit {
             retryCount: task.retryCount + 1,
             nextRetryAt: null,
             leaseUntil: null,
-            lastError: error.message
+            lastError: error instanceof Error ? error.message : String(error)
           }
         });
         return;

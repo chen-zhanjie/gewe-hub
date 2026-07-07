@@ -200,6 +200,57 @@ describe("AdminPage operations", () => {
     expect(fetchMock.mock.calls.filter(([input]) => String(input).replace("http://localhost", "") === "/api/send-requests?take=20&skip=0")).toHaveLength(2);
   });
 
+  it("发送记录页可以取消失败或等待中的发送请求，阻止后续自动重试", async () => {
+    const fetchMock = mockFetch({
+      "/api/send-requests?take=20&skip=0": [
+        {
+          id: "send_failed_file",
+          type: "file",
+          status: "failed",
+          resultMsgId: null,
+          resultNewMsgId: null,
+          updatedAt: "2026-07-06T07:16:37.000Z",
+          conversation: {
+            platformRemark: "陈可乐",
+            name: null,
+            peerWxid: "wxid_target",
+          },
+          geweResponse: { ret: 500, msg: "展示失败但微信可能已收到" },
+        },
+      ],
+      "/api/send/send_failed_file/cancel": {
+        id: "send_failed_file",
+        status: "failed",
+        errorMessage: "用户已取消后续发送重试",
+      },
+    });
+
+    window.history.replaceState(null, "", "/send-requests");
+    render(<AdminPage page="sendRequests" />);
+
+    const table = await screen.findByRole("table", { name: "发送记录列表" });
+    expect(within(table).getByText("send_failed_file")).toBeInTheDocument();
+    fireEvent.click(within(table).getByRole("button", { name: "取消发送重试" }));
+
+    const confirmDialog = await screen.findByRole("alertdialog", { name: "取消发送重试" });
+    expect(within(confirmDialog).getByText("取消后会终止关联发送任务，避免同一文件或图片继续重复发送。")).toBeInTheDocument();
+    expect(within(confirmDialog).getByText("send_failed_file")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/send/send_failed_file/cancel",
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: "确认取消" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/send/send_failed_file/cancel",
+        expect.objectContaining({ method: "POST", credentials: "include" }),
+      ),
+    );
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).replace("http://localhost", "") === "/api/send-requests?take=20&skip=0")).toHaveLength(2);
+  });
+
   it("发送记录页可以打开单条详情查看请求和 GeWe 响应", async () => {
     mockFetch({
       "/api/send-requests?take=20&skip=0": [

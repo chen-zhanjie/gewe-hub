@@ -391,6 +391,55 @@ describe("SendController", () => {
     });
   });
 
+  it("取消发送请求时终止关联 send outbox，避免继续自动重试", async () => {
+    const prisma = {
+      sendRequest: {
+        findUniqueOrThrow: vi.fn(async () => ({ status: "failed" })),
+        update: vi.fn(async () => ({
+          id: "send_cancel",
+          status: "failed",
+          errorMessage: "用户已取消后续发送重试"
+        }))
+      },
+      outboxTask: {
+        updateMany: vi.fn(async () => ({ count: 1 }))
+      }
+    };
+    const controller = new SendController(prisma as never, {} as never);
+
+    const result = await controller.cancel("send_cancel");
+
+    expect(result).toMatchObject({
+      id: "send_cancel",
+      status: "failed",
+      errorMessage: "用户已取消后续发送重试"
+    });
+    expect(prisma.sendRequest.findUniqueOrThrow).toHaveBeenCalledWith({
+      where: { id: "send_cancel" },
+      select: { status: true }
+    });
+    expect(prisma.outboxTask.updateMany).toHaveBeenCalledWith({
+      where: {
+        taskType: "send",
+        refId: "send_cancel",
+        status: { in: ["pending", "running", "failed"] }
+      },
+      data: {
+        status: "dead",
+        nextRetryAt: null,
+        leaseUntil: null,
+        lastError: "用户已取消后续发送重试"
+      }
+    });
+    expect(prisma.sendRequest.update).toHaveBeenCalledWith({
+      where: { id: "send_cancel" },
+      data: {
+        status: "failed",
+        errorMessage: "用户已取消后续发送重试"
+      }
+    });
+  });
+
   it.each([
     ["success", "sent"],
     ["in_progress", "pending"],
