@@ -4,7 +4,11 @@ export interface AccountSummary {
   id: string;
   name: string;
   wxid: string;
+  nickname?: string | null;
+  platformRemark?: string | null;
+  avatarUrl?: string | null;
   status: "online" | "offline" | "unknown";
+  raw?: BackendAccount;
 }
 
 export interface ConversationSummary {
@@ -59,6 +63,7 @@ export interface BackendAccount {
   wxid: string;
   nickname?: string | null;
   platformRemark?: string | null;
+  avatarUrl?: string | null;
   onlineStatus?: "online" | "offline" | "unknown";
 }
 
@@ -103,7 +108,11 @@ export function mapAccountSummary(account: BackendAccount): AccountSummary {
     id: account.id,
     name: account.platformRemark || account.nickname || account.wxid,
     wxid: account.wxid,
+    nickname: account.nickname ?? null,
+    platformRemark: account.platformRemark ?? null,
+    avatarUrl: account.avatarUrl ?? null,
     status: account.onlineStatus ?? "unknown",
+    raw: account,
   };
 }
 

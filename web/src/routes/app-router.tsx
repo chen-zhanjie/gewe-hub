@@ -50,6 +50,7 @@ const deliveriesSearchSchema = z.object({
 
 const workbenchSearchSchema = z.object({
   conversationId: z.string().optional().catch(undefined),
+  accountId: z.string().optional().catch(undefined),
 });
 
 const sendRequestsSearchSchema = z.object({

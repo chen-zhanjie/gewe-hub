@@ -52,7 +52,16 @@ describe("workspace-data", () => {
       id: "acc_1",
       name: "客服主号",
       wxid: "wxid_bot",
+      nickname: "客服主号",
+      platformRemark: null,
+      avatarUrl: null,
       status: "online",
+      raw: {
+        id: "acc_1",
+        wxid: "wxid_bot",
+        nickname: "客服主号",
+        onlineStatus: "online",
+      },
     });
     expect(conversation).toMatchObject({
       id: "conv_1",

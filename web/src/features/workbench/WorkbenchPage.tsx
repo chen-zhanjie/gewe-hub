@@ -4,9 +4,9 @@ import { DetailPanel } from "@/features/workbench/DetailPanel";
 import { MessageComposer } from "@/features/workbench/MessageComposer";
 import { MessageDebugDialog } from "@/features/workbench/MessageDebugDialog";
 import { MessagePanel } from "@/features/workbench/MessagePanel";
+import { WorkbenchConversationOverlays } from "@/features/workbench/WorkbenchConversationOverlays";
 import {
   adminEventSourceStatusEvent,
-  markWorkbenchConversationRead,
   sendWorkbenchText,
   type AdminEventSourceStatusDetail,
   useRefreshWorkbenchQueries,
@@ -15,6 +15,7 @@ import {
   useWorkbenchWorkspaceQuery,
   type HubAppSummary,
 } from "@/features/workbench/queries";
+import { useWorkbenchConversationActions } from "@/features/workbench/useWorkbenchConversationActions";
 import { useConversationUnreadState } from "@/features/workbench/useConversationUnreadState";
 import { useWorkbenchComposerController } from "@/features/workbench/useWorkbenchComposerController";
 import { useWorkbenchDetailController } from "@/features/workbench/useWorkbenchDetailController";
@@ -24,7 +25,13 @@ import {
   readQueryError,
   readStandardJsonForCopy,
 } from "@/features/workbench/workbench-helpers";
-import { mapAccountSummary, mapConversationSummary, type MessageItem } from "@/lib/workspace-data";
+import {
+  mapAccountSummary,
+  mapConversationSummary,
+  type AccountSummary,
+  type ConversationSummary,
+  type MessageItem,
+} from "@/lib/workspace-data";
 
 interface WorkbenchPageProps {
   initialConversationId?: string;
@@ -33,8 +40,10 @@ interface WorkbenchPageProps {
 
 export function WorkbenchPage({ initialConversationId, onOpenDeliveryLog }: WorkbenchPageProps = {}) {
   const initialConversationIdRef = useRef(initialConversationId);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(() => readInitialAccountId());
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(initialConversationId ?? null);
   const [debugMessageId, setDebugMessageId] = useState<string | null>(null);
+  const [managementConversationId, setManagementConversationId] = useState<string | null>(null);
   const [eventSourceStatus, setEventSourceStatus] = useState<AdminEventSourceStatusDetail["status"]>("connected");
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const workspaceQuery = useWorkbenchWorkspaceQuery();
@@ -43,21 +52,62 @@ export function WorkbenchPage({ initialConversationId, onOpenDeliveryLog }: Work
     () => (workspaceQuery.data?.conversations ?? []).map(mapConversationSummary),
     [workspaceQuery.data?.conversations],
   );
-  const effectiveConversationId = selectedConversationId ?? conversations[0]?.id ?? null;
-  const { conversationsWithUnread, clearConversationUnread } = useConversationUnreadState(conversations, effectiveConversationId);
-  const apps = useMemo<HubAppSummary[]>(() => workspaceQuery.data?.apps ?? [], [workspaceQuery.data?.apps]);
-  const messagesQuery = useWorkbenchMessagesQuery(effectiveConversationId);
-  const selectedConversation = useMemo(
-    () => conversationsWithUnread.find((conversation) => conversation.id === effectiveConversationId) ?? conversationsWithUnread[0],
-    [conversationsWithUnread, effectiveConversationId],
+  const selectedAccount = useMemo(
+    () => accounts.find((account) => account.id === selectedAccountId) ?? accounts[0],
+    [accounts, selectedAccountId],
+  );
+  const visibleConversations = useMemo(
+    () => filterConversationsForAccount(conversations, selectedAccount?.id ?? null),
+    [conversations, selectedAccount?.id],
   );
   const { refreshWorkspace, refreshMessages, loadOlderMessages, refreshGroupMembers, searchGroupMembers, loadMoreGroupMembers } =
     useRefreshWorkbenchQueries();
+  const unreadConversationId = selectedConversationId ?? visibleConversations[0]?.id ?? null;
+  const { conversationsWithUnread, clearConversationUnread } = useConversationUnreadState(
+    visibleConversations,
+    unreadConversationId,
+  );
+  const conversationActions = useWorkbenchConversationActions({
+    refreshWorkspace,
+    clearConversationUnread,
+    onHiddenConversation: (conversationId) => {
+      if (conversationId === selectedConversationId) setSelectedConversationId(null);
+      if (conversationId === managementConversationId) setManagementConversationId(null);
+    },
+  });
+  const managedConversations = useMemo(
+    () => conversationActions.applyConversationOverlays(conversationsWithUnread),
+    [conversationActions, conversationsWithUnread],
+  );
+  const visibleManagedConversations = useMemo(
+    () => managedConversations.filter((conversation) => !conversation.raw.isHidden),
+    [managedConversations],
+  );
+  const effectiveConversationId = selectedConversationId ?? visibleManagedConversations[0]?.id ?? null;
+  const apps = useMemo<HubAppSummary[]>(() => workspaceQuery.data?.apps ?? [], [workspaceQuery.data?.apps]);
+  const messagesQuery = useWorkbenchMessagesQuery(effectiveConversationId);
+  const selectedConversation = useMemo(
+    () => visibleManagedConversations.find((conversation) => conversation.id === effectiveConversationId) ?? visibleManagedConversations[0],
+    [visibleManagedConversations, effectiveConversationId],
+  );
+  const managementConversation = useMemo(
+    () => managedConversations.find((conversation) => conversation.id === managementConversationId),
+    [managedConversations, managementConversationId],
+  );
 
   useWorkbenchAdminEvents(effectiveConversationId);
 
   useEffect(() => {
-    if (!conversations.length) return;
+    if (!accounts.length) return;
+    if (selectedAccountId && accounts.some((account) => account.id === selectedAccountId)) return;
+    setSelectedAccountId(accounts[0]?.id ?? null);
+  }, [accounts, selectedAccountId]);
+
+  useEffect(() => {
+    if (!visibleManagedConversations.length) {
+      setSelectedConversationId(null);
+      return;
+    }
 
     if (initialConversationId !== initialConversationIdRef.current) {
       initialConversationIdRef.current = initialConversationId;
@@ -67,18 +117,18 @@ export function WorkbenchPage({ initialConversationId, onOpenDeliveryLog }: Work
       }
     }
 
-    if (selectedConversationId && conversations.some((conversation) => conversation.id === selectedConversationId)) {
+    if (selectedConversationId && visibleManagedConversations.some((conversation) => conversation.id === selectedConversationId)) {
       return;
     }
 
     const fallbackConversationId =
-      initialConversationId && conversations.some((conversation) => conversation.id === initialConversationId)
+      initialConversationId && visibleManagedConversations.some((conversation) => conversation.id === initialConversationId)
         ? initialConversationId
-        : conversations[0]?.id;
+        : visibleManagedConversations[0]?.id;
     if (fallbackConversationId) {
       setSelectedConversationId(fallbackConversationId);
     }
-  }, [conversations, initialConversationId, selectedConversationId]);
+  }, [initialConversationId, selectedConversationId, visibleManagedConversations]);
 
   useEffect(() => {
     function handleEventSourceStatus(event: Event) {
@@ -91,7 +141,7 @@ export function WorkbenchPage({ initialConversationId, onOpenDeliveryLog }: Work
   }, []);
 
   const messageState = useWorkbenchMessagesController({
-    account: accounts[0],
+    account: selectedAccount,
     effectiveConversationId,
     selectedConversation,
     messagesQuery,
@@ -113,12 +163,30 @@ export function WorkbenchPage({ initialConversationId, onOpenDeliveryLog }: Work
     searchGroupMembers,
     loadMoreGroupMembers,
   });
+  const managementDetail = useWorkbenchDetailController({
+    selectedConversation: managementConversation,
+    apps,
+    refreshWorkspace,
+    refreshGroupMembers,
+    searchGroupMembers,
+    loadMoreGroupMembers,
+  });
   const error = readQueryError(workspaceQuery.error) ?? readQueryError(messagesQuery.error);
 
   function selectConversation(conversationId: string) {
     clearConversationUnread(conversationId);
-    void markWorkbenchConversationRead(conversationId).catch(() => undefined);
+    const conversation = managedConversations.find((item) => item.id === conversationId);
+    if (conversation) void conversationActions.markRead(conversation);
     setSelectedConversationId(conversationId);
+    messageState.clearSelectedMessage();
+  }
+
+  function selectAccount(accountId: string) {
+    if (accountId === selectedAccount?.id) return;
+    setSelectedAccountId(accountId);
+    const nextConversationId = filterConversationsForAccount(managedConversations, accountId)[0]?.id ?? null;
+    setSelectedConversationId(nextConversationId);
+    syncAccountIdToUrl(accountId);
     messageState.clearSelectedMessage();
   }
 
@@ -141,11 +209,27 @@ export function WorkbenchPage({ initialConversationId, onOpenDeliveryLog }: Work
       <div className="flex min-h-0 flex-1">
         <ConversationList
           accounts={accounts}
-          conversations={conversationsWithUnread}
+          selectedAccountId={selectedAccount?.id ?? null}
+          conversations={managedConversations}
           selectedConversationId={effectiveConversationId}
           loading={workspaceQuery.isLoading}
           error={error}
           onSelectConversation={selectConversation}
+          onSelectAccount={selectAccount}
+          onTogglePinned={(conversation) => {
+            void conversationActions.togglePinned(conversation);
+          }}
+          onHideConversation={(conversation) => {
+            void conversationActions.hideConversation(conversation);
+          }}
+          onMarkRead={(conversation) => {
+            void conversationActions.markRead(conversation);
+          }}
+          onEditRemark={conversationActions.openRemarkDialog}
+          onOpenManagement={(conversation) => {
+            setSelectedConversationId(conversation.id);
+            setManagementConversationId(conversation.id);
+          }}
         />
 
         <MessagePanel
@@ -271,7 +355,34 @@ export function WorkbenchPage({ initialConversationId, onOpenDeliveryLog }: Work
             setDebugMessageId(message.id);
           }}
         />
+        <WorkbenchConversationOverlays
+          conversation={managementConversation}
+          account={selectedAccount}
+          detail={managementDetail}
+          actions={conversationActions}
+          onCloseManagement={() => setManagementConversationId(null)}
+        />
       </div>
     </div>
   );
+}
+
+function readInitialAccountId(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("accountId");
+}
+
+function syncAccountIdToUrl(accountId: string) {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.set("accountId", accountId);
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function filterConversationsForAccount(conversations: ConversationSummary[], accountId: AccountSummary["id"] | null) {
+  return conversations.filter((conversation) => {
+    if (conversation.raw.isHidden) return false;
+    if (!accountId) return true;
+    return !conversation.raw.accountId || conversation.raw.accountId === accountId;
+  });
 }
