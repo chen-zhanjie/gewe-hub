@@ -2,6 +2,7 @@ import type { MessageNode } from "@gewehub/contracts";
 import { Banknote, Contact, Gift, MapPin, MessagesSquare, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
+import { layers } from "@/components/ui/layers";
 import { cn } from "@/lib/utils";
 
 interface MessageNodeViewProps {
@@ -230,7 +231,7 @@ function ChatRecordDialog({ node, onClose }: { node: MessageNode; onClose: () =>
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+      className={cn("fixed inset-0 flex items-center justify-center bg-black/45 p-4", layers.dialog)}
       onClick={(event) => {
         event.stopPropagation();
         onClose();
@@ -304,7 +305,7 @@ function ImagePreview({ node }: { node: MessageNode }) {
           role="dialog"
           aria-modal="true"
           aria-label="图片预览"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          className={cn("fixed inset-0 flex items-center justify-center bg-black/70 p-4", layers.dialog)}
           onClick={(event) => {
             event.stopPropagation();
             setOpen(false);

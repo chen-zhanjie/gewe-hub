@@ -221,6 +221,7 @@ describe("WorkbenchPage detail surfaces", () => {
 
     const panel = await screen.findByLabelText("群成员面板");
     expect(await within(panel).findByText("负责人(可乐)")).toBeInTheDocument();
+    expect(within(panel).queryByText("正在加载成员")).not.toBeInTheDocument();
     expect(within(panel).getByRole("heading", { name: "成员 2" })).toBeInTheDocument();
     expect(within(panel).getAllByText("负责人").length).toBeGreaterThan(0);
     expect(within(panel).getByText("离群成员")).toBeInTheDocument();
@@ -479,6 +480,7 @@ describe("WorkbenchPage detail surfaces", () => {
       ),
     );
     const dialog = await screen.findByRole("dialog", { name: "联系人详情" });
+    expect(within(dialog).queryByText("正在加载联系人详情")).not.toBeInTheDocument();
     expect(within(dialog).getAllByText("负责人").length).toBeGreaterThan(0);
     expect(within(dialog).getByText("可乐")).toBeInTheDocument();
     expect(within(dialog).getAllByText("wxid_owner").length).toBeGreaterThan(0);

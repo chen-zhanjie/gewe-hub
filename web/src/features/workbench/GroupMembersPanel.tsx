@@ -1,6 +1,7 @@
 import { MoreHorizontal, Pencil, Search, UserRound } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
+import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -91,7 +92,7 @@ function GroupMembersContent({
     setSearch(data?.search ?? "");
   }, [data?.search]);
 
-  if (loading) return <div className="text-sm text-muted-foreground">正在加载成员</div>;
+  if (loading) return <SkeletonBlock rows={6} />;
   if (error) return <div className="rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</div>;
   if (!data?.group) return <div className="text-sm text-muted-foreground">未找到本地群资料，请先同步群成员</div>;
 
@@ -112,7 +113,7 @@ function GroupMembersContent({
           placeholder="搜索群成员"
         />
       </label>
-      {searching ? <div className="text-sm text-muted-foreground">正在搜索群成员</div> : null}
+      {searching ? <SkeletonBlock rows={2} /> : null}
       {filteredMembers.length === 0 ? <div className="text-sm text-muted-foreground">无匹配成员</div> : null}
       <div className="space-y-1">
         {filteredMembers.map((member) => (

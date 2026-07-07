@@ -9,7 +9,7 @@ import {
   type HubAppSummary,
   type WorkbenchGroupMembersData,
 } from "@/features/workbench/queries";
-import type { BindingDraft } from "@/features/workbench/workbench-detail-types";
+import type { BindingDraft } from "@/features/workbench/workbench-conversation-surface-types";
 import {
   asBackendConversation,
   formatNullableNumber,
@@ -18,7 +18,7 @@ import {
 } from "@/features/workbench/workbench-helpers";
 import type { BackendMessage, ConversationSummary } from "@/lib/workspace-data";
 
-interface WorkbenchDetailControllerOptions {
+interface WorkbenchConversationSurfaceControllerOptions {
   selectedConversation?: ConversationSummary;
   apps: HubAppSummary[];
   refreshWorkspace: () => Promise<unknown>;
@@ -27,14 +27,14 @@ interface WorkbenchDetailControllerOptions {
   loadMoreGroupMembers: (conversation: ConversationSummary) => Promise<WorkbenchGroupMembersData | undefined>;
 }
 
-export function useWorkbenchDetailController({
+export function useWorkbenchConversationSurfaceController({
   selectedConversation,
   apps,
   refreshWorkspace,
   refreshGroupMembers,
   searchGroupMembers,
   loadMoreGroupMembers,
-}: WorkbenchDetailControllerOptions) {
+}: WorkbenchConversationSurfaceControllerOptions) {
   const [bindingSaving, setBindingSaving] = useState(false);
   const [remarkSaving, setRemarkSaving] = useState(false);
   const [bindingError, setBindingError] = useState<string | null>(null);

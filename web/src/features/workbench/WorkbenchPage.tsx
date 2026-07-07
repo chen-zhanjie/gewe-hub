@@ -19,7 +19,7 @@ import {
 import { useWorkbenchConversationActions } from "@/features/workbench/useWorkbenchConversationActions";
 import { useConversationUnreadState } from "@/features/workbench/useConversationUnreadState";
 import { useWorkbenchComposerController } from "@/features/workbench/useWorkbenchComposerController";
-import { useWorkbenchDetailController } from "@/features/workbench/useWorkbenchDetailController";
+import { useWorkbenchConversationSurfaceController } from "@/features/workbench/useWorkbenchConversationSurfaceController";
 import { useWorkbenchMessagesController } from "@/features/workbench/useWorkbenchMessagesController";
 import { readQueryError } from "@/features/workbench/workbench-helpers";
 import {
@@ -169,7 +169,7 @@ export function WorkbenchPage({
     refreshMessages,
     onSendText: messageState.handleSendText,
   });
-  const detail = useWorkbenchDetailController({
+  const conversationSurface = useWorkbenchConversationSurfaceController({
     selectedConversation,
     apps,
     refreshWorkspace,
@@ -177,7 +177,7 @@ export function WorkbenchPage({
     searchGroupMembers,
     loadMoreGroupMembers,
   });
-  const managementDetail = useWorkbenchDetailController({
+  const managementConversationSurface = useWorkbenchConversationSurfaceController({
     selectedConversation: managementConversation,
     apps,
     refreshWorkspace,
@@ -305,21 +305,21 @@ export function WorkbenchPage({
 
         <GroupMembersPanel
           conversation={selectedConversation}
-          data={detail.groupMembersQuery.data}
-          loading={detail.groupMembersQuery.isLoading}
-          error={detail.groupMembersError}
-          savingMemberId={detail.savingMemberId}
-          loadingMore={detail.loadingMoreMembers}
-          searching={detail.searchingMembers}
+          data={conversationSurface.groupMembersQuery.data}
+          loading={conversationSurface.groupMembersQuery.isLoading}
+          error={conversationSurface.groupMembersError}
+          savingMemberId={conversationSurface.savingMemberId}
+          loadingMore={conversationSurface.loadingMoreMembers}
+          searching={conversationSurface.searchingMembers}
           onOpenContact={openContactProfile}
           onSaveRemark={(memberId, remark) => {
-            void detail.handleSaveGroupMemberRemark(memberId, remark);
+            void conversationSurface.handleSaveGroupMemberRemark(memberId, remark);
           }}
           onLoadMore={() => {
-            void detail.handleLoadMoreGroupMembers();
+            void conversationSurface.handleLoadMoreGroupMembers();
           }}
           onSearch={(search) => {
-            void detail.handleSearchGroupMembers(search);
+            void conversationSurface.handleSearchGroupMembers(search);
           }}
         />
         <MessageDebugDialog
@@ -348,7 +348,7 @@ export function WorkbenchPage({
         <WorkbenchConversationOverlays
           conversation={managementConversation}
           account={selectedAccount}
-          detail={managementDetail}
+          conversationSurface={managementConversationSurface}
           actions={conversationActions}
           onCloseManagement={() => setManagementConversationId(null)}
         />

@@ -11,7 +11,7 @@ import {
 import { Avatar } from "@/components/ui/Avatar";
 import { DetailSheet } from "@/components/ui/DetailSheet";
 import type { HubAppSummary } from "@/features/workbench/queries";
-import type { BindingDraft } from "@/features/workbench/workbench-detail-types";
+import type { BindingDraft } from "@/features/workbench/workbench-conversation-surface-types";
 import type { AccountSummary, ConversationSummary } from "@/lib/workspace-data";
 import type { ReactNode } from "react";
 

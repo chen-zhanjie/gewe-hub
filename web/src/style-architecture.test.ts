@@ -77,4 +77,46 @@ describe("全局样式架构", () => {
       expect(source).toContain("data-[state=open]:zoom-in-95");
     }
   });
+
+  it("浮层层级走统一 z-index 常量，Toast 右上最多显示 3 条", () => {
+    const appSource = readFileSync(resolve(__dirname, "App.tsx"), "utf8");
+    const layersSource = readFileSync(resolve(__dirname, "components/ui/layers.ts"), "utf8");
+    const dialogSource = readFileSync(resolve(__dirname, "components/ui/Dialog.tsx"), "utf8");
+    const alertDialogSource = readFileSync(resolve(__dirname, "components/ui/AlertDialog.tsx"), "utf8");
+    const sheetSource = readFileSync(resolve(__dirname, "components/ui/Sheet.tsx"), "utf8");
+    const popoverSource = readFileSync(resolve(__dirname, "components/ui/Popover.tsx"), "utf8");
+    const contextMenuSource = readFileSync(resolve(__dirname, "components/ui/ContextMenu.tsx"), "utf8");
+    const tooltipSource = readFileSync(resolve(__dirname, "components/ui/Tooltip.tsx"), "utf8");
+    const messageNodeSource = readFileSync(resolve(__dirname, "components/message/MessageNodeView.tsx"), "utf8");
+
+    expect(layersSource).toContain('overlay: "z-40"');
+    expect(layersSource).toContain('dialog: "z-50"');
+    expect(layersSource).toContain('popover: "z-50"');
+    expect(layersSource).toContain('toast: "z-[60]"');
+    expect(appSource).toContain("visibleToasts={3}");
+    expect(appSource).toContain("className={layers.toast}");
+
+    for (const source of [dialogSource, alertDialogSource, sheetSource]) {
+      expect(source).toContain("layers.overlay");
+      expect(source).toContain("layers.dialog");
+    }
+
+    for (const source of [popoverSource, contextMenuSource, tooltipSource]) {
+      expect(source).toContain("layers.popover");
+    }
+
+    expect(messageNodeSource).toContain("layers.dialog");
+
+    const sourcesWithoutLayerDefinition = [
+      appSource,
+      dialogSource,
+      alertDialogSource,
+      sheetSource,
+      popoverSource,
+      contextMenuSource,
+      tooltipSource,
+      messageNodeSource,
+    ].join("\n");
+    expect(sourcesWithoutLayerDefinition).not.toMatch(/\bz-(?:40|50|\[60\])\b/);
+  });
 });

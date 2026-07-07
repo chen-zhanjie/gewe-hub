@@ -1,13 +1,13 @@
 import { ConversationManagementSheet } from "@/features/workbench/ConversationManagementSheet";
 import { ConversationRemarkDialog } from "@/features/workbench/ConversationRemarkDialog";
 import type { useWorkbenchConversationActions } from "@/features/workbench/useWorkbenchConversationActions";
-import type { useWorkbenchDetailController } from "@/features/workbench/useWorkbenchDetailController";
+import type { useWorkbenchConversationSurfaceController } from "@/features/workbench/useWorkbenchConversationSurfaceController";
 import type { AccountSummary, ConversationSummary } from "@/lib/workspace-data";
 
 interface WorkbenchConversationOverlaysProps {
   conversation?: ConversationSummary;
   account?: AccountSummary;
-  detail: ReturnType<typeof useWorkbenchDetailController>;
+  conversationSurface: ReturnType<typeof useWorkbenchConversationSurfaceController>;
   actions: ReturnType<typeof useWorkbenchConversationActions>;
   onCloseManagement: () => void;
 }
@@ -15,7 +15,7 @@ interface WorkbenchConversationOverlaysProps {
 export function WorkbenchConversationOverlays({
   conversation,
   account,
-  detail,
+  conversationSurface,
   actions,
   onCloseManagement,
 }: WorkbenchConversationOverlaysProps) {
@@ -25,28 +25,28 @@ export function WorkbenchConversationOverlays({
         open={Boolean(conversation)}
         conversation={conversation}
         account={account}
-        apps={detail.apps}
-        bindingDraft={detail.bindingDraft}
-        bindingSaving={detail.bindingSaving}
-        bindingError={detail.bindingError}
-        conversationRemarkDraft={detail.conversationRemarkDraft}
-        remarkSaving={detail.remarkSaving}
-        remarkError={detail.remarkError}
-        confirmingUnbind={detail.confirmingUnbind}
+        apps={conversationSurface.apps}
+        bindingDraft={conversationSurface.bindingDraft}
+        bindingSaving={conversationSurface.bindingSaving}
+        bindingError={conversationSurface.bindingError}
+        conversationRemarkDraft={conversationSurface.conversationRemarkDraft}
+        remarkSaving={conversationSurface.remarkSaving}
+        remarkError={conversationSurface.remarkError}
+        confirmingUnbind={conversationSurface.confirmingUnbind}
         onOpenChange={(open) => {
           if (!open) onCloseManagement();
         }}
-        onBindingDraftChange={detail.setBindingDraft}
-        onRemarkChange={detail.setConversationRemarkDraft}
-        onSaveRemark={detail.handleSaveConversationRemark}
+        onBindingDraftChange={conversationSurface.setBindingDraft}
+        onRemarkChange={conversationSurface.setConversationRemarkDraft}
+        onSaveRemark={conversationSurface.handleSaveConversationRemark}
         onSaveBinding={() => {
-          void detail.handleSaveBinding();
+          void conversationSurface.handleSaveBinding();
         }}
-        onUnbind={detail.requestUnbindConversation}
+        onUnbind={conversationSurface.requestUnbindConversation}
         onConfirmUnbind={() => {
-          void detail.confirmUnbindConversation();
+          void conversationSurface.confirmUnbindConversation();
         }}
-        onCancelUnbind={() => detail.setConfirmingUnbind(false)}
+        onCancelUnbind={() => conversationSurface.setConfirmingUnbind(false)}
       />
       <ConversationRemarkDialog
         conversation={actions.remarkDialog.conversation}

@@ -18,6 +18,8 @@ describe("EntityCell", () => {
 
     expect(screen.getByText("VIP 客户")).toBeInTheDocument();
     expect(screen.getByText("wxid_customer")).toBeInTheDocument();
+    expect(screen.getByText("VIP 客户")).toHaveAttribute("title", "VIP 客户");
+    expect(screen.getByText("wxid_customer")).toHaveAttribute("title", "wxid_customer");
 
     fireEvent.error(screen.getByRole("img", { name: "VIP 客户" }));
     expect(screen.getByText("V")).toBeInTheDocument();

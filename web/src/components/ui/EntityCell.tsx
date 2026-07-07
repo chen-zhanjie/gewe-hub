@@ -22,8 +22,8 @@ export function EntityCell({ entity, className }: EntityCellProps) {
     <span className={cn("flex min-w-0 items-center gap-2", className)}>
       <Avatar name={name} src={entity.avatarUrl} size={24} />
       <span className="min-w-0">
-        <span className="block truncate text-sm font-medium">{name}</span>
-        {note ? <span className="block truncate font-mono text-xs text-muted-foreground">{note}</span> : null}
+        <span className="block truncate text-sm font-medium" title={name}>{name}</span>
+        {note ? <span className="block truncate font-mono text-xs text-muted-foreground" title={note}>{note}</span> : null}
       </span>
     </span>
   );

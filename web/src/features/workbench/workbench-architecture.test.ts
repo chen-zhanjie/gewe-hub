@@ -136,17 +136,40 @@ describe("Workbench 前端架构", () => {
   it("旧右侧会话详情面板已删除，群成员面板和会话管理抽屉承接新详情入口", () => {
     const source = readFileSync(resolve(__dirname, "WorkbenchPage.tsx"), "utf8");
     const detailPanelPath = resolve(__dirname, "DetailPanel.tsx");
+    const legacyDetailControllerPath = resolve(__dirname, "useWorkbenchDetailController.ts");
+    const legacyDetailTypesPath = resolve(__dirname, "workbench-detail-types.ts");
+    const conversationSurfaceControllerPath = resolve(__dirname, "useWorkbenchConversationSurfaceController.ts");
+    const conversationSurfaceTypesPath = resolve(__dirname, "workbench-conversation-surface-types.ts");
     const groupMembersPanelPath = resolve(__dirname, "GroupMembersPanel.tsx");
     const conversationManagementSheetPath = resolve(__dirname, "ConversationManagementSheet.tsx");
 
     expect(existsSync(detailPanelPath)).toBe(false);
+    expect(existsSync(legacyDetailControllerPath)).toBe(false);
+    expect(existsSync(legacyDetailTypesPath)).toBe(false);
+    expect(existsSync(conversationSurfaceControllerPath)).toBe(true);
+    expect(existsSync(conversationSurfaceTypesPath)).toBe(true);
     expect(existsSync(groupMembersPanelPath)).toBe(true);
     expect(existsSync(conversationManagementSheetPath)).toBe(true);
     expect(source).not.toContain('from "@/features/workbench/DetailPanel"');
+    expect(source).not.toContain("useWorkbenchDetailController");
     expect(source).toContain('from "@/features/workbench/GroupMembersPanel"');
+    expect(source).toContain('from "@/features/workbench/useWorkbenchConversationSurfaceController"');
     expect(source).toContain('from "@/features/workbench/WorkbenchConversationOverlays"');
     expect(source).not.toContain("function DetailSection(");
     expect(source).not.toContain("function ConversationBindingPanel(");
     expect(source).not.toContain("function MemberList(");
+  });
+
+  it("抽屉和弹窗局部加载态使用骨架，不显示裸文字占位", () => {
+    const groupMembersPanelSource = readFileSync(resolve(__dirname, "GroupMembersPanel.tsx"), "utf8");
+    const contactProfileDialogSource = readFileSync(resolve(__dirname, "ContactProfileDialog.tsx"), "utf8");
+    const skeletonBlockPath = resolve(__dirname, "../../components/ui/SkeletonBlock.tsx");
+
+    expect(existsSync(skeletonBlockPath)).toBe(true);
+    expect(groupMembersPanelSource).toContain('from "@/components/ui/SkeletonBlock"');
+    expect(contactProfileDialogSource).toContain('from "@/components/ui/SkeletonBlock"');
+    expect(groupMembersPanelSource).not.toContain("正在加载成员");
+    expect(groupMembersPanelSource).not.toContain("正在搜索群成员");
+    expect(contactProfileDialogSource).not.toContain("正在加载联系人详情");
   });
 });

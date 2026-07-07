@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/Dialog";
 import { DescriptionList } from "@/components/ui/DescriptionList";
+import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useWorkbenchContactProfileQuery } from "@/features/workbench/queries";
 
@@ -37,7 +38,7 @@ export function ContactProfileDialog({
           <DialogTitle>联系人详情</DialogTitle>
           <DialogDescription>{wxid ?? "未选择联系人"}</DialogDescription>
         </DialogHeader>
-        {profileQuery.isLoading ? <div className="text-sm text-muted-foreground">正在加载联系人详情</div> : null}
+        {profileQuery.isLoading ? <SkeletonBlock rows={3} /> : null}
         {profileQuery.error ? (
           <div className="rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">
             {profileQuery.error instanceof Error ? profileQuery.error.message : "加载联系人失败"}
