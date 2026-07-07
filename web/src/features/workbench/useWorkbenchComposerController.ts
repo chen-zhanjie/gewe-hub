@@ -9,9 +9,9 @@ import {
   readMediaDurationMs,
   readTransferFiles,
 } from "@/features/workbench/message-media-utils";
-import { sendWorkbenchLink, sendWorkbenchMedia, type WorkbenchMediaSendType } from "@/features/workbench/queries";
+import type { WorkbenchMediaSendType } from "@/features/workbench/queries";
 import { useVoiceRecorder } from "@/features/workbench/useVoiceRecorder";
-import type { BackendMessage, ConversationSummary } from "@/lib/workspace-data";
+import type { ConversationSummary, LocalSendPayload } from "@/lib/workspace-data";
 
 type MediaSendType = WorkbenchMediaSendType;
 
@@ -24,14 +24,22 @@ interface LinkDraft {
 
 interface WorkbenchComposerControllerOptions {
   selectedConversation?: ConversationSummary;
-  refreshMessages: (conversationId: string) => Promise<BackendMessage[]>;
   onSendText: (text: string) => Promise<boolean>;
+  onSendPayload: (payload: LocalSendPayload) => boolean;
+  createLocalSendPlaceholder: (
+    payload: Pick<LocalSendPayload, "type" | "fileName" | "mimeType" | "thumbUrl" | "durationMs">,
+  ) => string | null;
+  submitLocalSendPayload: (localSendId: string, payload: LocalSendPayload) => void;
+  failLocalSend: (localSendId: string, errorMessage: string) => void;
 }
 
 export function useWorkbenchComposerController({
   selectedConversation,
-  refreshMessages,
   onSendText,
+  onSendPayload,
+  createLocalSendPlaceholder,
+  submitLocalSendPayload,
+  failLocalSend,
 }: WorkbenchComposerControllerOptions) {
   const [messageText, setMessageText] = useState("");
   const [videoThumbUrl, setVideoThumbUrl] = useState("");
@@ -69,12 +77,22 @@ export function useWorkbenchComposerController({
     if (!selectedConversation || !file || sending) return;
     if (!validateMediaBeforeSend(type)) return;
 
+    const localSendId = createLocalSendPlaceholder({
+      type,
+      fileName: file.name,
+      mimeType: file.type || guessMimeType(file.name, type),
+      ...(type === "video" && videoThumbUrl.trim() ? { thumbUrl: videoThumbUrl.trim() } : {}),
+      ...(options?.durationMs ? { durationMs: options.durationMs } : {}),
+    });
+    if (!localSendId) return;
     setSending(true);
     setSendError(null);
     try {
-      await submitMediaFile(file, type, options);
+      await submitMediaFile(localSendId, file, type, options);
     } catch (sendError) {
-      setSendError(sendError instanceof Error ? sendError.message : "发送失败");
+      const errorMessage = sendError instanceof Error ? sendError.message : "发送失败";
+      setSendError(errorMessage);
+      failLocalSend(localSendId, errorMessage);
     } finally {
       setSending(false);
       resetInputValue(type);
@@ -88,7 +106,7 @@ export function useWorkbenchComposerController({
     return false;
   }
 
-  async function submitMediaFile(file: File, type: MediaSendType, options?: { durationMs?: number }) {
+  async function submitMediaFile(localSendId: string, file: File, type: MediaSendType, options?: { durationMs?: number }) {
     if (!selectedConversation) return;
     const thumbUrl = videoThumbUrl.trim();
     const [contentBase64, durationMs] = await Promise.all([
@@ -101,8 +119,7 @@ export function useWorkbenchComposerController({
             ? readMediaDurationMs(file, "video")
             : Promise.resolve(undefined),
     ]);
-    await sendWorkbenchMedia({
-      conversationId: selectedConversation.id,
+    submitLocalSendPayload(localSendId, {
       type,
       contentBase64,
       mimeType: file.type || guessMimeType(file.name, type),
@@ -111,7 +128,6 @@ export function useWorkbenchComposerController({
       ...(durationMs ? { durationMs } : {}),
     });
     if (type === "video") setVideoThumbUrl("");
-    await refreshMessages(selectedConversation.id);
   }
 
   function addPendingAttachments(files: File[]) {
@@ -140,7 +156,20 @@ export function useWorkbenchComposerController({
     try {
       const attachmentsToSend = pendingAttachments;
       for (const attachment of attachmentsToSend) {
-        await submitMediaFile(attachment.file, attachment.type);
+        const localSendId = createLocalSendPlaceholder({
+          type: attachment.type,
+          fileName: attachment.file.name,
+          mimeType: attachment.file.type || guessMimeType(attachment.file.name, attachment.type),
+          ...(attachment.type === "video" && videoThumbUrl.trim() ? { thumbUrl: videoThumbUrl.trim() } : {}),
+        });
+        if (!localSendId) continue;
+        try {
+          await submitMediaFile(localSendId, attachment.file, attachment.type);
+        } catch (sendError) {
+          const errorMessage = sendError instanceof Error ? sendError.message : "发送失败";
+          failLocalSend(localSendId, errorMessage);
+          throw sendError;
+        }
       }
       setPendingAttachments((currentAttachments) =>
         currentAttachments.filter((attachment) => !attachmentsToSend.some((sentAttachment) => sentAttachment.id === attachment.id)),
@@ -204,13 +233,11 @@ export function useWorkbenchComposerController({
     setSending(true);
     setSendError(null);
     try {
-      await sendWorkbenchLink({
-        conversationId: selectedConversation.id,
+      onSendPayload({
         type: "link",
         ...payload,
       });
       setLinkDraft({ title: "", desc: "", linkUrl: "", thumbUrl: "" });
-      await refreshMessages(selectedConversation.id);
     } catch (sendError) {
       setSendError(sendError instanceof Error ? sendError.message : "发送失败");
     } finally {

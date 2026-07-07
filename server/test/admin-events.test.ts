@@ -25,6 +25,25 @@ describe("AdminEvents", () => {
     vi.useRealTimers();
   });
 
+  it("管理员 SSE 支持消息更新事件帧", async () => {
+    vi.useFakeTimers();
+    const service = new AdminEventsService();
+    const reply = buildSseReply();
+
+    await service.open(reply as never);
+    service.publishMessageChanged({
+      eventType: "message.updated",
+      conversationId: "conv_1",
+      messageId: "msg_1",
+    });
+
+    expect(reply.raw.write).toHaveBeenCalledWith(expect.stringContaining("event: message.updated"));
+    expect(reply.raw.write).toHaveBeenCalledWith(expect.stringContaining('"messageId":"msg_1"'));
+
+    service.onModuleDestroy();
+    vi.useRealTimers();
+  });
+
   it("管理员 SSE 连接建立后立即写入注释帧以刷新响应头", async () => {
     vi.useFakeTimers();
     const service = new AdminEventsService();

@@ -1,0 +1,30 @@
+name: gewehub-hermes-agent
+label: GeWeHub
+kind: platform
+version: 0.1.0
+description: >
+  Official Hermes Agent adapter for GeWeHub. Consumes GeWeHub application SSE
+  events and sends replies through the GeWeHub standard send API.
+author: GeWeHub
+requires_env:
+  - name: GEWEHUB_BASE_URL
+    description: "GeWeHub base URL, for example https://gewehub.example.com"
+    prompt: "GeWeHub base URL"
+    password: false
+  - name: GEWEHUB_APP_TOKEN
+    description: "GeWeHub Hub app token used as Authorization Bearer"
+    prompt: "GeWeHub app token"
+    password: true
+optional_env:
+  - name: GEWEHUB_HOME_CONVERSATION_ID
+    description: "Default GeWeHub conversation id for Hermes cron/notification delivery"
+    prompt: "Home conversation id"
+    password: false
+  - name: GEWEHUB_DEBOUNCE_MS
+    description: "Fallback text debounce window in milliseconds; GeWeHub event metadata overrides it"
+    prompt: "Debounce ms"
+    password: false
+  - name: GEWEHUB_MAX_WAIT_MS
+    description: "Fallback maximum text batch wait in milliseconds; GeWeHub event metadata overrides it"
+    prompt: "Max wait ms"
+    password: false

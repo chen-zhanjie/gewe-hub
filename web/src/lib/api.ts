@@ -15,13 +15,11 @@ export class ApiError extends Error {
 }
 
 export async function apiFetch<TResponse>(path: string, init: RequestInit = {}): Promise<TResponse> {
+  const headers = buildHeaders(init);
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...init.headers
-    }
+    headers
   });
 
   const payload = await readPayload(response);
@@ -32,6 +30,14 @@ export async function apiFetch<TResponse>(path: string, init: RequestInit = {}):
   }
 
   return payload as TResponse;
+}
+
+function buildHeaders(init: RequestInit): HeadersInit {
+  const headers = new Headers(init.headers);
+  if (init.body !== undefined && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  return Object.fromEntries(headers.entries());
 }
 
 async function readPayload(response: Response): Promise<unknown> {

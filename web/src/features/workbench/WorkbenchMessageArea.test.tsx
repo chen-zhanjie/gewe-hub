@@ -339,6 +339,72 @@ describe("WorkbenchPage message area", () => {
     expect(container.querySelector('[data-message-status="revoked"]')).toHaveClass("bg-destructive/5");
   });
 
+  it("长消息不会把头像拉到消息中部，头像保持与消息框左上对齐", async () => {
+    mockFetch({
+      "/api/accounts": [
+        {
+          id: "acc_1",
+          wxid: "wxid_bot",
+          nickname: "客服主号",
+          onlineStatus: "online",
+        },
+      ],
+      "/api/conversations": [
+        {
+          id: "conv_1",
+          peerWxid: "room@chatroom",
+          type: "group",
+          platformRemark: "真实产品群",
+          lastMessageText: "长消息",
+          lastMessageAt: "2026-07-06T07:16:37.000Z",
+          status: "active",
+        },
+      ],
+      "/api/conversations/conv_1/messages?take=50": [
+        {
+          id: "row_long",
+          messageId: "msg_long",
+          senderWxid: "wxid_sender",
+          isSelf: false,
+          status: "normal",
+          sentAt: "2026-07-06T07:16:37.000Z",
+          renderedText: "长消息",
+          senderProfile: {
+            wxid: "wxid_sender",
+            nickname: "陈可乐",
+            avatarUrl: "https://example.test/avatar.jpg",
+            status: "active",
+          },
+          payload: {
+            sender: { wxid: "wxid_sender", name: "陈可乐", isOwner: false },
+            content: {
+              type: "text",
+              text: [
+                "Cronjob Response: 每日热点推送到微信和Wiki",
+                "(job_id: 6853f4b48f3c)",
+                "-------------",
+                "今天的 Codex 早报已整理成微信阅读版：",
+                "1. Coding Agent 从会写转向能证明写对",
+                "2. 浏览器上下文开始变成前端 Agent 的必要输入",
+              ].join("\n\n"),
+            },
+          },
+          webhookEvent: { rawPayload: { TypeName: "AddMsg" } },
+          deliveries: [],
+        },
+      ],
+    });
+
+    const { container } = renderWorkbenchPage();
+
+    expect(await within(screen.getByLabelText("消息区")).findByText(/Cronjob Response/)).toBeInTheDocument();
+    const avatarButton = screen.getByRole("button", { name: "查看联系人 陈可乐" });
+    const messageRow = avatarButton.closest("article");
+
+    expect(messageRow).toHaveClass("items-start");
+    expect(avatarButton).toHaveClass("self-start", "mt-5");
+  });
+
   it("聊天流按日期分隔，并将同一发送者 3 分钟内连续消息合并为一组", async () => {
     mockFetch({
       "/api/accounts": [
@@ -384,6 +450,15 @@ describe("WorkbenchPage message area", () => {
     const groupedContinuations = container.querySelectorAll('[data-message-group-start="false"]');
     expect(groupStarts).toHaveLength(2);
     expect(groupedContinuations).toHaveLength(1);
+    expect(groupedContinuations[0]).toHaveClass("py-0.5");
+    expect(groupedContinuations[0]?.closest("[data-message-timeline-spacing]")).toHaveAttribute(
+      "data-message-timeline-spacing",
+      "compact",
+    );
+    const hoverMeta = groupedContinuations[0]?.querySelector('[data-message-meta="hover-overlay"]');
+    expect(hoverMeta).toHaveClass("absolute", "bottom-0", "left-full", "ml-2");
+    expect(hoverMeta).not.toHaveClass("top-full");
+    expect(hoverMeta?.parentElement).toHaveAttribute("data-message-content-shell", "true");
     expect(screen.getAllByRole("button", { name: "查看联系人 陈可乐" })).toHaveLength(2);
   });
 

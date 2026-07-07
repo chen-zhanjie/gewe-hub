@@ -569,13 +569,26 @@ describe("WorkbenchPage detail surfaces", () => {
     await waitFor(() => expect(within(sheet).getAllByText("msg_context").length).toBeGreaterThan(0));
     expect(within(sheet).getAllByText("del_context").length).toBeGreaterThan(0);
 
+    expect(within(sheet).queryByRole("button", { name: "复制标准 JSON" })).not.toBeInTheDocument();
+    expect(within(sheet).queryByRole("button", { name: "复制原始 payload" })).not.toBeInTheDocument();
+    expect(within(sheet).queryByRole("button", { name: "复制投递记录" })).not.toBeInTheDocument();
+
+    const selectTab = async (name: string) => {
+      const tab = within(sheet).getByRole("tab", { name });
+      fireEvent.keyDown(tab, { key: "Enter" });
+      await waitFor(() => expect(tab).toHaveAttribute("aria-selected", "true"));
+    };
+
+    await selectTab("标准 JSON");
     fireEvent.click(within(sheet).getByRole("button", { name: "复制标准 JSON" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"type": "text"')));
 
+    await selectTab("原始 payload");
     fireEvent.click(within(sheet).getByRole("button", { name: "复制原始 payload" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"MsgId": "123"')));
 
-    fireEvent.click(within(sheet).getByRole("button", { name: "复制投递记录" }));
+    await selectTab("投递记录");
+    fireEvent.click(within(sheet).getByRole("button", { name: "复制投递记录 JSON" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"eventId": "del_context"')));
   });
 });

@@ -15,6 +15,7 @@ coverage/
 # Runtime and logs
 runtime/
 storage/
+uploads/
 logs/
 *.log
 
@@ -23,7 +24,21 @@ logs/
 .env.*
 !.env.example
 
+# Python
+__pycache__/
+*.py[cod]
+
+# Tool caches
+.turbo/
+.vite/
+
 # OS and editor
 .DS_Store
 .idea/
 .vscode/
+
+# Local worktrees and generated files
+.worktrees/
+worktrees/
+server/generated/
+server/prisma/migrations/*/migration_lock.toml

@@ -421,6 +421,8 @@ describe("MediaService", () => {
           },
           message: {
             id: "message_row_1",
+            conversationId: "conv_1",
+            messageId: "msg_1",
             payload,
           },
         })),
@@ -445,7 +447,10 @@ describe("MediaService", () => {
           }),
       ),
     );
-    const service = new MediaService(prisma as never, gewe as never);
+    const adminEvents = {
+      publishMessageChanged: vi.fn(),
+    };
+    const service = new MediaService(prisma as never, gewe as never, undefined, undefined, adminEvents as never);
 
     await service.downloadMediaAsset("asset_1");
 
@@ -488,6 +493,11 @@ describe("MediaService", () => {
         renderedText: "[图片]",
       }),
     });
+    expect(adminEvents.publishMessageChanged).toHaveBeenCalledWith({
+      eventType: "message.updated",
+      conversationId: "conv_1",
+      messageId: "msg_1",
+    });
   });
 
   it("GeWe 下载响应头为错误 octst-stream 时按 URL 纠正图片 MIME", async () => {
@@ -508,6 +518,8 @@ describe("MediaService", () => {
           },
           message: {
             id: "message_row_1",
+            conversationId: "conv_1",
+            messageId: "msg_1",
             payload,
           },
         })),
@@ -569,6 +581,8 @@ describe("MediaService", () => {
           },
           message: {
             id: "message_row_1",
+            conversationId: "conv_1",
+            messageId: "msg_1",
             payload,
           },
         })),
@@ -866,6 +880,8 @@ describe("MediaService", () => {
           nodePath: "content.items[0].media",
           message: {
             id: "message_row_1",
+            conversationId: "conv_1",
+            messageId: "msg_1",
             payload,
           },
         })),
@@ -880,10 +896,15 @@ describe("MediaService", () => {
         })),
       },
     };
+    const adminEvents = {
+      publishMessageChanged: vi.fn(),
+    };
     const service = new MediaService(
       prisma as never,
       {} as never,
       { createForMessage: vi.fn() } as never,
+      undefined,
+      adminEvents as never,
     );
 
     await service.markMediaAssetFailedAndDeliver(
@@ -909,6 +930,11 @@ describe("MediaService", () => {
         }),
         renderedText: "[聊天记录] 群聊的聊天记录",
       }),
+    });
+    expect(adminEvents.publishMessageChanged).toHaveBeenCalledWith({
+      eventType: "message.updated",
+      conversationId: "conv_1",
+      messageId: "msg_1",
     });
   });
 
@@ -1044,7 +1070,10 @@ describe("MediaService", () => {
 
   it("发送前将上传图片写入 outbound 存储并生成签名 URL", async () => {
     const service = new MediaService({} as never, {} as never);
-    const bytes = Buffer.from([137, 80, 78, 71]);
+    const bytes = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAABAAAAAQBPJcTWAAAADElEQVR4nGP8x8AAAAMCAQBFsWYPAAAAAElFTkSuQmCC",
+      "base64",
+    );
 
     const prepared = await service.prepareOutboundFile({
       accountId: "account_1",
@@ -1058,12 +1087,63 @@ describe("MediaService", () => {
     expect(prepared.url).toContain("http://localhost:3000/files/outbound/out_");
     expect(prepared.mimeType).toBe("image/png");
     expect(prepared.fileName).toBe("screenshot.png");
-    expect(prepared.size).toBe(bytes.byteLength);
-    expect(readFileSync(prepared.path)).toEqual(bytes);
+    expect(prepared.size).toBeGreaterThan(0);
+    expect(readFileSync(prepared.path).subarray(0, 8)).toEqual(
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    );
     await expect(service.getOutboundFile(prepared.id)).resolves.toEqual(
       expect.objectContaining({
         mimeType: "image/png",
         fileName: "screenshot.png",
+        size: prepared.size,
+      }),
+    );
+  });
+
+  it("发送前会把 JPEG 图片标准化，移除 JUMBF/C2PA 元数据", async () => {
+    const service = new MediaService({} as never, {} as never);
+    const bytes = Buffer.from(
+      "/9j/6wAcanVtYgAAAB5qdW1kYzJwYQB0ZXN0LWMycGH/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMQD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABMAAEBAAAAAAAAAAAAAAAAAAAABgEBAQAAAAAAAAAAAAAAAAAABgcQAQAAAAAAAAAAAAAAAAAAAAARAQAAAAAAAAAAAAAAAAAAAAD/wAARCAAIAAgDASIAAhEAAxEA/9oADAMBAAIRAxEAPwCLAE1/f//Z",
+      "base64",
+    );
+
+    const prepared = await service.prepareOutboundFile({
+      accountId: "account_1",
+      conversationId: "conversation_1",
+      kind: "image",
+      contentBase64: bytes.toString("base64"),
+      mimeType: "image/jpeg",
+      fileName: "generated.jpg",
+    });
+    const written = readFileSync(prepared.path);
+
+    expect(prepared.mimeType).toBe("image/jpeg");
+    expect(prepared.fileName).toBe("generated.jpg");
+    expect(written.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
+    expect(written.includes(Buffer.from("jumb"))).toBe(false);
+    expect(written.includes(Buffer.from("c2pa"))).toBe(false);
+  });
+
+  it("服务重启后仍可按 outbound 文件 ID 从磁盘读取出站文件", async () => {
+    const service = new MediaService({} as never, {} as never);
+    const bytes = Buffer.from("hello outbound");
+    const prepared = await service.prepareOutboundFile({
+      accountId: "account_1",
+      conversationId: "conversation_1",
+      kind: "file",
+      contentBase64: bytes.toString("base64"),
+      mimeType: "text/plain",
+      fileName: "note.txt",
+    });
+    vi.resetModules();
+    const { MediaService: FreshMediaService } = await import("../src/modules/media/media.service.js");
+    const restartedService = new FreshMediaService({} as never, {} as never);
+
+    await expect(restartedService.getOutboundFile(prepared.id)).resolves.toEqual(
+      expect.objectContaining({
+        path: prepared.path,
+        mimeType: "text/plain",
+        fileName: "note.txt",
         size: bytes.byteLength,
       }),
     );

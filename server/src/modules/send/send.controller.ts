@@ -7,7 +7,7 @@ import { GeweClientService } from "../gewe/gewe-client.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { mapSendRequestToGewe } from "./send-utils.js";
 
-const sendRequestStatusSchema = z.enum(["success", "failed", "in_progress", "pending", "sent"]);
+const sendRequestStatusSchema = z.enum(["success", "failed", "in_progress", "pending", "sent", "unknown"]);
 const DEFAULT_TAKE = 100;
 const MAX_TAKE = 200;
 
@@ -128,6 +128,14 @@ export class SendController {
       orderBy: { createdAt: "desc" },
       take: parseTake(rawTake),
       skip: parseSkip(rawSkip)
+    });
+  }
+
+  @Get("/api/send-requests/:id")
+  async detail(@Param("id") id: string) {
+    return this.prisma.sendRequest.findUniqueOrThrow({
+      where: { id },
+      include: { conversation: true, app: true }
     });
   }
 }

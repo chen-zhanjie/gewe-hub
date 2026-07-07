@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { GeweRequestTimeoutError } from "../src/modules/gewe/gewe-client.service.js";
 import { OutboxService } from "../src/modules/outbox/outbox.service.js";
 
 describe("OutboxService 发送任务", () => {
@@ -734,6 +735,203 @@ describe("OutboxService 发送任务", () => {
       }),
       update: expect.objectContaining({
         renderedText: "[链接] 链接标题"
+      })
+    });
+  });
+
+  it("GeWe 发送业务失败时标记发送请求失败并保留 outbox 重试错误", async () => {
+    const prisma = {
+      outboxTask: {
+        findFirst: vi.fn(async () => ({
+          id: "task_failed_image",
+          taskType: "send",
+          refId: "send_failed_image",
+          payload: { sendRequestId: "send_failed_image" },
+          retryCount: 0,
+          maxRetry: 5
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      sendRequest: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "send_failed_image",
+          accountId: "account_1",
+          conversationId: "conversation_1",
+          type: "image",
+          requestPayload: {
+            conversationId: "conversation_1",
+            type: "image",
+            contentBase64: "iVBORw0KGgo=",
+            mimeType: "image/png",
+            fileName: "screenshot.png"
+          },
+          geweRequest: {
+            path: "/gewe/v2/api/message/postImage",
+            body: {
+              appId: "wx_app",
+              toWxid: "wxid_target",
+              source: {
+                contentBase64: "iVBORw0KGgo=",
+                mimeType: "image/png",
+                fileName: "screenshot.png"
+              }
+            }
+          },
+          conversation: {
+            id: "conversation_1",
+            peerWxid: "wxid_target",
+            account: {
+              wxid: "wxid_bot"
+            }
+          }
+        })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      message: {
+        findUnique: vi.fn(async () => null),
+        upsert: vi.fn(async (_args: unknown) => ({}))
+      },
+      conversation: {
+        update: vi.fn(async () => ({}))
+      }
+    };
+    const media = {
+      prepareOutboundFile: vi.fn(async () => ({
+        url: "http://localhost:8090/files/outbound/out_image?exp=1893456000&sig=test",
+        mimeType: "image/png",
+        fileName: "screenshot.png",
+        size: 8
+      }))
+    };
+    const gewe = {
+      sendByMappedRequest: vi.fn(async () => {
+        throw new Error("GeWe 发送失败: 图片格式错误");
+      })
+    };
+    const service = new OutboxService(
+      prisma as never,
+      { createForMessage: vi.fn() } as never,
+      { syncContacts: vi.fn(), syncGroupMembers: vi.fn() } as never,
+      media as never,
+      gewe as never
+    );
+
+    await service.tick();
+
+    expect(prisma.message.upsert).not.toHaveBeenCalled();
+    expect(prisma.sendRequest.update).toHaveBeenCalledWith({
+      where: { id: "send_failed_image" },
+      data: {
+        status: "failed",
+        errorMessage: "GeWe 发送失败: 图片格式错误"
+      }
+    });
+    expect(prisma.outboxTask.update).toHaveBeenLastCalledWith({
+      where: { id: "task_failed_image" },
+      data: expect.objectContaining({
+        status: "pending",
+        retryCount: 1,
+        lastError: "GeWe 发送失败: 图片格式错误"
+      })
+    });
+  });
+
+  it("GeWe 发送超时时标记发送状态未知并停止自动重试，避免重复发送", async () => {
+    const prisma = {
+      outboxTask: {
+        findFirst: vi.fn(async () => ({
+          id: "task_timeout_file",
+          taskType: "send",
+          refId: "send_timeout_file",
+          payload: { sendRequestId: "send_timeout_file" },
+          retryCount: 0,
+          maxRetry: 5
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      sendRequest: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "send_timeout_file",
+          accountId: "account_1",
+          conversationId: "conversation_1",
+          type: "file",
+          requestPayload: {
+            conversationId: "conversation_1",
+            type: "file",
+            contentBase64: "JVBERi0=",
+            mimeType: "application/pdf",
+            fileName: "file.pdf"
+          },
+          geweRequest: {
+            path: "/gewe/v2/api/message/postFile",
+            body: {
+              appId: "wx_app",
+              toWxid: "wxid_target",
+              source: {
+                contentBase64: "JVBERi0=",
+                mimeType: "application/pdf",
+                fileName: "file.pdf"
+              }
+            }
+          },
+          conversation: {
+            id: "conversation_1",
+            peerWxid: "wxid_target",
+            account: {
+              wxid: "wxid_bot"
+            }
+          }
+        })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      message: {
+        findUnique: vi.fn(async () => null),
+        upsert: vi.fn(async (_args: unknown) => ({}))
+      },
+      conversation: {
+        update: vi.fn(async () => ({}))
+      }
+    };
+    const media = {
+      prepareOutboundFile: vi.fn(async () => ({
+        url: "http://localhost:8090/files/outbound/out_file?exp=1893456000&sig=test",
+        mimeType: "application/pdf",
+        fileName: "file.pdf",
+        size: 8
+      }))
+    };
+    const gewe = {
+      sendByMappedRequest: vi.fn(async () => {
+        throw new GeweRequestTimeoutError("/gewe/v2/api/message/postFile", 120000);
+      })
+    };
+    const service = new OutboxService(
+      prisma as never,
+      { createForMessage: vi.fn() } as never,
+      { syncContacts: vi.fn(), syncGroupMembers: vi.fn() } as never,
+      media as never,
+      gewe as never
+    );
+
+    await service.tick();
+
+    expect(prisma.message.upsert).not.toHaveBeenCalled();
+    expect(prisma.sendRequest.update).toHaveBeenCalledWith({
+      where: { id: "send_timeout_file" },
+      data: {
+        status: "unknown",
+        errorMessage: "GeWe 请求超时，发送结果未知，已停止自动重试以避免重复发送"
+      }
+    });
+    expect(prisma.outboxTask.update).toHaveBeenLastCalledWith({
+      where: { id: "task_timeout_file" },
+      data: expect.objectContaining({
+        status: "dead",
+        retryCount: 1,
+        nextRetryAt: null,
+        lastError: "GeWe 请求超时，发送结果未知，已停止自动重试以避免重复发送"
       })
     });
   });

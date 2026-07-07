@@ -29,6 +29,10 @@ describe("webhook 工具", () => {
     expect(preserveLargeIntegerFields(raw)).toContain('"newMsgId":"6692899871431281247"');
   });
 
+  it("解析空 JSON 请求体为空对象，避免无 body POST 被 Fastify 提前拒绝", () => {
+    expect(parseWebhookJsonBody("")).toEqual({});
+  });
+
   it("解析 GeWe AddMsg 外层时保留 Data.NewMsgId 精度", () => {
     const raw = '{"TypeName":"AddMsg","Appid":"wx_app","Wxid":"wxid_bot","Data":{"MsgType":1,"NewMsgId":5004026754542010999,"CreateTime":1783308565,"Content":{"string":"hello"}}}';
     const parsed = parseWebhookJsonBody(raw);

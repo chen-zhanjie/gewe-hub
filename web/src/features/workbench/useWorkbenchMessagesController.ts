@@ -6,19 +6,27 @@ import {
   workbenchRealtimeMessageEvent,
 } from "@/features/workbench/queries";
 import {
+  attachPayloadToLocalSend,
   buildVisibleMessages,
   compareMessagesBySentAt,
+  createLocalMediaSend,
+  createLocalMediaPlaceholder,
   createLocalTextSend,
   mergeMessagesById,
-  type LocalTextSend,
+  type LocalSend,
 } from "@/features/workbench/workbench-local-sends";
 import {
+  type LocalSendPayload,
   mapMessageItem,
   type AccountSummary,
   type BackendMessage,
+  type BackendSendRequest,
   type ConversationSummary,
   type MessageItem,
 } from "@/lib/workspace-data";
+
+const LOCAL_SEND_STATUS_POLL_DELAY_MS = 1200;
+const LOCAL_SEND_STATUS_MAX_POLLS = 20;
 
 interface WorkbenchMessagesControllerOptions {
   account?: AccountSummary;
@@ -29,6 +37,8 @@ interface WorkbenchMessagesControllerOptions {
   loadOlderMessages: (conversationId: string, beforeMessageId: string) => Promise<BackendMessage[]>;
   refreshMessages: (conversationId: string) => Promise<BackendMessage[]>;
   sendText: (conversationId: string, text: string) => Promise<{ id: string }>;
+  sendPayload: (conversationId: string, payload: LocalSendPayload) => Promise<{ id: string }>;
+  fetchSendRequest: (sendRequestId: string) => Promise<BackendSendRequest>;
 }
 
 export function useWorkbenchMessagesController({
@@ -40,9 +50,13 @@ export function useWorkbenchMessagesController({
   loadOlderMessages,
   refreshMessages,
   sendText,
+  sendPayload,
+  fetchSendRequest,
 }: WorkbenchMessagesControllerOptions) {
   const [messages, setMessages] = useState<MessageItem[]>([]);
-  const [localTextSends, setLocalTextSends] = useState<LocalTextSend[]>([]);
+  const [localSends, setLocalSendsState] = useState<LocalSend[]>([]);
+  const localSendsRef = useRef<LocalSend[]>([]);
+  const statusPollTimersRef = useRef<number[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -50,8 +64,8 @@ export function useWorkbenchMessagesController({
   const messagesConversationIdRef = useRef<string | null>(null);
 
   const visibleMessages = useMemo(
-    () => buildVisibleMessages(messages, localTextSends, effectiveConversationId, account),
-    [account, effectiveConversationId, localTextSends, messages],
+    () => buildVisibleMessages(messages, localSends, effectiveConversationId, account),
+    [account, effectiveConversationId, localSends, messages],
   );
 
   useEffect(() => {
@@ -92,10 +106,19 @@ export function useWorkbenchMessagesController({
   useEffect(() => {
     const serverSendRequestIds = new Set(messages.map((message) => message.sendRequestId).filter(Boolean));
     if (serverSendRequestIds.size === 0) return;
-    setLocalTextSends((currentSends) =>
+    updateLocalSends((currentSends) =>
       currentSends.filter((send) => !send.sendRequestId || !serverSendRequestIds.has(send.sendRequestId)),
     );
   }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      for (const timer of statusPollTimersRef.current) {
+        window.clearTimeout(timer);
+      }
+      statusPollTimersRef.current = [];
+    };
+  }, []);
 
   async function handleLoadOlderMessages() {
     const oldestMessageId = messages[0]?.messageId;
@@ -125,24 +148,86 @@ export function useWorkbenchMessagesController({
     if (!selectedConversation || !trimmedText) return false;
 
     const localSend = createLocalTextSend(selectedConversation.id, trimmedText);
-    setLocalTextSends((currentSends) => [...currentSends, localSend]);
-    await submitLocalTextSend(localSend);
+    updateLocalSends((currentSends) => [...currentSends, localSend]);
+    void submitLocalSend(localSend);
     return true;
   }
 
-  async function submitLocalTextSend(localSend: LocalTextSend) {
+  function handleSendPayload(payload: LocalSendPayload) {
+    if (!selectedConversation) return false;
+
+    const localSend = createLocalMediaSend(selectedConversation.id, payload);
+    updateLocalSends((currentSends) => [...currentSends, localSend]);
+    void submitLocalSend(localSend);
+    return true;
+  }
+
+  function createLocalSendPlaceholder(payload: Pick<LocalSendPayload, "type" | "fileName" | "mimeType" | "thumbUrl" | "durationMs">) {
+    if (!selectedConversation) return null;
+
+    const localSend = createLocalMediaPlaceholder(selectedConversation.id, payload);
+    updateLocalSends((currentSends) => [...currentSends, localSend]);
+    return localSend.id;
+  }
+
+  function submitLocalSendPayload(localSendId: string, payload: LocalSendPayload) {
+    const currentSend = localSendsRef.current.find((send) => send.id === localSendId);
+    if (!currentSend) return;
+    const nextSend = attachPayloadToLocalSend(
+      {
+        ...currentSend,
+        status: "pending",
+        errorMessage: undefined,
+        sendRequestId: null,
+      },
+      payload,
+    );
+    updateLocalSends((currentSends) =>
+      currentSends.map((send) => {
+        if (send.id !== localSendId) return send;
+        return nextSend;
+      }),
+    );
+    void submitLocalSend(nextSend);
+  }
+
+  function failLocalSend(localSendId: string, errorMessage: string) {
+    updateLocalSends((currentSends) =>
+      currentSends.map((send) =>
+        send.id === localSendId
+          ? {
+              ...send,
+              status: "failed",
+              errorMessage,
+            }
+          : send,
+      ),
+    );
+  }
+
+  function updateLocalSends(updater: (currentSends: LocalSend[]) => LocalSend[]) {
+    const nextSends = updater(localSendsRef.current);
+    localSendsRef.current = nextSends;
+    setLocalSendsState(nextSends);
+  }
+
+  async function submitLocalSend(localSend: LocalSend) {
     try {
-      const response = await sendText(localSend.conversationId, localSend.text);
-      setLocalTextSends((currentSends) =>
+      const response =
+        localSend.type === "text"
+          ? await sendText(localSend.conversationId, localSend.text)
+          : await sendPayload(localSend.conversationId, readLocalSendPayload(localSend));
+      updateLocalSends((currentSends) =>
         currentSends.map((send) =>
           send.id === localSend.id
             ? { ...send, status: "pending", errorMessage: undefined, sendRequestId: response.id }
             : send,
         ),
       );
+      void syncLocalSendRequestStatus(localSend.id, response.id, localSend.conversationId);
       await refreshMessages(localSend.conversationId);
     } catch (sendError) {
-      setLocalTextSends((currentSends) =>
+      updateLocalSends((currentSends) =>
         currentSends.map((send) =>
           send.id === localSend.id
             ? {
@@ -156,18 +241,69 @@ export function useWorkbenchMessagesController({
     }
   }
 
-  function retryLocalTextSend(message: MessageItem) {
+  async function syncLocalSendRequestStatus(
+    localSendId: string,
+    sendRequestId: string,
+    conversationId: string,
+    attempt = 0,
+  ) {
+    if (!shouldContinueSendRequestSync(localSendId, sendRequestId)) return;
+    try {
+      const sendRequest = await fetchSendRequest(sendRequestId);
+      if (!shouldContinueSendRequestSync(localSendId, sendRequestId)) return;
+      if (sendRequest.status === "failed" || sendRequest.status === "unknown") {
+        updateLocalSends((currentSends) =>
+          currentSends.map((send) =>
+            send.id === localSendId && send.sendRequestId === sendRequestId
+              ? {
+                  ...send,
+                  status: "failed",
+                  errorMessage: readSendRequestErrorMessage(sendRequest),
+                }
+              : send,
+          ),
+        );
+        return;
+      }
+      if (sendRequest.status === "sent") {
+        await refreshMessages(conversationId);
+        return;
+      }
+    } catch {
+      // Keep the local sending state when status polling fails; the next poll may recover.
+    }
+
+    if (attempt >= LOCAL_SEND_STATUS_MAX_POLLS || !shouldContinueSendRequestSync(localSendId, sendRequestId)) return;
+    const timer = window.setTimeout(() => {
+      void syncLocalSendRequestStatus(localSendId, sendRequestId, conversationId, attempt + 1);
+    }, LOCAL_SEND_STATUS_POLL_DELAY_MS);
+    statusPollTimersRef.current.push(timer);
+  }
+
+  function shouldContinueSendRequestSync(localSendId: string, sendRequestId: string) {
+    const localSend = localSendsRef.current.find((send) => send.id === localSendId);
+    return localSend?.status === "pending" && localSend.sendRequestId === sendRequestId;
+  }
+
+  function retryLocalSend(message: MessageItem) {
     const localSend = message.localSend;
     if (!localSend) return;
-    const nextSend: LocalTextSend = {
+    const nextSend: LocalSend = {
       id: message.id,
       conversationId: localSend.conversationId,
+      type: localSend.type,
       text: localSend.text,
+      label: localSend.label,
+      fileName: localSend.sendPayload?.fileName,
+      mimeType: localSend.sendPayload?.mimeType,
+      thumbUrl: localSend.sendPayload?.thumbUrl,
+      durationMs: localSend.sendPayload?.durationMs,
       status: "pending",
       sendRequestId: null,
+      sendPayload: localSend.sendPayload,
       createdAtIso: message.sentAtIso || new Date().toISOString(),
     };
-    setLocalTextSends((currentSends) =>
+    updateLocalSends((currentSends) =>
       currentSends.map((send) =>
         send.id === nextSend.id
           ? {
@@ -179,11 +315,11 @@ export function useWorkbenchMessagesController({
           : send,
       ),
     );
-    void submitLocalTextSend(nextSend);
+    void submitLocalSend(nextSend);
   }
 
-  function deleteLocalTextSend(message: MessageItem) {
-    setLocalTextSends((currentSends) => currentSends.filter((send) => send.id !== message.id));
+  function deleteLocalSend(message: MessageItem) {
+    updateLocalSends((currentSends) => currentSends.filter((send) => send.id !== message.id));
   }
 
   function scrollMessageListToBottom() {
@@ -208,11 +344,27 @@ export function useWorkbenchMessagesController({
     historyError,
     handleLoadOlderMessages,
     handleSendText,
-    retryLocalTextSend,
-    deleteLocalTextSend,
+    handleSendPayload,
+    createLocalSendPlaceholder,
+    submitLocalSendPayload,
+    failLocalSend,
+    retryLocalSend,
+    deleteLocalSend,
     scrollMessageListToBottom,
     handleMessageListScroll,
   };
+}
+
+function readLocalSendPayload(localSend: LocalSend): LocalSendPayload {
+  if (localSend.sendPayload) return localSend.sendPayload;
+  throw new Error("本地发送缺少重试 payload");
+}
+
+function readSendRequestErrorMessage(sendRequest: BackendSendRequest): string {
+  if (sendRequest.status === "unknown") {
+    return sendRequest.errorMessage || "发送结果未知";
+  }
+  return sendRequest.errorMessage || "发送失败";
 }
 
 function isMessageListNearBottom(list: HTMLDivElement | null): boolean {

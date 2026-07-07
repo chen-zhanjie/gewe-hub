@@ -52,11 +52,33 @@ export interface MessageItem {
   deliveries: unknown[];
   localSend?: {
     conversationId: string;
+    type: "text" | "image" | "file" | "voice" | "video" | "link";
     text: string;
+    label: string;
     status: "pending" | "failed";
     errorMessage?: string;
     sendRequestId?: string | null;
+    sendPayload?: LocalSendPayload;
   };
+}
+
+export interface LocalSendPayload {
+  type: "image" | "file" | "voice" | "video" | "link";
+  contentBase64?: string;
+  mimeType?: string;
+  fileName?: string;
+  thumbUrl?: string;
+  durationMs?: number;
+  title?: string;
+  desc?: string;
+  linkUrl?: string;
+}
+
+export interface BackendSendRequest {
+  id: string;
+  type?: string;
+  status: "pending" | "sent" | "failed" | "unknown" | string;
+  errorMessage?: string | null;
 }
 
 export interface BackendAccount {

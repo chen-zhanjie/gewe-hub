@@ -33,7 +33,7 @@ const searchPageSchema = z.coerce.number().int().min(1).optional().catch(undefin
 const searchPageSizeSchema = z.coerce.number().int().refine((value) => value === 20 || value === 50).optional().catch(undefined);
 
 const DELIVERY_ROUTE_STATUSES = ["all", "success", "failed", "in_progress", "queued", "delivering", "delivered", "acked"] as const;
-const SEND_REQUEST_ROUTE_STATUSES = ["success", "failed", "in_progress", "pending", "sent"] as const;
+const SEND_REQUEST_ROUTE_STATUSES = ["success", "failed", "in_progress", "pending", "sent", "unknown"] as const;
 
 type DeliveryRouteStatus = (typeof DELIVERY_ROUTE_STATUSES)[number];
 type SendRequestRouteStatus = (typeof SEND_REQUEST_ROUTE_STATUSES)[number];
@@ -228,10 +228,10 @@ function asDeliveryFilterStatus(value: unknown): "" | "success" | "failed" | "in
   return "failed";
 }
 
-function asSendRequestRouteStatus(value: unknown): "" | "success" | "failed" | "in_progress" {
+function asSendRequestRouteStatus(value: unknown): "" | "success" | "failed" | "in_progress" | "unknown" {
   if (value === "sent") return "success";
   if (value === "pending") return "in_progress";
-  if (value === "success" || value === "failed" || value === "in_progress") return value;
+  if (value === "success" || value === "failed" || value === "in_progress" || value === "unknown") return value;
   return "";
 }
 

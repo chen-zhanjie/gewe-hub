@@ -1,0 +1,735 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+from dataclasses import dataclass
+from enum import Enum
+from types import SimpleNamespace
+from typing import Any, Dict, Optional
+
+try:
+    from gateway.config import Platform
+    from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, SendResult, resolve_channel_prompt
+except ImportError:
+    Platform = lambda name: name
+
+    class MessageType(Enum):
+        TEXT = "text"
+        PHOTO = "photo"
+        VIDEO = "video"
+        VOICE = "voice"
+        DOCUMENT = "document"
+
+    @dataclass
+    class MessageEvent:
+        text: str
+        message_type: MessageType = MessageType.TEXT
+        source: object | None = None
+        raw_message: object | None = None
+        message_id: str | None = None
+        media_urls: list[str] | None = None
+        media_types: list[str] | None = None
+        reply_to_message_id: str | None = None
+        reply_to_text: str | None = None
+        reply_to_author_id: str | None = None
+        reply_to_author_name: str | None = None
+        reply_to_is_own_message: bool = False
+        channel_prompt: str | None = None
+        metadata: dict | None = None
+
+    @dataclass
+    class SendResult:
+        success: bool
+        message_id: str | None = None
+        error: str | None = None
+        raw_response: object | None = None
+
+    class BasePlatformAdapter:
+        def __init__(self, config=None, platform=None):
+            self.config = config
+            self.platform = platform
+            self.is_connected = False
+            self.handled_messages: list[MessageEvent] = []
+
+        def _mark_connected(self):
+            self.is_connected = True
+
+        def _mark_disconnected(self):
+            self.is_connected = False
+
+        def _set_fatal_error(self, *args, **kwargs):
+            self.fatal_error = (args, kwargs)
+
+        async def _notify_fatal_error(self):
+            return None
+
+        def build_source(self, **kwargs):
+            return SimpleNamespace(**kwargs)
+
+        async def handle_message(self, event):
+            self.handled_messages.append(event)
+
+    def resolve_channel_prompt(extra, conversation_id):
+        return None
+
+try:
+    from .client import GeWeHubAuthError, GeWeHubClient, GeWeHubError, GeWeHubPermissionError
+    from .dedupe import BoundedTTLSet
+    from .normalizer import (
+        debounce_config,
+        dedupe_key_for_event,
+        event_text,
+        is_plain_text_event,
+        media_descriptors,
+        metadata_for_event,
+        normalize_event,
+        reply_context,
+    )
+    from .state import GeWeHubStateStore
+except ImportError:
+    from client import GeWeHubAuthError, GeWeHubClient, GeWeHubError, GeWeHubPermissionError
+    from dedupe import BoundedTTLSet
+    from normalizer import (
+        debounce_config,
+        dedupe_key_for_event,
+        event_text,
+        is_plain_text_event,
+        media_descriptors,
+        metadata_for_event,
+        normalize_event,
+        reply_context,
+    )
+    from state import GeWeHubStateStore
+
+
+logger = logging.getLogger(__name__)
+
+_GEWEHUB_PLATFORM_NAME = "gewehub"
+_STRING_KEYS = {"base_url", "app_token", "home_conversation_id"}
+_INT_KEYS = {"debounce_ms", "max_wait_ms"}
+
+
+@dataclass
+class _PendingBatch:
+    events: list[MessageEvent]
+    normalized: list[Any]
+    sse_events: list[dict[str, Any]]
+    event_ids: list[str]
+    first_seen: float
+    debounce_ms: int
+    max_wait_ms: int
+    task: asyncio.Task | None = None
+
+
+def check_gewehub_requirements() -> bool:
+    return True
+
+
+def env_enablement() -> dict[str, Any] | None:
+    extra = _extra_from_env()
+    if extra.get("base_url") and extra.get("app_token"):
+        return extra
+    return None
+
+
+def apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict[str, Any]:
+    source = _platform_config_source(yaml_cfg, platform_cfg)
+    extra: dict[str, Any] = {}
+    for key in _STRING_KEYS:
+        value = _clean_string(source.get(key))
+        if value:
+            extra[key] = value
+    for key in _INT_KEYS:
+        parsed = _coerce_int(source.get(key))
+        if parsed is not None:
+            extra[key] = parsed
+    extra.update(_extra_from_env())
+    return extra
+
+
+def validate_config(config) -> bool:
+    extra = getattr(config, "extra", {}) or {}
+    return bool(_clean_string(extra.get("base_url")) and _clean_string(extra.get("app_token")))
+
+
+def is_connected(config) -> bool:
+    return validate_config(config)
+
+
+class GeWeHubAdapter(BasePlatformAdapter):
+    def __init__(self, config=None, **kwargs) -> None:
+        if config is None:
+            config = SimpleNamespace(extra={})
+        super().__init__(config=config, platform=Platform(_GEWEHUB_PLATFORM_NAME))
+        extra = getattr(config, "extra", {}) or {}
+
+        self.base_url = _clean_string(os.getenv("GEWEHUB_BASE_URL") or extra.get("base_url")).rstrip("/")
+        self.app_token = _clean_string(os.getenv("GEWEHUB_APP_TOKEN") or extra.get("app_token"))
+        self.home_conversation_id = _clean_string(
+            os.getenv("GEWEHUB_HOME_CONVERSATION_ID") or extra.get("home_conversation_id")
+        )
+        self.default_debounce_ms = _coerce_int(os.getenv("GEWEHUB_DEBOUNCE_MS") or extra.get("debounce_ms")) or 0
+        self.default_max_wait_ms = _coerce_int(os.getenv("GEWEHUB_MAX_WAIT_MS") or extra.get("max_wait_ms")) or 0
+        self._client: GeWeHubClient | None = None
+        if self.base_url and self.app_token:
+            self._client = GeWeHubClient(self.base_url, app_token=self.app_token)
+        self._state_store = GeWeHubStateStore(base_url=self.base_url, app_token=self.app_token)
+        self._last_event_id: str | None = self._state_store.load_last_event_id()
+        self._dedupe = BoundedTTLSet()
+        self._dedupe.seed(self._state_store.load_seen_keys())
+        self._conversation_locks: dict[str, asyncio.Lock] = {}
+        self._pending_batches: dict[str, _PendingBatch] = {}
+        self._pending_dedupe_keys: set[str] = set()
+        self._sse_task: asyncio.Task | None = None
+
+    @property
+    def name(self) -> str:
+        return "GeWeHub"
+
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
+        if self.is_connected and self._sse_task and not self._sse_task.done():
+            return True
+        if not (self.base_url and self.app_token):
+            self._set_fatal_error(
+                "config_missing",
+                "GEWEHUB_BASE_URL and GEWEHUB_APP_TOKEN must be configured",
+                retryable=False,
+            )
+            return False
+        self._client = self._client or GeWeHubClient(self.base_url, app_token=self.app_token)
+        if self._sse_task and not self._sse_task.done():
+            self._sse_task.cancel()
+            try:
+                await self._sse_task
+            except asyncio.CancelledError:
+                pass
+        self._sse_task = asyncio.create_task(self._sse_loop())
+        self._mark_connected()
+        return True
+
+    async def disconnect(self) -> None:
+        self._mark_disconnected()
+        if self._sse_task and not self._sse_task.done():
+            self._sse_task.cancel()
+            try:
+                await self._sse_task
+            except asyncio.CancelledError:
+                pass
+        self._sse_task = None
+        await self.flush_pending_batches()
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+
+    async def send(
+        self,
+        chat_id: str,
+        content: str,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        try:
+            response = await self._ensure_client().send_text(chat_id, content)
+            return SendResult(success=True, message_id=_response_message_id(response), raw_response=response)
+        except Exception as exc:
+            return SendResult(success=False, error=self._redact(str(exc)))
+
+    async def send_message(self, conversation_id: str, text: str, **kwargs) -> SendResult:
+        return await self.send(conversation_id, text, metadata=kwargs.get("metadata"))
+
+    async def send_image(
+        self,
+        chat_id: str,
+        image_url: str,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        return await self._send_media_url(chat_id, media_type="image", url=image_url, caption=caption)
+
+    async def send_document(
+        self,
+        chat_id: str,
+        file_url: str,
+        caption: Optional[str] = None,
+        file_name: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> SendResult:
+        return await self._send_media_url(chat_id, media_type="file", url=file_url, file_name=file_name, caption=caption)
+
+    async def _sse_loop(self) -> None:
+        backoff = 1.0
+        while self.is_connected and self._client is not None:
+            try:
+                async for sse_event in self._client.iter_sse_events(last_event_id=self._last_event_id):
+                    await self._handle_sse_event(sse_event)
+                    backoff = 1.0
+            except asyncio.CancelledError:
+                raise
+            except (GeWeHubAuthError, GeWeHubPermissionError) as exc:
+                self._set_fatal_error("auth_failed", self._redact(str(exc)), retryable=False)
+                await self._notify_fatal_error()
+                return
+            except Exception as exc:
+                logger.warning("GeWeHub SSE loop error: %s", self._redact(str(exc)))
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+
+    async def _handle_sse_event(self, sse_event: dict[str, Any]) -> bool:
+        event_type = str(sse_event.get("event") or "")
+        if event_type == "error":
+            raise GeWeHubError(f"GeWeHub SSE error: {_sse_error_message(sse_event)}")
+        try:
+            raw_event = json.loads(str(sse_event.get("data") or ""))
+        except json.JSONDecodeError:
+            logger.warning("GeWeHub skipped malformed SSE JSON")
+            await self._ack_event_ids([_sse_event_id(sse_event)])
+            return False
+        if not isinstance(raw_event, dict):
+            await self._ack_event_ids([_sse_event_id(sse_event)])
+            return False
+        if sse_event.get("id") and not raw_event.get("eventId"):
+            raw_event["eventId"] = sse_event.get("id")
+        if event_type and event_type != "message" and not raw_event.get("eventType"):
+            raw_event["eventType"] = event_type
+
+        normalized = normalize_event(raw_event)
+        conversation_id = _conversation_id(normalized)
+        if not conversation_id:
+            logger.warning("GeWeHub skipped message without conversation.id")
+            await self._ack_event_ids([_event_id_for_ack(sse_event, normalized)])
+            return False
+
+        async with self._conversation_lock(conversation_id):
+            if self._seen_before(normalized):
+                await self._ack_event_ids([_event_id_for_ack(sse_event, normalized)])
+                return False
+            if _is_revoked_event(normalized):
+                await self._flush_batch_locked(conversation_id)
+                logger.info("GeWeHub message revoked: %s", normalized.message_id or normalized.event_id or "")
+                self._mark_seen(normalized)
+                await self._ack_event_ids([_event_id_for_ack(sse_event, normalized)])
+                return True
+
+            event = await self._build_message_event(normalized, raw_event)
+            if self._should_batch_event(normalized, event):
+                self._enqueue_batch(conversation_id, event, normalized, sse_event)
+                return True
+
+            await self._flush_batch_locked(conversation_id)
+            await self._dispatch_built_event(event, normalized, sse_event)
+            return True
+
+    async def flush_pending_batches(self) -> None:
+        for conversation_id in list(self._pending_batches):
+            async with self._conversation_lock(conversation_id):
+                await self._flush_batch_locked(conversation_id)
+
+    async def _build_message_event(self, normalized, raw_event: dict[str, Any]) -> MessageEvent:
+        media_results = await self._download_media(normalized)
+        media_urls, media_types = _media_event_fields(media_results)
+        reply = reply_context(normalized)
+        conversation_id = _conversation_id(normalized)
+        metadata = metadata_for_event(normalized, media=media_results)
+        return MessageEvent(
+            text=event_text(normalized),
+            message_type=_message_type_for(normalized, media_types),
+            source=self.build_source(
+                chat_id=conversation_id,
+                chat_name=_conversation_name(normalized.conversation),
+                chat_type=_chat_type(normalized.conversation),
+                user_id=normalized.sender.get("wxid"),
+                user_name=_sender_name(normalized.sender),
+                message_id=normalized.message_id,
+            ),
+            raw_message=raw_event,
+            message_id=normalized.message_id,
+            media_urls=media_urls,
+            media_types=media_types,
+            reply_to_message_id=reply["message_id"],
+            reply_to_text=reply["text"],
+            reply_to_author_id=reply["author_id"],
+            reply_to_author_name=reply["author_name"],
+            reply_to_is_own_message=reply["is_own_message"],
+            channel_prompt=self._resolve_channel_prompt(conversation_id),
+            metadata=metadata,
+        )
+
+    async def _dispatch_built_event(self, event: MessageEvent, normalized, sse_event: dict[str, Any]) -> None:
+        await self.handle_message(event)
+        self._mark_seen(normalized)
+        await self._ack_event_ids([_event_id_for_ack(sse_event, normalized)])
+
+    def _should_batch_event(self, normalized, event: MessageEvent) -> bool:
+        debounce_ms, _ = debounce_config(
+            normalized,
+            default_debounce_ms=self.default_debounce_ms,
+            default_max_wait_ms=self.default_max_wait_ms,
+        )
+        return (
+            debounce_ms > 0
+            and is_plain_text_event(normalized)
+            and event.message_type == MessageType.TEXT
+            and not getattr(event, "media_urls", [])
+            and not getattr(event, "reply_to_message_id", None)
+        )
+
+    def _enqueue_batch(
+        self,
+        conversation_id: str,
+        event: MessageEvent,
+        normalized,
+        sse_event: dict[str, Any],
+    ) -> None:
+        event_id = _event_id_for_ack(sse_event, normalized)
+        debounce_ms, max_wait_ms = debounce_config(
+            normalized,
+            default_debounce_ms=self.default_debounce_ms,
+            default_max_wait_ms=self.default_max_wait_ms,
+        )
+        now = asyncio.get_running_loop().time()
+        batch = self._pending_batches.get(conversation_id)
+        if batch is None:
+            batch = _PendingBatch(
+                events=[],
+                normalized=[],
+                sse_events=[],
+                event_ids=[],
+                first_seen=now,
+                debounce_ms=debounce_ms,
+                max_wait_ms=max_wait_ms,
+            )
+            self._pending_batches[conversation_id] = batch
+        batch.events.append(event)
+        batch.normalized.append(normalized)
+        batch.sse_events.append(sse_event)
+        if event_id:
+            batch.event_ids.append(event_id)
+        dedupe_key = dedupe_key_for_event(normalized)
+        if dedupe_key:
+            self._pending_dedupe_keys.add(dedupe_key)
+        if batch.task and not batch.task.done():
+            batch.task.cancel()
+        batch.task = asyncio.create_task(self._flush_batch_after_delay(conversation_id, self._batch_delay(batch, now)))
+
+    async def _flush_batch_after_delay(self, conversation_id: str, delay_seconds: float) -> None:
+        try:
+            await asyncio.sleep(max(0.0, delay_seconds))
+            async with self._conversation_lock(conversation_id):
+                await self._flush_batch_locked(conversation_id)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.warning("GeWeHub batch flush failed for %s: %s", conversation_id, self._redact(str(exc)))
+
+    async def _flush_batch_locked(self, conversation_id: str) -> None:
+        batch = self._pending_batches.get(conversation_id)
+        if batch is None:
+            return
+        current_task = asyncio.current_task()
+        if batch.task and not batch.task.done() and batch.task is not current_task:
+            batch.task.cancel()
+        batch.task = None
+        self._pending_batches.pop(conversation_id, None)
+        event = _merge_batch_events(batch.events, batch.event_ids)
+        await self.handle_message(event)
+        for normalized in batch.normalized:
+            self._mark_seen(normalized)
+            key = dedupe_key_for_event(normalized)
+            if key:
+                self._pending_dedupe_keys.discard(key)
+        await self._ack_event_ids(batch.event_ids)
+
+    def _batch_delay(self, batch: _PendingBatch, now: float) -> float:
+        debounce_seconds = max(0.0, batch.debounce_ms / 1000.0)
+        if batch.max_wait_ms <= 0:
+            return debounce_seconds
+        remaining = batch.max_wait_ms / 1000.0 - (now - batch.first_seen)
+        return min(debounce_seconds, max(0.0, remaining))
+
+    def _seen_before(self, normalized) -> bool:
+        key = dedupe_key_for_event(normalized)
+        return self._dedupe.contains(key) or bool(key and key in self._pending_dedupe_keys)
+
+    def _mark_seen(self, normalized) -> bool:
+        key = dedupe_key_for_event(normalized)
+        added = self._dedupe.add(key)
+        if added:
+            self._state_store.save_seen_keys(self._dedupe.keys())
+        return added
+
+    async def _ack_event_ids(self, event_ids: list[str | None]) -> None:
+        clean = [str(event_id).strip() for event_id in event_ids if str(event_id or "").strip()]
+        if not clean:
+            return
+        client = self._client
+        if client is not None:
+            await client.ack_events(clean)
+        self._last_event_id = clean[-1]
+        self._state_store.save_last_event_id(clean[-1])
+
+    async def _download_media(self, normalized) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        for descriptor in media_descriptors(normalized):
+            try:
+                result = await self._ensure_client().download_media(descriptor)
+            except Exception as exc:
+                result = {
+                    "status": "failed",
+                    "url": descriptor.get("url"),
+                    "kind": descriptor.get("kind") or "file",
+                    "error": self._redact(str(exc)),
+                }
+            if isinstance(result, dict):
+                results.append(result)
+            else:
+                results.append({"status": "skipped", "url": descriptor.get("url"), "kind": descriptor.get("kind")})
+        return results
+
+    def _conversation_lock(self, conversation_id: str) -> asyncio.Lock:
+        lock = self._conversation_locks.get(conversation_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._conversation_locks[conversation_id] = lock
+        return lock
+
+    def _resolve_channel_prompt(self, conversation_id: str) -> str | None:
+        return resolve_channel_prompt(getattr(self.config, "extra", {}) or {}, str(conversation_id))
+
+    def _ensure_client(self) -> GeWeHubClient:
+        if self._client is None:
+            self._client = GeWeHubClient(self.base_url, app_token=self.app_token)
+        return self._client
+
+    async def _send_media_url(
+        self,
+        chat_id: str,
+        *,
+        media_type: str,
+        url: str,
+        file_name: str | None = None,
+        caption: str | None = None,
+    ) -> SendResult:
+        try:
+            response = await self._ensure_client().send_media_url(
+                chat_id,
+                media_type=media_type,
+                url=url,
+                file_name=file_name,
+            )
+            raw_response: dict[str, Any] = {"media": response}
+            if caption:
+                raw_response["caption"] = await self._ensure_client().send_text(chat_id, caption)
+            return SendResult(success=True, message_id=_response_message_id(response), raw_response=raw_response)
+        except Exception as exc:
+            return SendResult(success=False, error=self._redact(str(exc)))
+
+    def _redact(self, text: str) -> str:
+        return text.replace(self.app_token, "[REDACTED]") if self.app_token else text
+
+
+def _extra_from_env() -> dict[str, Any]:
+    extra: dict[str, Any] = {}
+    for env_name, key in (
+        ("GEWEHUB_BASE_URL", "base_url"),
+        ("GEWEHUB_APP_TOKEN", "app_token"),
+        ("GEWEHUB_HOME_CONVERSATION_ID", "home_conversation_id"),
+    ):
+        value = _clean_string(os.getenv(env_name))
+        if value:
+            extra[key] = value
+    for env_name, key in (("GEWEHUB_DEBOUNCE_MS", "debounce_ms"), ("GEWEHUB_MAX_WAIT_MS", "max_wait_ms")):
+        parsed = _coerce_int(os.getenv(env_name))
+        if parsed is not None:
+            extra[key] = parsed
+    return extra
+
+
+def _platform_config_source(yaml_cfg: dict, platform_cfg: dict) -> dict[str, Any]:
+    if isinstance(platform_cfg, dict):
+        nested_extra = platform_cfg.get("extra")
+        if isinstance(nested_extra, dict):
+            return nested_extra
+        if any(key in platform_cfg for key in (_STRING_KEYS | _INT_KEYS)):
+            return platform_cfg
+    return yaml_cfg or {}
+
+
+def _merge_batch_events(events: list[MessageEvent], event_ids: list[str]) -> MessageEvent:
+    if len(events) == 1:
+        event = events[0]
+        metadata = dict(getattr(event, "metadata", {}) or {})
+        gewehub = dict(metadata.get("gewehub") or {})
+        gewehub["batch"] = {
+            "count": 1,
+            "message_ids": [event.message_id] if event.message_id else [],
+            "event_ids": list(event_ids),
+        }
+        metadata["gewehub"] = gewehub
+        event.metadata = metadata
+        return event
+
+    first = events[0]
+    message_ids = [str(event.message_id) for event in events if event.message_id]
+    metadata = dict(getattr(first, "metadata", {}) or {})
+    gewehub = dict(metadata.get("gewehub") or {})
+    gewehub["batch"] = {
+        "count": len(events),
+        "message_ids": message_ids,
+        "event_ids": list(event_ids),
+    }
+    gewehub["batched"] = [getattr(event, "metadata", {}).get("gewehub", {}) for event in events]
+    metadata["gewehub"] = gewehub
+    return MessageEvent(
+        text="\n\n".join(event.text for event in events if event.text),
+        message_type=first.message_type,
+        source=first.source,
+        raw_message=[event.raw_message for event in events],
+        message_id=message_ids[-1] if message_ids else first.message_id,
+        media_urls=[url for event in events for url in (getattr(event, "media_urls", []) or [])],
+        media_types=[media_type for event in events for media_type in (getattr(event, "media_types", []) or [])],
+        reply_to_message_id=first.reply_to_message_id,
+        reply_to_text=first.reply_to_text,
+        reply_to_author_id=first.reply_to_author_id,
+        reply_to_author_name=first.reply_to_author_name,
+        reply_to_is_own_message=first.reply_to_is_own_message,
+        channel_prompt=getattr(first, "channel_prompt", None),
+        metadata=metadata,
+    )
+
+def _media_event_fields(results: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    urls: list[str] = []
+    types: list[str] = []
+    for result in results:
+        local_path = result.get("local_path")
+        if local_path:
+            urls.append(str(local_path))
+        mime_type = result.get("mime_type") or result.get("mimeType")
+        if mime_type:
+            types.append(str(mime_type))
+        elif result.get("kind"):
+            types.append(str(result["kind"]))
+    return urls, types
+
+
+def _message_type_for(normalized, media_types: list[str]) -> MessageType:
+    content_type = str(normalized.content.get("type") or "").lower()
+    probe = " ".join([content_type, *[item.lower() for item in media_types]])
+    if "image" in probe:
+        return MessageType.PHOTO
+    if "video" in probe:
+        return MessageType.VIDEO
+    if "voice" in probe or "audio" in probe:
+        return MessageType.VOICE
+    if content_type in {"file", "document"} or "application/" in probe:
+        return MessageType.DOCUMENT
+    return MessageType.TEXT
+
+
+def _conversation_id(normalized) -> str:
+    return _clean_string(normalized.conversation.get("id") or normalized.conversation.get("wxid"))
+
+
+def _conversation_name(conversation: dict[str, Any]) -> str:
+    return _clean_string(conversation.get("remark") or conversation.get("name") or conversation.get("wxid") or conversation.get("id"))
+
+
+def _sender_name(sender: dict[str, Any]) -> str:
+    return _clean_string(sender.get("memberRemark") or sender.get("remark") or sender.get("name") or sender.get("wxid"))
+
+
+def _chat_type(conversation: dict[str, Any]) -> str:
+    return "group" if str(conversation.get("type") or "").lower() == "group" else "dm"
+
+
+def _is_revoked_event(normalized) -> bool:
+    return normalized.event_type == "message.revoked" or normalized.status == "revoked"
+
+
+def _event_id_for_ack(sse_event: dict[str, Any], normalized) -> str:
+    return _sse_event_id(sse_event) or _clean_string(getattr(normalized, "event_id", None))
+
+
+def _sse_event_id(sse_event: dict[str, Any]) -> str:
+    return _clean_string(sse_event.get("id"))
+
+
+def _sse_error_message(sse_event: dict[str, Any]) -> str:
+    raw = str(sse_event.get("data") or "").strip()
+    if not raw:
+        return "unknown"
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if isinstance(parsed, dict):
+        return str(parsed.get("error") or parsed.get("message") or parsed)
+    return str(parsed)
+
+
+def _response_message_id(response: dict[str, Any]) -> str | None:
+    if not isinstance(response, dict):
+        return None
+    value = response.get("messageId") or response.get("message_id") or response.get("requestId") or response.get("id")
+    return str(value) if value is not None else None
+
+
+async def _standalone_send(
+    *,
+    base_url: str,
+    app_token: str,
+    conversation_id: str,
+    message: str | None = None,
+    **kwargs,
+) -> dict[str, Any]:
+    client = GeWeHubClient(base_url, app_token=app_token)
+    try:
+        if not message:
+            return {"error": "GeWeHub standalone send requires message"}
+        response = await client.send_text(conversation_id, message)
+        return {"success": True, "message_id": _response_message_id(response), "raw_response": response}
+    except Exception as exc:
+        redacted = str(exc).replace(app_token, "[REDACTED]") if app_token else str(exc)
+        return {"error": f"GeWeHub standalone send failed: {redacted}"}
+    finally:
+        await client.aclose()
+
+
+def _clean_string(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _coerce_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def register(ctx) -> None:
+    ctx.register_platform(
+        name=_GEWEHUB_PLATFORM_NAME,
+        label="GeWeHub",
+        adapter_factory=lambda cfg: GeWeHubAdapter(cfg),
+        check_fn=check_gewehub_requirements,
+        validate_config=validate_config,
+        is_connected=is_connected,
+        required_env=["GEWEHUB_BASE_URL", "GEWEHUB_APP_TOKEN"],
+        install_hint="Configure a GeWeHub application token.",
+        env_enablement_fn=env_enablement,
+        apply_yaml_config_fn=apply_yaml_config,
+        cron_deliver_env_var="GEWEHUB_HOME_CONVERSATION_ID",
+        standalone_sender_fn=_standalone_send,
+        allowed_users_env="GEWEHUB_ALLOWED_USERS",
+        allow_all_env="GEWEHUB_ALLOW_ALL_USERS",
+        emoji="GH",
+        pii_safe=True,
+        platform_hint=(
+            "You are chatting via GeWeHub, which bridges WeChat conversations to Hermes. "
+            "You can receive standardized messages with media paths and reply with text."
+        ),
+    )

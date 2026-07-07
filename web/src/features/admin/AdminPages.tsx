@@ -37,7 +37,7 @@ export interface DeliveryFilters {
 }
 
 export interface SendRequestFilters {
-  status: "" | "success" | "failed" | "in_progress";
+  status: "" | "success" | "failed" | "in_progress" | "unknown";
   page: number;
   pageSize: number;
 }

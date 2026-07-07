@@ -1,14 +1,26 @@
-import type { AccountSummary, MessageItem } from "@/lib/workspace-data";
+import type { MessageNode } from "@gewehub/contracts";
+import type { AccountSummary, LocalSendPayload, MessageItem } from "@/lib/workspace-data";
 
-export interface LocalTextSend {
+export type LocalSendType = "text" | "image" | "file" | "voice" | "video" | "link";
+
+export interface LocalSend {
   id: string;
   conversationId: string;
+  type: LocalSendType;
   text: string;
+  label?: string;
+  fileName?: string;
+  mimeType?: string;
+  thumbUrl?: string;
+  durationMs?: number;
   status: "pending" | "failed";
   errorMessage?: string;
   sendRequestId?: string | null;
+  sendPayload?: LocalSendPayload;
   createdAtIso: string;
 }
+
+export type LocalTextSend = LocalSend;
 
 export function mergeMessagesById(messages: MessageItem[]): MessageItem[] {
   const seen = new Set<string>();
@@ -23,28 +35,30 @@ export function mergeMessagesById(messages: MessageItem[]): MessageItem[] {
 
 export function buildVisibleMessages(
   serverMessages: MessageItem[],
-  localTextSends: LocalTextSend[],
+  localSends: LocalSend[],
   conversationId: string | null,
   account?: AccountSummary,
 ): MessageItem[] {
   const serverSendRequestIds = new Set(serverMessages.map((message) => message.sendRequestId).filter(Boolean));
-  const localMessages = localTextSends
+  const localMessages = localSends
     .filter((send) => send.conversationId === conversationId)
     .filter((send) => !send.sendRequestId || !serverSendRequestIds.has(send.sendRequestId))
-    .map((send) => mapLocalTextSendToMessageItem(send, account));
+    .map((send) => mapLocalSendToMessageItem(send, account));
 
   return [...serverMessages, ...localMessages].sort(compareMessagesBySentAt);
 }
 
-export function mapLocalTextSendToMessageItem(send: LocalTextSend, account?: AccountSummary): MessageItem {
+export function mapLocalSendToMessageItem(send: LocalSend, account?: AccountSummary): MessageItem {
   const senderName = account?.name ?? "我";
   const wxid = account?.wxid ?? "self";
+  const label = send.label ?? send.text;
   const standardJson = {
     local: true,
-    type: "text",
+    type: send.type,
     text: send.text,
     status: send.status,
     sendRequestId: send.sendRequestId ?? null,
+    sendPayload: send.sendPayload,
   };
 
   return {
@@ -64,19 +78,24 @@ export function mapLocalTextSendToMessageItem(send: LocalTextSend, account?: Acc
     sentAt: send.createdAtIso,
     sentAtIso: send.createdAtIso,
     status: "normal",
-    content: { type: "text", text: send.text },
+    content: localSendContent(send),
     standardJson,
     rawPayload: null,
     deliveries: [],
     localSend: {
       conversationId: send.conversationId,
+      type: send.type,
       text: send.text,
+      label,
       status: send.status,
       errorMessage: send.errorMessage,
       sendRequestId: send.sendRequestId ?? null,
+      sendPayload: send.sendPayload,
     },
   };
 }
+
+export const mapLocalTextSendToMessageItem = mapLocalSendToMessageItem;
 
 export function compareMessagesBySentAt(left: MessageItem, right: MessageItem): number {
   const leftTime = Date.parse(left.sentAtIso);
@@ -89,10 +108,104 @@ export function compareMessagesBySentAt(left: MessageItem, right: MessageItem): 
 
 export function createLocalTextSend(conversationId: string, text: string): LocalTextSend {
   return {
-    id: `local_text_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    id: createLocalSendId("text"),
     conversationId,
+    type: "text",
     text,
+    label: text,
     status: "pending",
     createdAtIso: new Date().toISOString(),
   };
+}
+
+export function createLocalMediaSend(conversationId: string, payload: LocalSendPayload): LocalSend {
+  const text = localSendText(payload);
+  return {
+    id: createLocalSendId(payload.type),
+    conversationId,
+    type: payload.type,
+    text,
+    label: text,
+    fileName: payload.fileName,
+    mimeType: payload.mimeType,
+    thumbUrl: payload.thumbUrl,
+    durationMs: payload.durationMs,
+    status: "pending",
+    sendPayload: payload,
+    createdAtIso: new Date().toISOString(),
+  };
+}
+
+export function createLocalMediaPlaceholder(
+  conversationId: string,
+  payload: Pick<LocalSendPayload, "type" | "fileName" | "mimeType" | "thumbUrl" | "durationMs" | "title" | "desc" | "linkUrl">,
+): LocalSend {
+  const text = localSendText(payload);
+  return {
+    id: createLocalSendId(payload.type),
+    conversationId,
+    type: payload.type,
+    text,
+    label: text,
+    fileName: payload.fileName,
+    mimeType: payload.mimeType,
+    thumbUrl: payload.thumbUrl,
+    durationMs: payload.durationMs,
+    status: "pending",
+    createdAtIso: new Date().toISOString(),
+  };
+}
+
+export function attachPayloadToLocalSend(send: LocalSend, payload: LocalSendPayload): LocalSend {
+  const text = localSendText(payload);
+  return {
+    ...send,
+    type: payload.type,
+    text,
+    label: text,
+    fileName: payload.fileName,
+    mimeType: payload.mimeType,
+    thumbUrl: payload.thumbUrl,
+    durationMs: payload.durationMs,
+    sendPayload: payload,
+  };
+}
+
+function localSendContent(send: LocalSend): MessageNode {
+  if (send.type === "text") return { type: "text", text: send.text };
+  if (send.type === "link") {
+    return {
+      type: "link",
+      text: send.text,
+      link: {
+        title: send.sendPayload?.title,
+        desc: send.sendPayload?.desc,
+        url: send.sendPayload?.linkUrl,
+        thumbnailUrl: send.sendPayload?.thumbUrl,
+      },
+    };
+  }
+  return {
+    type: send.type,
+    text: send.text,
+    media: {
+      status: send.status === "failed" ? "failed" : "pending",
+      fileName: send.fileName,
+      mimeType: send.mimeType,
+      durationMs: send.durationMs,
+      thumbnailUrl: send.thumbUrl,
+    },
+  };
+}
+
+function localSendText(payload: LocalSendPayload): string {
+  if (payload.type === "image") return payload.fileName ? `[图片] ${payload.fileName}` : "[图片]";
+  if (payload.type === "voice") return "[语音]";
+  if (payload.type === "video") return payload.fileName ? `[视频] ${payload.fileName}` : "[视频]";
+  if (payload.type === "link") return payload.title ? `[链接] ${payload.title}` : "[链接]";
+  return payload.fileName ? `[文件] ${payload.fileName}` : "[文件]";
+}
+
+function createLocalSendId(type: LocalSendType): string {
+  return `local_${type}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }

@@ -1,0 +1,17 @@
+.git
+.worktrees
+worktrees
+node_modules
+**/node_modules
+dist
+**/dist
+coverage
+**/coverage
+.env
+.env.*
+!.env.example
+references
+storage
+uploads
+.DS_Store
+*.log

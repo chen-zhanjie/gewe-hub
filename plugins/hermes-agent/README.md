@@ -1,20 +1,48 @@
 # Hermes Agent 插件
 
-本目录用于维护 GeWeHub 面向 Hermes Agent 的官方对接插件。
+本目录维护 GeWeHub 面向 Hermes Agent 的官方对接插件。第一版只消费 GeWeHub 标准消息，不直连 GeWe。
 
-插件目标:
+## 配置
 
-- 让 Hermes Agent 能通过 GeWeHub 接收微信标准消息。
-- 让 Hermes Agent 能通过 GeWeHub 标准发送接口回复文本、图片、文件等消息。
-- 支持 GeWeHub 的 SSE/Webhook 推送模式。
-- 支持 GeWeHub 的交互事件、HTML 展示页、资源上传等扩展能力。
-- 提供清晰的配置、诊断和错误提示。
+必需：
 
-插件边界:
+- `GEWEHUB_BASE_URL`
+- `GEWEHUB_APP_TOKEN`
 
-- 插件只对接 GeWeHub，不直接对接 GeWe 平台。
-- 插件只消费 GeWeHub 标准消息，不依赖 GeWe 原始 payload。
-- Hermes Agent 负责消息理解、知识库检索、自动回复、工具调用和 persona。
-- GeWeHub 负责消息接入、存储、标准化、路由、发送、审计和运行观测。
+可选：
 
-后续实现时，应优先参考 GeWeCenter 既有 Hermes 插件经验，但不要复制旧项目中与 GeWeCenter 专有接口强绑定的实现。
+- `GEWEHUB_HOME_CONVERSATION_ID`
+- `GEWEHUB_DEBOUNCE_MS`
+- `GEWEHUB_MAX_WAIT_MS`
+
+## 第一版能力
+
+- `GET /api/apps/events` SSE 长连接，`Authorization: Bearer <token>`。
+- 持久化 `Last-Event-ID`，本地短期去重。
+- 处理成功后 `POST /api/apps/events/ack`，请求体 `{ "eventIds": [] }`。
+- 标准信封映射为 Hermes 可消费消息字段。
+- `message.revoked` 第一版仅记录并 ACK。
+- 通过 `POST /api/send` 发送文本回复。
+
+## 本地验证
+
+单测可用 `uv` 临时安装测试依赖运行：
+
+```bash
+uv run --with pytest --with pytest-asyncio --with httpx --with PyYAML \
+  python -m pytest plugins/hermes-agent/test_gewehub_plugin.py
+```
+
+联调前先启动本地 GeWeHub，并准备一个已绑定会话的 Hub 应用 token：
+
+```bash
+GEWEHUB_BASE_URL=http://localhost:8090 \
+GEWEHUB_APP_TOKEN=<hub-app-token> \
+hermes
+```
+
+联调验收至少覆盖：文本消息经 SSE 进入 Hermes、Hermes 回复走 `/api/send`、短文本按 metadata 防抖合并、重启后携带 `Last-Event-ID` 不重复处理、图片消息下载为本地媒体文件。
+
+## 边界
+
+插件不做 GeWe 原始 payload 解析，不做 GeWeCenter 专有 diagnostics、HTML page、interaction workflow 或 profile 管理。

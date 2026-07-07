@@ -1,6 +1,10 @@
 import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
+import {
+  loadConversationIdentityProfiles,
+  mergeConversationIdentity,
+} from "./conversation-identity.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 const bindSchema = z.object({
@@ -35,7 +39,17 @@ export class ConversationsController {
       },
       include: { app: true, account: true }
     });
-    const byId = new Map(rows.map((row) => [row.id, row]));
+    const identityProfiles = await loadConversationIdentityProfiles(
+      this.prisma,
+      rows
+        .filter((row) => row.accountId && row.peerWxid && row.type)
+        .map((row) => ({
+          accountId: row.accountId,
+          peerWxid: row.peerWxid,
+          type: row.type,
+        })),
+    );
+    const byId = new Map(rows.map((row) => [row.id, mergeConversationIdentity(row, identityProfiles)]));
     return orderedIds.map((id) => byId.get(id)).filter((row): row is (typeof rows)[number] => Boolean(row));
   }
 
@@ -162,6 +176,24 @@ export class ConversationsController {
           status: member.status
         });
       }
+      const missingSenderWxids = senderWxids.filter((wxid) => !profiles.has(wxid));
+      if (missingSenderWxids.length > 0) {
+        const contacts = await this.prisma.contact.findMany({
+          where: {
+            accountId: firstConversation.accountId,
+            wxid: { in: missingSenderWxids }
+          }
+        });
+        for (const contact of contacts) {
+          profiles.set(contact.wxid, {
+            wxid: contact.wxid,
+            nickname: contact.nickname,
+            platformRemark: contact.platformRemark,
+            avatarUrl: contact.avatarUrl,
+            status: contact.status
+          });
+        }
+      }
     } else {
       const contacts = await this.prisma.contact.findMany({
         where: {
@@ -188,25 +220,41 @@ export class ConversationsController {
 
   private async findOrderedConversationIds(input: { accountId?: string; q?: string; includeHidden?: string }) {
     const conditions: Prisma.Sql[] = [];
-    if (input.accountId) conditions.push(Prisma.sql`account_id = ${input.accountId}`);
-    if (input.includeHidden !== "true") conditions.push(Prisma.sql`is_hidden = false`);
+    if (input.accountId) conditions.push(Prisma.sql`c.account_id = ${input.accountId}`);
+    if (input.includeHidden !== "true") conditions.push(Prisma.sql`c.is_hidden = false`);
     const query = input.q?.trim();
     if (query) {
       const like = `%${query}%`;
-      conditions.push(Prisma.sql`(peer_wxid LIKE ${like} OR name LIKE ${like} OR platform_remark LIKE ${like})`);
+      conditions.push(Prisma.sql`(
+        c.peer_wxid LIKE ${like}
+        OR c.name LIKE ${like}
+        OR c.platform_remark LIKE ${like}
+        OR contact.nickname LIKE ${like}
+        OR contact.platform_remark LIKE ${like}
+        OR grp.name LIKE ${like}
+        OR grp.platform_remark LIKE ${like}
+      )`);
     }
     const where = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}` : Prisma.empty;
     const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-      SELECT id
-      FROM conversations
+      SELECT c.id
+      FROM conversations c
+      LEFT JOIN contacts contact
+        ON contact.account_id = c.account_id
+        AND contact.wxid = c.peer_wxid
+        AND c.type = 'private'
+      LEFT JOIN ${Prisma.raw("`groups`")} grp
+        ON grp.account_id = c.account_id
+        AND grp.wxid = c.peer_wxid
+        AND c.type = 'group'
       ${where}
       ORDER BY
-        pinned_at IS NULL ASC,
+        c.pinned_at IS NULL ASC,
         GREATEST(
-          COALESCE(last_message_at, CAST('1970-01-01 00:00:00' AS DATETIME)),
-          COALESCE(last_opened_at, CAST('1970-01-01 00:00:00' AS DATETIME))
+          COALESCE(c.last_message_at, CAST('1970-01-01 00:00:00' AS DATETIME)),
+          COALESCE(c.last_opened_at, CAST('1970-01-01 00:00:00' AS DATETIME))
         ) DESC,
-        updated_at DESC
+        c.updated_at DESC
       LIMIT 100
     `);
     return rows.map((row) => row.id);

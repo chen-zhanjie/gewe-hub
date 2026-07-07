@@ -3,6 +3,16 @@ import { loadEnv } from "../../config/env.js";
 
 type MediaKind = "image" | "voice" | "video" | "file" | "emoji";
 
+export class GeweRequestTimeoutError extends Error {
+  constructor(
+    public readonly path: string,
+    public readonly timeoutMs: number
+  ) {
+    super(`GeWe 请求超时: ${path} (${timeoutMs}ms)`);
+    this.name = "GeweRequestTimeoutError";
+  }
+}
+
 export type DownloadMediaParams =
   | {
       appId: string;
@@ -64,7 +74,10 @@ export class GeweClientService {
     if (!request.path.startsWith("/gewe/v2/api/message/")) {
       throw new Error(`不允许的 GeWe 发送路径: ${request.path}`);
     }
-    return this.post(request.path, request.body);
+    const result = await this.post(request.path, request.body, resolveMessageSendTimeoutMs(request.path, this.env.GEWE_SEND_TIMEOUT_MS));
+    const businessError = getBusinessError(result);
+    if (businessError) throw new Error(`GeWe 发送失败: ${businessError}`);
+    return result;
   }
 
   async revokeMessage(params: {
@@ -74,11 +87,11 @@ export class GeweClientService {
     newMsgId: string;
     createTime: string;
   }) {
-    return this.post("/gewe/v2/api/message/revokeMsg", params);
+    return this.post("/gewe/v2/api/message/revokeMsg", params, this.env.GEWE_SEND_TIMEOUT_MS);
   }
 
   async downloadMedia(params: DownloadMediaParams): Promise<{ fileUrl: string }> {
-    const result = await this.post(resolveDownloadPath(params), resolveDownloadBody(params));
+    const result = await this.post(resolveDownloadPath(params), resolveDownloadBody(params), 30_000);
     const businessError = getDownloadBusinessError(result);
     if (businessError && params.kind === "image" && params.method !== "forwarded_cdn") {
       const fallback = buildImageCdnFallbackParams(params);
@@ -94,21 +107,45 @@ export class GeweClientService {
     return { fileUrl };
   }
 
-  private async post(path: string, body: unknown) {
-    const response = await fetch(`${this.env.GEWE_BASE_URL}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-GEWE-TOKEN": this.env.GEWE_TOKEN
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(10_000)
-    });
+  private async post(path: string, body: unknown, timeoutMs = this.env.GEWE_REQUEST_TIMEOUT_MS) {
+    let response: Response;
+    try {
+      response = await fetch(`${this.env.GEWE_BASE_URL}${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-GEWE-TOKEN": this.env.GEWE_TOKEN
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+    } catch (error) {
+      if (isAbortTimeoutError(error)) throw new GeweRequestTimeoutError(path, timeoutMs);
+      throw error;
+    }
     if (!response.ok) {
       throw new Error(`GeWe HTTP ${response.status}`);
     }
     return response.json() as Promise<unknown>;
   }
+}
+
+function resolveMessageSendTimeoutMs(path: string, timeoutMs: number): number {
+  if (path === "/gewe/v2/api/message/postFile") return timeoutMs;
+  if (path === "/gewe/v2/api/message/postImage") return timeoutMs;
+  if (path === "/gewe/v2/api/message/postVideo") return timeoutMs;
+  if (path === "/gewe/v2/api/message/postVoice") return timeoutMs;
+  return Math.max(timeoutMs, 30_000);
+}
+
+function isAbortTimeoutError(error: unknown): boolean {
+  if (error instanceof DOMException) {
+    return error.name === "TimeoutError" || error.name === "AbortError";
+  }
+  if (error instanceof Error) {
+    return error.name === "TimeoutError" || error.name === "AbortError" || error.message.toLowerCase().includes("aborted due to timeout");
+  }
+  return false;
 }
 
 function resolveDownloadPath(params: DownloadMediaParams): string {
@@ -184,10 +221,38 @@ function xmlAttribute(attributes: string, name: string): string | undefined {
 }
 
 function getDownloadBusinessError(result: unknown): string | undefined {
+  return getBusinessError(result);
+}
+
+function getBusinessError(result: unknown): string | undefined {
   const record = result as { ret?: unknown; msg?: unknown; data?: { msg?: unknown; detail?: unknown } };
   const ret = Number(record.ret);
   if (!Number.isFinite(ret) || ret === 200 || ret === 0) return undefined;
-  return asString(record.msg ?? record.data?.msg ?? record.data?.detail) ?? `ret=${record.ret}`;
+  return extractBusinessErrorMessage(record) ?? `ret=${record.ret}`;
+}
+
+function extractBusinessErrorMessage(record: {
+  msg?: unknown;
+  data?: {
+    msg?: unknown;
+    detail?: unknown;
+  };
+}): string | undefined {
+  const dataMsg = asString(record.data?.msg);
+  if (dataMsg) return dataMsg;
+  const detail = asString(record.data?.detail);
+  const detailMsg = detail ? parseDetailBusinessMessage(detail) : undefined;
+  if (detailMsg) return detailMsg;
+  return asString(record.msg);
+}
+
+function parseDetailBusinessMessage(detail: string): string | undefined {
+  try {
+    const parsed = JSON.parse(detail) as { msg_err?: unknown; msg?: unknown };
+    return asString(parsed.msg_err ?? parsed.msg);
+  } catch {
+    return detail;
+  }
 }
 
 function extractEmojiMd5(rawContent: string): string {

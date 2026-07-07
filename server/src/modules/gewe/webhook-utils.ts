@@ -30,6 +30,7 @@ export function stableJsonStringify(value: unknown): string {
 }
 
 export function parseWebhookJsonBody(body: string): Record<string, unknown> {
+  if (!body.trim()) return {};
   return JSON.parse(preserveLargeIntegerFields(body)) as Record<string, unknown>;
 }
 

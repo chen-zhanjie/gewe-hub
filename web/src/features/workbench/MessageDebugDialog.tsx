@@ -1,6 +1,5 @@
 import { ArrowDown, ArrowUp, ExternalLink, FileText } from "lucide-react";
 import type { ReactNode } from "react";
-import { CopyButton } from "@/components/ui/CopyButton";
 import {
   Sheet,
   SheetBody,
@@ -74,11 +73,6 @@ export function MessageDebugDialog({
                 </button>
               </div>
             ) : null}
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <CopyButton value={JSON.stringify(message.standardJson, null, 2)} label="复制标准 JSON" />
-            <CopyButton value={JSON.stringify(message.rawPayload, null, 2)} label="复制原始 payload" />
-            <CopyButton value={JSON.stringify(message.deliveries, null, 2)} label="复制投递记录" />
           </div>
         </SheetHeader>
         <SheetBody>

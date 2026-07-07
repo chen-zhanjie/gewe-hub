@@ -3,6 +3,7 @@ import { ArrowDown } from "lucide-react";
 import type { DragEvent, ReactNode, RefObject } from "react";
 import { DateSeparator, MessageBubble } from "@/features/workbench/MessageFlow";
 import { buildMessageTimeline, type MessageTimelineItem } from "@/features/workbench/message-timeline";
+import { cn } from "@/lib/utils";
 import type { ConversationSummary, MessageItem } from "@/lib/workspace-data";
 
 interface MessagePanelProps {
@@ -110,7 +111,13 @@ export function MessagePanel({
                   key={item.key}
                   ref={messageVirtualizer.measureElement}
                   data-index={virtualItem.index}
-                  className="absolute left-0 top-0 w-full py-2"
+                  data-message-timeline-spacing={
+                    item.type === "message" && !item.startsGroup ? "compact" : "normal"
+                  }
+                  className={cn(
+                    "absolute left-0 top-0 w-full",
+                    item.type === "message" && !item.startsGroup ? "py-0.5" : "py-2",
+                  )}
                   style={{
                     transform: `translateY(${virtualItem.start}px)`,
                   }}

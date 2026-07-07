@@ -363,6 +363,34 @@ describe("SendController", () => {
     });
   });
 
+  it("按 ID 查询单条发送记录用于聊天页同步发送结果", async () => {
+    const prisma = {
+      sendRequest: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "send_failed_file",
+          status: "failed",
+          errorMessage: "GeWe 文件发送失败"
+        }))
+      }
+    };
+    const controller = new SendController(prisma as never, {} as never);
+
+    const result = await controller.detail("send_failed_file");
+
+    expect(result).toMatchObject({
+      id: "send_failed_file",
+      status: "failed",
+      errorMessage: "GeWe 文件发送失败"
+    });
+    expect(prisma.sendRequest.findUniqueOrThrow).toHaveBeenCalledWith({
+      where: { id: "send_failed_file" },
+      include: {
+        conversation: true,
+        app: true
+      }
+    });
+  });
+
   it.each([
     ["success", "sent"],
     ["in_progress", "pending"],

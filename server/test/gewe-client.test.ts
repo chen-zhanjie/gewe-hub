@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { GeweClientService } from "../src/modules/gewe/gewe-client.service.js";
+import { GeweClientService, GeweRequestTimeoutError } from "../src/modules/gewe/gewe-client.service.js";
 
 describe("GeweClientService", () => {
   beforeEach(() => {
@@ -132,6 +132,81 @@ describe("GeweClientService", () => {
         })
       })
     );
+  });
+
+  it("发送接口返回业务失败时抛出 GeWe 错误，不按 HTTP 200 当成功", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ret: 500,
+              msg: "发送图片失败",
+              data: {
+                msg: "图片格式错误",
+                detail: "{\"ret\":-1,\"msg\":\"fail\",\"msg_err\":\"图片格式错误\"}",
+              },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const client = new GeweClientService();
+
+    await expect(
+      client.sendByMappedRequest({
+        path: "/gewe/v2/api/message/postImage",
+        body: {
+          appId: "wx_app",
+          toWxid: "wxid_target",
+          imgUrl: "http://example.com/image.jpg",
+        },
+      }),
+    ).rejects.toThrow("GeWe 发送失败: 图片格式错误");
+  });
+
+  it("发送消息使用独立长超时，避免文件类发送在 GeWe 拉取文件时过早中断", async () => {
+    vi.stubEnv("GEWE_SEND_TIMEOUT_MS", "120000");
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ret: 200, msg: "ok", data: {} }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new GeweClientService();
+
+    await client.sendByMappedRequest({
+      path: "/gewe/v2/api/message/postFile",
+      body: {
+        appId: "wx_app",
+        toWxid: "wxid_target",
+        fileUrl: "http://example.com/file.pdf",
+        fileName: "file.pdf",
+      },
+    });
+
+    expect(timeoutSpy).toHaveBeenCalledWith(120000);
+    timeoutSpy.mockRestore();
+  });
+
+  it("GeWe 请求超时时抛出可识别的超时错误", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      }),
+    );
+    const client = new GeweClientService();
+
+    await expect(
+      client.sendByMappedRequest({
+        path: "/gewe/v2/api/message/postFile",
+        body: {
+          appId: "wx_app",
+          toWxid: "wxid_target",
+          fileUrl: "http://example.com/file.pdf",
+          fileName: "file.pdf",
+        },
+      }),
+    ).rejects.toBeInstanceOf(GeweRequestTimeoutError);
   });
 
   it("紧凑表情引用内容按第四段 md5 调用 GeWe 下载接口", async () => {

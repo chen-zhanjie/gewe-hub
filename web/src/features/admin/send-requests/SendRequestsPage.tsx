@@ -29,6 +29,7 @@ const SEND_REQUEST_STATUS_FACETS = [
   { label: "全部", value: "" },
   { label: "成功", value: "success" },
   { label: "失败", value: "failed" },
+  { label: "结果未知", value: "unknown" },
   { label: "进行中", value: "in_progress" },
 ] as const;
 
@@ -95,12 +96,12 @@ export function SendRequestsPage({
     {
       accessorKey: "status",
       header: "状态",
-      cell: ({ row }) => <StatusBadge status={row.original.status} />,
+      cell: ({ row }) => <StatusBadge status={sendRequestBadgeStatus(row.original.status)} />,
     },
     {
       accessorKey: "resultMsgId",
       header: "结果消息",
-      cell: ({ row }) => row.original.resultMsgId || "等待中",
+      cell: ({ row }) => sendRequestResultText(row.original),
     },
     {
       accessorKey: "updatedAt",
@@ -308,7 +309,7 @@ function SendRequestDetailSheet({
       onOpenChange={onOpenChange}
       title="发送详情"
       description={request?.id ?? "查看发送请求、GeWe 请求与 GeWe 响应。"}
-      status={request ? <StatusBadge status={request.status} /> : null}
+      status={request ? <StatusBadge status={sendRequestBadgeStatus(request.status)} /> : null}
     >
       {request ? (
         <div className="space-y-4">
@@ -318,7 +319,7 @@ function SendRequestDetailSheet({
               { label: "请求 ID", value: <code className="font-mono text-xs">{request.id}</code> },
               { label: "会话", value: getSendRequestConversationName(request) },
               { label: "类型", value: request.type },
-              { label: "状态", value: <StatusBadge status={request.status} /> },
+              { label: "状态", value: <StatusBadge status={sendRequestBadgeStatus(request.status)} /> },
               { label: "结果消息", value: <code className="font-mono text-xs">{request.resultMsgId || request.resultNewMsgId || "—"}</code> },
             ]}
           />
@@ -458,6 +459,17 @@ function countRowsByFacet(rows: SendRequestRow[], status: SendRequestFilters["st
   if (status === "success") return rows.filter((row) => row.status === "sent").length;
   if (status === "in_progress") return rows.filter((row) => row.status === "pending").length;
   return rows.filter((row) => row.status === status).length;
+}
+
+function sendRequestBadgeStatus(status: string): string {
+  return status === "unknown" ? "result_unknown" : status;
+}
+
+function sendRequestResultText(row: SendRequestRow): string {
+  if (row.resultMsgId) return row.resultMsgId;
+  if (row.status === "pending") return "等待中";
+  if (row.status === "unknown") return "结果未知";
+  return "—";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

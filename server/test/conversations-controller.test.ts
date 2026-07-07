@@ -35,6 +35,76 @@ describe("ConversationsController", () => {
     expect(rows.map((row) => row.id)).toEqual(["conv_recent_open", "conv_recent_message"]);
   });
 
+  it("会话列表使用联系人和群聊资料补齐名称与头像", async () => {
+    const prisma = {
+      $queryRaw: vi.fn(async () => [{ id: "conv_private" }, { id: "conv_group" }]),
+      conversation: {
+        findMany: vi.fn(async () => [
+          {
+            id: "conv_private",
+            accountId: "acc_1",
+            peerWxid: "wxid_friend",
+            type: "private",
+            name: null,
+            avatarUrl: null,
+            platformRemark: null,
+            app: null,
+            account: { id: "acc_1" },
+          },
+          {
+            id: "conv_group",
+            accountId: "acc_1",
+            peerWxid: "room@chatroom",
+            type: "group",
+            name: null,
+            avatarUrl: null,
+            platformRemark: null,
+            app: null,
+            account: { id: "acc_1" },
+          },
+        ]),
+      },
+      contact: {
+        findMany: vi.fn(async () => [
+          {
+            accountId: "acc_1",
+            wxid: "wxid_friend",
+            nickname: "陈可乐",
+            avatarUrl: "https://avatar.example/friend.jpg",
+            platformRemark: null,
+          },
+        ]),
+      },
+      group: {
+        findMany: vi.fn(async () => [
+          {
+            accountId: "acc_1",
+            wxid: "room@chatroom",
+            name: "gewe群聊测试",
+            avatarUrl: "https://avatar.example/group.jpg",
+            platformRemark: null,
+          },
+        ]),
+      },
+    };
+    const controller = new ConversationsController(prisma as never);
+
+    const rows = await controller.list("acc_1");
+
+    expect(rows).toMatchObject([
+      {
+        id: "conv_private",
+        name: "陈可乐",
+        avatarUrl: "https://avatar.example/friend.jpg",
+      },
+      {
+        id: "conv_group",
+        name: "gewe群聊测试",
+        avatarUrl: "https://avatar.example/group.jpg",
+      },
+    ]);
+  });
+
   it("会话列表支持显式包含隐藏会话用于管理视图", async () => {
     const prisma = {
       $queryRaw: vi.fn(async () => []),
@@ -92,6 +162,51 @@ describe("ConversationsController", () => {
         }),
       }),
     );
+  });
+
+  it("群成员未同步时从联系人表回退补齐群消息发送者资料", async () => {
+    const prisma = {
+      message: {
+        findUnique: vi.fn(),
+        findMany: vi.fn(async () => [
+          {
+            id: "message_1",
+            senderWxid: "wxid_sender",
+            account: { wxid: "wxid_bot" },
+            conversation: {
+              accountId: "acc_1",
+              peerWxid: "room@chatroom",
+              type: "group",
+            },
+          },
+        ]),
+      },
+      group: {
+        findFirst: vi.fn(async () => ({ members: [] })),
+      },
+      contact: {
+        findMany: vi.fn(async () => [
+          {
+            wxid: "wxid_sender",
+            nickname: "陈可乐",
+            platformRemark: null,
+            avatarUrl: "https://avatar.example/sender.jpg",
+            status: "active",
+          },
+        ]),
+      },
+    };
+    const controller = new ConversationsController(prisma as never);
+
+    const rows = await controller.messages("conv_1", "50");
+
+    expect(rows[0]).toMatchObject({
+      senderProfile: {
+        wxid: "wxid_sender",
+        nickname: "陈可乐",
+        avatarUrl: "https://avatar.example/sender.jpg",
+      },
+    });
   });
 
   it("编辑会话备注时只更新 platformRemark 字段", async () => {

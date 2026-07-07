@@ -47,7 +47,7 @@ describe("MessageNodeView", () => {
   });
 
   it("chat_record 弹窗内的卡片类消息不再额外包一层边框", () => {
-    const { container } = render(
+    render(
       <MessageNodeView
         node={{
           type: "chat_record",
@@ -73,8 +73,9 @@ describe("MessageNodeView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /打开聊天记录/ }));
 
-    const textItem = container.querySelector('[data-chat-record-item-frame="bubble"]');
-    const cardItems = container.querySelectorAll('[data-chat-record-item-frame="bare"]');
+    const dialog = screen.getByRole("dialog", { name: "聊天记录" });
+    const textItem = dialog.querySelector('[data-chat-record-item-frame="bubble"]');
+    const cardItems = dialog.querySelectorAll('[data-chat-record-item-frame="bare"]');
 
     expect(textItem).toHaveClass("border");
     expect(cardItems).toHaveLength(2);
@@ -85,7 +86,28 @@ describe("MessageNodeView", () => {
   });
 
   it("图片节点点击后弹窗预览大图", () => {
-    render(
+    const { container } = render(
+      <section data-testid="message-host">
+        <MessageNodeView
+          node={{
+            type: "image",
+            text: "[图片]",
+            media: { status: "ready", url: "https://example.test/a.jpg", mimeType: "image/jpeg" }
+          }}
+        />
+      </section>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看图片" }));
+
+    const dialog = screen.getByRole("dialog", { name: "图片预览" });
+    expect(within(dialog).getByAltText("[图片]")).toHaveAttribute("src", "https://example.test/a.jpg");
+    expect(container.querySelector('[role="dialog"]')).not.toBeInTheDocument();
+    expect(document.body).toContainElement(dialog);
+  });
+
+  it("图片 URL 已就绪但浏览器未加载完成时继续展示加载占位", () => {
+    const { container } = render(
       <MessageNodeView
         node={{
           type: "image",
@@ -95,10 +117,51 @@ describe("MessageNodeView", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "查看图片" }));
+    expect(screen.getByText("图片加载中")).toBeInTheDocument();
+    const img = container.querySelector("img") as HTMLImageElement;
+    expect(img).toHaveClass("opacity-0");
 
-    const dialog = screen.getByRole("dialog", { name: "图片预览" });
-    expect(within(dialog).getByAltText("[图片]")).toHaveAttribute("src", "https://example.test/a.jpg");
+    fireEvent.load(img);
+
+    expect(screen.queryByText("图片加载中")).not.toBeInTheDocument();
+    expect(img).toHaveClass("opacity-100");
+  });
+
+  it("图片 URL 加载失败时展示失败占位", () => {
+    const { container } = render(
+      <MessageNodeView
+        node={{
+          type: "image",
+          text: "[图片]",
+          media: { status: "ready", url: "https://example.test/broken.jpg", mimeType: "image/jpeg" }
+        }}
+      />
+    );
+
+    const img = container.querySelector("img") as HTMLImageElement;
+    fireEvent.error(img);
+
+    expect(screen.getByText("图片加载失败")).toBeInTheDocument();
+    expect(img).toHaveClass("opacity-0");
+  });
+
+  it("图片下载中展示稳定占位和加载状态", () => {
+    const { container } = render(
+      <MessageNodeView
+        node={{
+          type: "image",
+          text: "[图片]",
+          media: { status: "pending", url: null, width: 320, height: 180 }
+        }}
+      />
+    );
+
+    expect(screen.getByText("图片加载中")).toBeInTheDocument();
+    const imageFrame = container.querySelector('[data-media-frame="image"]') as HTMLElement | null;
+    expect(imageFrame).toBeTruthy();
+    expect(imageFrame).toHaveStyle({ aspectRatio: "320 / 180" });
+    expect(imageFrame).toHaveClass("border", "border-dashed");
+    expect(screen.queryByRole("button", { name: "查看图片" })).not.toBeInTheDocument();
   });
 
   it("图片和视频按媒体尺寸预留稳定占位，无尺寸时使用 200x150 默认尺寸", () => {

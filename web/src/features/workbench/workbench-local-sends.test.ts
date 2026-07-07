@@ -3,8 +3,9 @@ import type { AccountSummary, MessageItem } from "@/lib/workspace-data";
 import {
   buildVisibleMessages,
   compareMessagesBySentAt,
+  createLocalMediaSend,
   createLocalTextSend,
-  mapLocalTextSendToMessageItem,
+  mapLocalSendToMessageItem,
   mergeMessagesById,
 } from "./workbench-local-sends";
 
@@ -36,10 +37,11 @@ describe("workbench-local-sends", () => {
       status: "online",
     };
 
-    const message = mapLocalTextSendToMessageItem(
+    const message = mapLocalSendToMessageItem(
       {
         id: "local_1",
         conversationId: "conv_1",
+        type: "text",
         text: "本地消息",
         status: "failed",
         errorMessage: "网络错误",
@@ -65,6 +67,85 @@ describe("workbench-local-sends", () => {
     });
   });
 
+  it("将本地图片和文件发送草稿映射为对应消息节点", () => {
+    const image = mapLocalSendToMessageItem({
+      id: "local_image_1",
+      conversationId: "conv_1",
+      type: "image",
+      text: "[图片] screenshot.png",
+      fileName: "screenshot.png",
+      mimeType: "image/png",
+      status: "pending",
+      createdAtIso: "2026-07-06T07:16:37.000Z",
+    });
+    const file = mapLocalSendToMessageItem({
+      id: "local_file_1",
+      conversationId: "conv_1",
+      type: "file",
+      text: "[文件] note.txt",
+      fileName: "note.txt",
+      mimeType: "text/plain",
+      status: "failed",
+      errorMessage: "上传失败",
+      createdAtIso: "2026-07-06T07:16:38.000Z",
+    });
+
+    expect(image.content).toEqual({
+      type: "image",
+      text: "[图片] screenshot.png",
+      media: {
+        status: "pending",
+        fileName: "screenshot.png",
+        mimeType: "image/png",
+      },
+    });
+    expect(file.content).toEqual({
+      type: "file",
+      text: "[文件] note.txt",
+      media: {
+        status: "failed",
+        fileName: "note.txt",
+        mimeType: "text/plain",
+      },
+    });
+    expect(file.localSend).toMatchObject({
+      type: "file",
+      label: "[文件] note.txt",
+      status: "failed",
+      errorMessage: "上传失败",
+    });
+  });
+
+  it("创建本地媒体发送草稿时保留重试所需 payload", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-06T07:16:37.000Z"));
+
+    const send = createLocalMediaSend("conv_1", {
+      type: "file",
+      contentBase64: "SGVsbG8=",
+      mimeType: "text/plain",
+      fileName: "note.txt",
+    });
+
+    expect(send).toMatchObject({
+      conversationId: "conv_1",
+      type: "file",
+      text: "[文件] note.txt",
+      fileName: "note.txt",
+      mimeType: "text/plain",
+      status: "pending",
+      sendPayload: {
+        type: "file",
+        contentBase64: "SGVsbG8=",
+        mimeType: "text/plain",
+        fileName: "note.txt",
+      },
+      createdAtIso: "2026-07-06T07:16:37.000Z",
+    });
+
+    vi.useRealTimers();
+  });
+
   it("构造可见消息时过滤已被服务端 sendRequestId 替换的本地消息并按时间排序", () => {
     const server = messageFixture("server_1", "send_1", "2026-07-06T07:16:39.000Z");
     const visible = buildVisibleMessages(
@@ -73,6 +154,7 @@ describe("workbench-local-sends", () => {
         {
           id: "local_replaced",
           conversationId: "conv_1",
+          type: "text",
           text: "已替换",
           status: "pending",
           sendRequestId: "send_1",
@@ -81,6 +163,7 @@ describe("workbench-local-sends", () => {
         {
           id: "local_visible",
           conversationId: "conv_1",
+          type: "text",
           text: "仍显示",
           status: "pending",
           createdAtIso: "2026-07-06T07:16:37.000Z",

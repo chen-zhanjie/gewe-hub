@@ -3,7 +3,7 @@ import type { FastifyReply } from "fastify";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 
-export type AdminMessageEventType = "message.created" | "message.revoked";
+export type AdminMessageEventType = "message.created" | "message.updated" | "message.revoked";
 
 export interface AdminMessageChangedEvent {
   eventType: AdminMessageEventType;

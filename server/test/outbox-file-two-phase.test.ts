@@ -57,6 +57,12 @@ describe("OutboxService 文件两阶段回调", () => {
         upsert: vi.fn(async () => ({ id: "conv_1", app: null })),
         update: vi.fn(async () => ({})),
       },
+      contact: {
+        findUnique: vi.fn(async () => null),
+      },
+      group: {
+        findUnique: vi.fn(async () => null),
+      },
       message: {
         findFirst: vi.fn(async () => null),
         findUnique: vi.fn(async () => null),

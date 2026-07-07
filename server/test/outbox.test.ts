@@ -170,6 +170,25 @@ describe("outbox 状态机", () => {
     );
   });
 
+  it("回调新消息创建会话时使用本地联系人资料补齐名称和头像", async () => {
+    const { prisma, service } = buildIncomingMessageOutbox({ isSelf: false });
+
+    await service.tick();
+
+    expect(prisma.conversation.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          name: "陈可乐",
+          avatarUrl: "https://avatar.example/friend.jpg",
+        }),
+        update: expect.objectContaining({
+          name: "陈可乐",
+          avatarUrl: "https://avatar.example/friend.jpg",
+        }),
+      }),
+    );
+  });
+
   it("原消息尚未送达应用时收到撤回，不投递 revoked 并取消未送达 created", async () => {
     const { prisma, delivery } = buildRevokeOutboxPrisma([{ appId: "app_1", status: "queued" }]);
     const service = new OutboxService(
@@ -400,6 +419,17 @@ function buildIncomingMessageOutbox({
     conversation: {
       upsert: vi.fn(async () => ({ id: "conv_1", app: null })),
       update: vi.fn(async () => ({})),
+    },
+    contact: {
+      findUnique: vi.fn(async () => ({
+        wxid: "wxid_sender",
+        nickname: "陈可乐",
+        avatarUrl: "https://avatar.example/friend.jpg",
+        platformRemark: null,
+      })),
+    },
+    group: {
+      findUnique: vi.fn(),
     },
     message: {
       findFirst: vi.fn(async () => null),

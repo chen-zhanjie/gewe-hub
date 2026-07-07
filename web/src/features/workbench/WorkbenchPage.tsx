@@ -8,6 +8,8 @@ import { MessagePanel } from "@/features/workbench/MessagePanel";
 import { WorkbenchConversationOverlays } from "@/features/workbench/WorkbenchConversationOverlays";
 import {
   adminEventSourceStatusEvent,
+  fetchWorkbenchSendRequest,
+  sendWorkbenchPayload,
   sendWorkbenchText,
   type AdminEventSourceStatusDetail,
   useRefreshWorkbenchQueries,
@@ -155,6 +157,8 @@ export function WorkbenchPage({
     loadOlderMessages,
     refreshMessages,
     sendText: sendWorkbenchText,
+    sendPayload: sendWorkbenchPayload,
+    fetchSendRequest: fetchWorkbenchSendRequest,
   });
 
   useEffect(() => {
@@ -166,8 +170,11 @@ export function WorkbenchPage({
 
   const composer = useWorkbenchComposerController({
     selectedConversation,
-    refreshMessages,
     onSendText: messageState.handleSendText,
+    onSendPayload: messageState.handleSendPayload,
+    createLocalSendPlaceholder: messageState.createLocalSendPlaceholder,
+    submitLocalSendPayload: messageState.submitLocalSendPayload,
+    failLocalSend: messageState.failLocalSend,
   });
   const conversationSurface = useWorkbenchConversationSurfaceController({
     selectedConversation,
@@ -264,8 +271,8 @@ export function WorkbenchPage({
           }}
           onShowMessageDetail={showMessageDetail}
           onOpenContactProfile={openContactProfile}
-          onRetryLocalSend={messageState.retryLocalTextSend}
-          onDeleteLocalSend={messageState.deleteLocalTextSend}
+          onRetryLocalSend={messageState.retryLocalSend}
+          onDeleteLocalSend={messageState.deleteLocalSend}
         >
           <MessageComposer
             selected={Boolean(selectedConversation)}

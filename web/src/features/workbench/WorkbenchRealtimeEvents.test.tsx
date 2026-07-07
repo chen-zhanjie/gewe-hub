@@ -69,6 +69,57 @@ describe("WorkbenchPage realtime events", () => {
     );
   });
 
+  it("收到媒体更新 SSE 消息事件后刷新当前会话消息", async () => {
+    const eventSources: FakeEventSource[] = [];
+    vi.stubGlobal("EventSource", class extends FakeEventSource {
+      constructor(url: string) {
+        super(url);
+        eventSources.push(this);
+      }
+    });
+    const fetchMock = mockFetch({
+      "/api/accounts": [
+        {
+          id: "acc_1",
+          wxid: "wxid_bot",
+          nickname: "客服主号",
+          onlineStatus: "online",
+        },
+      ],
+      "/api/conversations": [
+        {
+          id: "conv_1",
+          peerWxid: "wxid_target",
+          type: "private",
+          platformRemark: "陈可乐",
+          lastMessageText: "[图片]",
+          lastMessageAt: "2026-07-06T07:16:37.000Z",
+          status: "active",
+        },
+      ],
+      "/api/conversations/conv_1/messages?take=50": [
+        messageFixture("row_image", "msg_image", "[图片]", "2026-07-06T07:16:37.000Z"),
+      ],
+    });
+
+    renderWorkbenchPage();
+
+    await screen.findByText("[图片]");
+    await waitFor(() => expect(eventSources).toHaveLength(1));
+    fetchMock.mockClear();
+
+    eventSources[0]?.emit("message.updated", {
+      conversationId: "conv_1",
+      messageId: "msg_image",
+    });
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([input]) => String(input).replace("http://localhost", "") === "/api/conversations/conv_1/messages?take=50"),
+      ).toBe(true),
+    );
+  });
+
   it("管理员 SSE 断开时在工作台顶部显示重连横幅，恢复后自动消失", async () => {
     const eventSources: FakeEventSource[] = [];
     vi.stubGlobal("EventSource", class extends FakeEventSource {

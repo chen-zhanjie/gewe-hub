@@ -1,11 +1,15 @@
-import { mkdir, stat, writeFile } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, extname, join } from "node:path";
+import { promisify } from "node:util";
 import { Injectable, Optional } from "@nestjs/common";
 import { XMLBuilder, XMLParser } from "fast-xml-parser";
 import type { MessageEnvelope, MessageNode } from "@gewehub/contracts";
 import type { Prisma } from "@prisma/client";
 import { loadEnv } from "../../config/env.js";
+import { AdminEventsService } from "../admin-events/admin-events.service.js";
 import { DeliveryService } from "../delivery/delivery.service.js";
 import {
   GeweClientService,
@@ -17,6 +21,7 @@ import { AudioTranscodeService } from "./audio-transcode.service.js";
 import { signFileUrl, signOutboundFileUrl } from "./media-url.js";
 
 type MediaKind = "image" | "voice" | "video" | "file" | "emoji";
+const execFileAsync = promisify(execFile);
 
 const mediaTypes = new Set<string>([
   "image",
@@ -106,6 +111,7 @@ export class MediaService {
     private readonly gewe: GeweClientService,
     @Optional() private readonly delivery?: DeliveryService,
     @Optional() private readonly audioTranscode?: AudioTranscodeService,
+    @Optional() private readonly adminEvents?: AdminEventsService,
   ) {}
 
   async enqueueMessageMedia(input: EnqueueMessageMediaInput): Promise<number> {
@@ -225,6 +231,7 @@ export class MediaService {
         renderedText: nextPayload.renderedText.slice(0, 500),
       },
     });
+    this.publishMessageUpdated(asset.message);
     await this.createDeliveryForMessage(asset.messageId);
   }
 
@@ -280,7 +287,20 @@ export class MediaService {
         renderedText: nextPayload.renderedText.slice(0, 500),
       },
     });
+    this.publishMessageUpdated(asset.message);
     await this.createDeliveryForMessage(asset.messageId);
+  }
+
+  private publishMessageUpdated(message: {
+    conversationId?: string | null;
+    messageId?: string | null;
+  }): void {
+    if (!this.adminEvents || !message.conversationId || !message.messageId) return;
+    this.adminEvents.publishMessageChanged({
+      eventType: "message.updated",
+      conversationId: message.conversationId,
+      messageId: message.messageId,
+    });
   }
 
   async retryDownload(assetId: string) {
@@ -345,16 +365,20 @@ export class MediaService {
 
   async prepareOutboundFile(input: PrepareOutboundFileInput): Promise<PreparedOutboundFile> {
     const source = await this.loadOutboundFileSource(input);
+    const outbound = await normalizeOutboundFileSource(input.kind, source);
     return this.writeOutboundFile({
       accountId: input.accountId,
-      bytes: source.bytes,
-      mimeType: source.mimeType,
-      fileName: source.fileName,
+      bytes: outbound.bytes,
+      mimeType: outbound.mimeType,
+      fileName: outbound.fileName,
     });
   }
 
   async getOutboundFile(fileId: string): Promise<(OutboundFileRecord & { size: number }) | null> {
-    const record = outboundFiles.get(fileId);
+    const record =
+      outboundFiles.get(fileId) ??
+      (await this.readOutboundFileRecord(fileId)) ??
+      (await this.findOutboundFileRecord(fileId));
     if (!record) return null;
     if (record.expiresAt < Math.floor(Date.now() / 1000)) {
       outboundFiles.delete(fileId);
@@ -427,8 +451,15 @@ export class MediaService {
     const fileName = ensureExtension(safeFileName(input.fileName), extension);
     const path = join(directory, `${id}${extension}`);
     await writeFile(path, input.bytes);
+    const info = await stat(path);
     const expiresAt = Math.floor(Date.now() / 1000) + 24 * 60 * 60;
     outboundFiles.set(id, {
+      path,
+      mimeType: input.mimeType,
+      fileName,
+      expiresAt,
+    });
+    await this.writeOutboundFileRecord(id, {
       path,
       mimeType: input.mimeType,
       fileName,
@@ -445,8 +476,44 @@ export class MediaService {
       }),
       mimeType: input.mimeType,
       fileName,
-      size: input.bytes.byteLength,
+      size: info.size,
       durationMs: input.durationMs,
+    };
+  }
+
+  private async writeOutboundFileRecord(id: string, record: OutboundFileRecord): Promise<void> {
+    const manifestPath = outboundFileManifestPath(record.path, id);
+    await writeFile(manifestPath, JSON.stringify(record), "utf8");
+  }
+
+  private async readOutboundFileRecord(id: string): Promise<OutboundFileRecord | null> {
+    const root = join(this.env.FILE_STORAGE_DIR, "outbound");
+    const manifestPath = await findFile(root, `${id}.json`);
+    if (!manifestPath) return null;
+    try {
+      const record = JSON.parse(await readFile(manifestPath, "utf8")) as Partial<OutboundFileRecord>;
+      if (!record.path || !record.mimeType || !record.fileName || !record.expiresAt) return null;
+      return {
+        path: record.path,
+        mimeType: record.mimeType,
+        fileName: record.fileName,
+        expiresAt: record.expiresAt,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private async findOutboundFileRecord(id: string): Promise<OutboundFileRecord | null> {
+    const root = join(this.env.FILE_STORAGE_DIR, "outbound");
+    const filePath = await findFileByStem(root, id);
+    if (!filePath) return null;
+    const mimeType = guessMimeType(filePath);
+    return {
+      path: filePath,
+      mimeType,
+      fileName: basename(filePath),
+      expiresAt: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
     };
   }
 
@@ -1020,6 +1087,83 @@ function failedMediaText(node: MessageNode): string {
   if (node.type === "video") return "[视频] 下载失败";
   if (node.type === "emoji") return "[动画表情] 下载失败";
   return `${node.text || "[媒体]"} 下载失败`;
+}
+
+async function normalizeOutboundFileSource(
+  kind: "image" | "file" | "video",
+  source: {
+    bytes: Buffer;
+    mimeType: string;
+    fileName: string;
+  },
+): Promise<{ bytes: Buffer; mimeType: string; fileName: string }> {
+  if (kind !== "image") return source;
+  const mimeType = source.mimeType.toLowerCase();
+  if (mimeType.includes("gif") || source.fileName.toLowerCase().endsWith(".gif")) {
+    return source;
+  }
+
+  const usePng = mimeType.includes("png") || source.fileName.toLowerCase().endsWith(".png");
+  const directory = await mkdtemp(join(tmpdir(), "gewehub-outbound-image-"));
+  const inputPath = join(directory, safeFileName(source.fileName));
+  const outputPath = join(directory, usePng ? "image.png" : "image.jpg");
+  try {
+    await writeFile(inputPath, source.bytes);
+    await execFileAsync("ffmpeg", [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      inputPath,
+      "-map_metadata",
+      "-1",
+      "-frames:v",
+      "1",
+      ...(usePng
+        ? [outputPath]
+        : ["-vf", "format=yuv420p", "-q:v", "3", outputPath]),
+    ]);
+    return {
+      bytes: await readFile(outputPath),
+      mimeType: usePng ? "image/png" : "image/jpeg",
+      fileName: ensureExtension(stripExtension(source.fileName) || "image", usePng ? ".png" : ".jpg"),
+    };
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+}
+
+function outboundFileManifestPath(filePath: string, id: string): string {
+  return join(dirname(filePath), `${id}.json`);
+}
+
+async function findFile(root: string, fileName: string): Promise<string | null> {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const path = join(root, entry.name);
+    if (entry.isFile() && entry.name === fileName) return path;
+    if (entry.isDirectory()) {
+      const found = await findFile(path, fileName);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+async function findFileByStem(root: string, stem: string): Promise<string | null> {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const path = join(root, entry.name);
+    if (entry.isFile() && entry.name.startsWith(`${stem}.`) && !entry.name.endsWith(".json")) {
+      return path;
+    }
+    if (entry.isDirectory()) {
+      const found = await findFileByStem(path, stem);
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 function resolveExtension(

@@ -1,7 +1,8 @@
 import type { MessageNode } from "@gewehub/contracts";
-import { Banknote, Contact, Gift, MapPin, MessagesSquare, X } from "lucide-react";
+import { Banknote, Contact, Gift, ImageIcon, MapPin, MessagesSquare, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { layers } from "@/components/ui/layers";
 import { cn } from "@/lib/utils";
 
@@ -46,7 +47,7 @@ function MessageNodeContent({ node, depth = 0 }: MessageNodeViewProps) {
       return <ImagePreview node={node} />;
     }
 
-    return <div className="text-sm text-muted-foreground">{node.media?.status === "failed" ? `${node.text} 下载失败` : node.text}</div>;
+    return <PendingImagePreview node={node} />;
   }
 
   if (node.type === "voice") {
@@ -226,7 +227,7 @@ function ChatRecordDialog({ node, onClose }: { node: MessageNode; onClose: () =>
   const items = node.items ?? [];
   const title = items.length > 0 ? node.text || "聊天记录" : "聊天记录摘要";
 
-  return (
+  return createBodyPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -276,7 +277,7 @@ function ChatRecordDialog({ node, onClose }: { node: MessageNode; onClose: () =>
           )}
         </div>
       </div>
-    </div>
+    </div>,
   );
 }
 
@@ -297,51 +298,76 @@ function ImagePreview({ node }: { node: MessageNode }) {
         className="block rounded-md border bg-background p-1"
       >
         <MediaFrame node={node} kind="image">
-          <FadingImage src={imageUrl} alt={node.text} />
+          <FadingImage src={imageUrl} alt={node.text} label={node.type === "emoji" ? "表情加载中" : "图片加载中"} />
         </MediaFrame>
       </button>
-      {open ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="图片预览"
-          className={cn("fixed inset-0 flex items-center justify-center bg-black/70 p-4", layers.dialog)}
-          onClick={(event) => {
-            event.stopPropagation();
-            setOpen(false);
-          }}
-        >
-          <div className="relative max-h-[92vh] max-w-[92vw]" onClick={(event) => event.stopPropagation()}>
-            <button
-              type="button"
-              aria-label="关闭"
-              onClick={() => setOpen(false)}
-              className="absolute right-2 top-2 rounded-md bg-background/90 p-2 text-foreground shadow"
-            >
-              <X className="size-4" />
-            </button>
-            <img src={node.media?.url ?? imageUrl} alt={node.text} className="max-h-[92vh] max-w-[92vw] rounded-md object-contain" />
-          </div>
-        </div>
-      ) : null}
+      {open ? <ImagePreviewDialog imageUrl={node.media?.url ?? imageUrl} alt={node.text} onClose={() => setOpen(false)} /> : null}
     </>
+  );
+}
+
+function ImagePreviewDialog({ imageUrl, alt, onClose }: { imageUrl: string; alt: string; onClose: () => void }) {
+  return createBodyPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="图片预览"
+      className={cn("fixed inset-0 flex items-center justify-center bg-black/70 p-4", layers.dialog)}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClose();
+      }}
+    >
+      <div className="relative max-h-[92vh] max-w-[92vw]" onClick={(event) => event.stopPropagation()}>
+        <button
+          type="button"
+          aria-label="关闭"
+          onClick={onClose}
+          className="absolute right-2 top-2 rounded-md bg-background/90 p-2 text-foreground shadow"
+        >
+          <X className="size-4" />
+        </button>
+        <img src={imageUrl} alt={alt} className="max-h-[92vh] max-w-[92vw] rounded-md object-contain" />
+      </div>
+    </div>,
+  );
+}
+
+function createBodyPortal(content: ReactNode) {
+  if (typeof document === "undefined") return content;
+  return createPortal(content, document.body);
+}
+
+function PendingImagePreview({ node }: { node: MessageNode }) {
+  const failed = node.media?.status === "failed";
+  const label = failed ? (node.type === "emoji" ? "表情下载失败" : "图片下载失败") : (node.type === "emoji" ? "表情加载中" : "图片加载中");
+
+  return (
+    <MediaFrame node={node} kind="image" className="border border-dashed border-border bg-muted/60">
+      <span className="flex size-full flex-col items-center justify-center gap-2 px-3 text-xs text-muted-foreground">
+        <ImageIcon className="size-5" />
+        <span>{label}</span>
+      </span>
+    </MediaFrame>
   );
 }
 
 function MediaFrame({
   node,
   kind,
+  className,
   children,
 }: {
   node: MessageNode;
   kind: "image" | "video";
+  className?: string;
   children: ReactNode;
 }) {
   const size = readMediaFrameSize(node);
   return (
     <span
       data-media-frame={kind}
-      className="block overflow-hidden rounded bg-muted"
+      className={cn("block overflow-hidden rounded bg-muted", className)}
       style={{
         width: `${size.width}px`,
         height: `${size.height}px`,
@@ -353,18 +379,37 @@ function MediaFrame({
   );
 }
 
-function FadingImage({ src, alt }: { src: string; alt: string }) {
-  const [loaded, setLoaded] = useState(false);
+function FadingImage({ src, alt, label }: { src: string; alt: string; label: string }) {
+  const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
+  const imageRef = useRef<HTMLImageElement>(null);
+
+  useEffect(() => {
+    const image = imageRef.current;
+    setStatus(image?.complete && image.naturalWidth > 0 ? "loaded" : "loading");
+  }, [src]);
+
+  const loaded = status === "loaded";
+
   return (
-    <img
-      src={src}
-      alt={alt}
-      onLoad={() => setLoaded(true)}
-      className={cn(
-        "size-full rounded object-contain opacity-0 transition-opacity duration-120",
-        loaded && "opacity-100"
-      )}
-    />
+    <span className="relative block size-full">
+      <img
+        ref={imageRef}
+        src={src}
+        alt={alt}
+        onLoad={() => setStatus("loaded")}
+        onError={() => setStatus("error")}
+        className={cn(
+          "size-full rounded object-contain transition-opacity duration-120",
+          loaded ? "opacity-100" : "opacity-0"
+        )}
+      />
+      {!loaded ? (
+        <span className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-3 text-xs text-muted-foreground">
+          <ImageIcon className="size-5" />
+          <span>{status === "error" ? label.replace("加载中", "加载失败") : label}</span>
+        </span>
+      ) : null}
+    </span>
   );
 }
 

@@ -130,6 +130,7 @@ enum SendStatus {
   pending
   sent
   failed
+  unknown
 }
 
 enum OutboxTaskStatus {
@@ -155,7 +156,7 @@ model WechatAccount {
   appId          String       @map("app_id")
   wxid           String       @unique
   nickname       String?
-  avatarUrl      String?      @map("avatar_url")
+  avatarUrl      String?      @db.Text @map("avatar_url")
   region         String?
   onlineStatus   OnlineStatus @default(unknown) @map("online_status")
   source         AccountSource @default(auto)
@@ -181,7 +182,7 @@ model Contact {
   accountId       String            @map("account_id")
   wxid            String
   nickname        String?
-  avatarUrl       String?           @map("avatar_url")
+  avatarUrl       String?           @db.Text @map("avatar_url")
   platformRemark  String?           @map("platform_remark")
   status          SoftContactStatus @default(active)
   statusChangedAt DateTime?         @map("status_changed_at")
@@ -200,7 +201,7 @@ model Group {
   accountId       String       @map("account_id")
   wxid            String
   name            String?
-  avatarUrl       String?      @map("avatar_url")
+  avatarUrl       String?      @db.Text @map("avatar_url")
   platformRemark  String?      @map("platform_remark")
   ownerWxid       String?      @map("owner_wxid")
   memberCount     Int?         @map("member_count")
@@ -223,7 +224,7 @@ model GroupMember {
   wxid            String
   nickname        String?
   displayName     String?           @map("display_name")
-  avatarUrl       String?           @map("avatar_url")
+  avatarUrl       String?           @db.Text @map("avatar_url")
   platformRemark  String?           @map("platform_remark")
   status          GroupMemberStatus @default(active)
   statusChangedAt DateTime?         @map("status_changed_at")
@@ -243,7 +244,7 @@ model Conversation {
   peerWxid       String             @map("peer_wxid")
   type           ConversationType
   name           String?
-  avatarUrl      String?            @map("avatar_url")
+  avatarUrl      String?            @db.Text @map("avatar_url")
   platformRemark String?            @map("platform_remark")
   appId          String?            @map("app_id")
   deliveryFilter DeliveryFilter     @default(all) @map("delivery_filter")

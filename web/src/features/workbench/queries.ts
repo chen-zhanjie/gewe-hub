@@ -2,7 +2,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ContactProfileResponse } from "@gewehub/contracts";
 import { useEffect, useRef } from "react";
 import { apiFetch } from "@/lib/api";
-import type { BackendAccount, BackendConversation, BackendMessage, ConversationSummary } from "@/lib/workspace-data";
+import type {
+  BackendAccount,
+  BackendConversation,
+  BackendMessage,
+  BackendSendRequest,
+  ConversationSummary,
+  LocalSendPayload,
+} from "@/lib/workspace-data";
 
 export const WORKBENCH_LIST_STALE_TIME_MS = 30_000;
 export const WORKBENCH_ENTITY_STALE_TIME_MS = 5 * 60_000;
@@ -154,6 +161,10 @@ export async function fetchWorkbenchConversations(): Promise<BackendConversation
   return apiFetch<BackendConversation[]>("/api/conversations");
 }
 
+export async function fetchWorkbenchSendRequest(sendRequestId: string): Promise<BackendSendRequest> {
+  return apiFetch<BackendSendRequest>(`/api/send-requests/${sendRequestId}`);
+}
+
 export async function fetchWorkbenchGroupMembers(
   conversation: ConversationSummary,
   options: WorkbenchGroupMembersQueryOptions = {},
@@ -199,17 +210,43 @@ export async function sendWorkbenchText(conversationId: string, text: string): P
   });
 }
 
-export async function sendWorkbenchMedia(payload: SendMediaRequest): Promise<unknown> {
-  return apiFetch("/api/send", {
+export async function sendWorkbenchMedia(payload: SendMediaRequest): Promise<WorkbenchSendResponse> {
+  return apiFetch<WorkbenchSendResponse>("/api/send", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
-export async function sendWorkbenchLink(payload: SendLinkRequest): Promise<unknown> {
-  return apiFetch("/api/send", {
+export async function sendWorkbenchLink(payload: SendLinkRequest): Promise<WorkbenchSendResponse> {
+  return apiFetch<WorkbenchSendResponse>("/api/send", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function sendWorkbenchPayload(
+  conversationId: string,
+  payload: LocalSendPayload,
+): Promise<WorkbenchSendResponse> {
+  if (payload.type === "link") {
+    return sendWorkbenchLink({
+      conversationId,
+      type: "link",
+      title: payload.title ?? "",
+      desc: payload.desc ?? "",
+      linkUrl: payload.linkUrl ?? "",
+      thumbUrl: payload.thumbUrl ?? "",
+    });
+  }
+
+  return sendWorkbenchMedia({
+    conversationId,
+    type: payload.type,
+    contentBase64: payload.contentBase64 ?? "",
+    mimeType: payload.mimeType ?? "application/octet-stream",
+    fileName: payload.fileName ?? "",
+    ...(payload.thumbUrl ? { thumbUrl: payload.thumbUrl } : {}),
+    ...(payload.durationMs ? { durationMs: payload.durationMs } : {}),
   });
 }
 
@@ -402,6 +439,7 @@ export function useWorkbenchAdminEvents(currentConversationId: string | null) {
     events.addEventListener("open", handleOpen);
     events.addEventListener("error", handleError);
     events.addEventListener("message.created", handleMessageChanged);
+    events.addEventListener("message.updated", handleMessageChanged);
     events.addEventListener("message.revoked", handleMessageChanged);
     return () => {
       events.close();

@@ -2,7 +2,6 @@ import {
   AlertCircle,
   Clock3,
   Info,
-  RotateCw,
   Trash2,
 } from "lucide-react";
 import { isFramedMessageNode, MessageNodeView } from "@/components/message/MessageNodeView";
@@ -40,29 +39,71 @@ export function MessageBubble({
   const framedByContent = isFramedMessageNode(message.content);
   const localSend = message.localSend;
   const deliveryStatus = localSend ? null : readDeliveryStatus(message.deliveries);
-  const metaAlwaysVisible = message.status === "revoked" || localSend?.status === "failed";
+  const metaAlwaysVisible = message.status === "revoked" || Boolean(localSend);
+  const showSenderName = !message.isSelf && startsGroup;
+  const messageMeta = (
+    <div
+      data-message-meta={metaAlwaysVisible ? "inline" : "hover-overlay"}
+      className={cn(
+        "z-10 flex items-center gap-2 rounded-md bg-background/95 text-xs text-muted-foreground transition-opacity duration-120",
+        message.isSelf && "justify-end",
+        metaAlwaysVisible
+          ? "opacity-100"
+          : cn(
+              "absolute bottom-0 border px-2 py-1 shadow-sm opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+              message.isSelf ? "right-full mr-2" : "left-full ml-2",
+            ),
+      )}
+    >
+      <TimeText value={message.sentAtIso} />
+      {message.status === "revoked" ? (
+        <span
+          title={message.revokedAtIso || undefined}
+          className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
+        >
+          已撤回
+        </span>
+      ) : null}
+      <LocalSendMeta message={message} onRetry={onRetryLocalSend} onDelete={onDeleteLocalSend} />
+      {!localSend ? (
+        <button
+          type="button"
+          aria-label={`查看消息详情 ${message.messageId}`}
+          onClick={() => onShowDetail(message)}
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 hover:bg-muted"
+        >
+          <Info className="size-3" />
+          详情
+        </button>
+      ) : null}
+    </div>
+  );
 
   return (
     <article
       data-message-group-start={startsGroup ? "true" : "false"}
       data-message-status={message.status}
+      data-local-send-status={localSend?.status}
       className={cn(
-        "group flex gap-3 rounded-md px-2 py-1",
+        "group relative flex items-start gap-3 rounded-md px-2",
+        startsGroup ? "py-1" : "py-0.5",
         message.isSelf && "justify-end",
-        !startsGroup && "pt-1",
         message.status === "revoked" && "bg-destructive/5",
       )}
     >
       {!message.isSelf ? (
         startsGroup ? (
-          <SenderAvatarButton message={message} onOpenContact={onOpenContact} />
+          <SenderAvatarButton message={message} alignWithContent={showSenderName} onOpenContact={onOpenContact} />
         ) : (
           <div className="w-8 shrink-0" aria-hidden="true" />
         )
       ) : null}
-      <div className={cn("message-bubble space-y-1", message.isSelf && "items-end")}>
-        {!message.isSelf && startsGroup ? <div className="text-xs text-muted-foreground">{message.senderName}</div> : null}
-        <div className="relative">
+      <div className={cn("message-bubble flex flex-col gap-1", message.isSelf && "items-end")}>
+        {showSenderName ? <div className="text-xs text-muted-foreground">{message.senderName}</div> : null}
+        <div data-message-content-shell="true" className="relative inline-block max-w-full">
+          {localSend?.status === "failed" ? (
+            <LocalSendFailureRetry message={message} onRetry={onRetryLocalSend} />
+          ) : null}
           <div
             data-message-frame-kind={framedByContent ? "bare" : "bubble"}
             className={cn(
@@ -71,7 +112,7 @@ export function MessageBubble({
                 ? "p-0"
                 : cn("px-3 py-2", message.isSelf ? "bg-primary text-primary-foreground" : "border bg-background"),
               localSend?.status === "pending" && "opacity-70",
-              localSend?.status === "failed" && "border border-destructive/50 bg-destructive/10 text-foreground",
+              localSend?.status === "failed" && !framedByContent && "border border-destructive/50 bg-destructive/10 text-foreground",
             )}
           >
             <MessageNodeView node={message.content} />
@@ -83,36 +124,9 @@ export function MessageBubble({
               onClick={() => onShowDetail(message)}
             />
           ) : null}
+          {!metaAlwaysVisible ? messageMeta : null}
         </div>
-        <div
-          className={cn(
-            "flex items-center gap-2 text-xs text-muted-foreground transition-opacity duration-120",
-            message.isSelf && "justify-end",
-            metaAlwaysVisible ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-          )}
-        >
-          <TimeText value={message.sentAtIso} />
-          {message.status === "revoked" ? (
-            <span
-              title={message.revokedAtIso || undefined}
-              className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
-            >
-              已撤回
-            </span>
-          ) : null}
-          <LocalSendMeta message={message} onRetry={onRetryLocalSend} onDelete={onDeleteLocalSend} />
-          {!localSend ? (
-            <button
-              type="button"
-              aria-label={`查看消息详情 ${message.messageId}`}
-              onClick={() => onShowDetail(message)}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 hover:bg-muted"
-            >
-              <Info className="size-3" />
-              详情
-            </button>
-          ) : null}
-        </div>
+        {metaAlwaysVisible ? messageMeta : null}
       </div>
       {message.isSelf ? <SenderAvatarButton message={message} onOpenContact={onOpenContact} /> : null}
     </article>
@@ -121,9 +135,11 @@ export function MessageBubble({
 
 function SenderAvatarButton({
   message,
+  alignWithContent = false,
   onOpenContact,
 }: {
   message: MessageItem;
+  alignWithContent?: boolean;
   onOpenContact: (wxid: string) => void;
 }) {
   return (
@@ -131,7 +147,10 @@ function SenderAvatarButton({
       type="button"
       aria-label={`查看联系人 ${message.senderName}`}
       onClick={() => onOpenContact(message.senderProfile.wxid)}
-      className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      className={cn(
+        "shrink-0 self-start rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+        alignWithContent && "mt-5",
+      )}
     >
       <Avatar name={message.senderName} src={message.senderProfile.avatarUrl} size={32} />
     </button>
@@ -204,7 +223,7 @@ function LocalSendMeta({
         </span>
         <button
           type="button"
-          aria-label={`删除未发送消息 ${localSend.text}`}
+          aria-label={`删除未发送消息 ${localSend.label}`}
           onClick={() => onDelete(message)}
           className="inline-flex items-center gap-1 rounded-md px-2 py-1 hover:bg-muted"
         >
@@ -224,16 +243,7 @@ function LocalSendMeta({
       {localSend.errorMessage ? <span className="max-w-48 truncate text-destructive">{localSend.errorMessage}</span> : null}
       <button
         type="button"
-        aria-label={`重试发送 ${localSend.text}`}
-        onClick={() => onRetry(message)}
-        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-destructive hover:bg-destructive/10"
-      >
-        <RotateCw className="size-3" />
-        重试
-      </button>
-      <button
-        type="button"
-        aria-label={`删除未发送消息 ${localSend.text}`}
+        aria-label={`删除未发送消息 ${localSend.label}`}
         onClick={() => onDelete(message)}
         className="inline-flex items-center gap-1 rounded-md px-2 py-1 hover:bg-muted"
       >
@@ -241,6 +251,33 @@ function LocalSendMeta({
         删除
       </button>
     </>
+  );
+}
+
+function LocalSendFailureRetry({
+  message,
+  onRetry,
+}: {
+  message: MessageItem;
+  onRetry: (message: MessageItem) => void;
+}) {
+  const localSend = message.localSend;
+  if (!localSend) return null;
+
+  return (
+    <button
+      type="button"
+      aria-label={`重试发送 ${localSend.label}`}
+      title="重试发送"
+      data-local-send-retry-position="left"
+      onClick={(event) => {
+        event.stopPropagation();
+        onRetry(message);
+      }}
+      className="absolute left-0 top-1/2 z-10 flex size-6 -translate-x-[calc(100%+8px)] -translate-y-1/2 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <AlertCircle className="size-4" />
+    </button>
   );
 }
 

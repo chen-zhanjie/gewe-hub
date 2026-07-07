@@ -19,6 +19,11 @@ describe("env 配置", () => {
     expect(loadEnv(baseEnv).JSON_BODY_LIMIT_BYTES).toBe(16 * 1024 * 1024);
   });
 
+  it("GeWe 普通请求和发送请求使用不同默认超时", () => {
+    expect(loadEnv(baseEnv).GEWE_REQUEST_TIMEOUT_MS).toBe(10_000);
+    expect(loadEnv(baseEnv).GEWE_SEND_TIMEOUT_MS).toBe(120_000);
+  });
+
   it("允许通过环境变量调整 JSON 请求体上限", () => {
     expect(loadEnv({ ...baseEnv, JSON_BODY_LIMIT_BYTES: "33554432" }).JSON_BODY_LIMIT_BYTES).toBe(32 * 1024 * 1024);
   });

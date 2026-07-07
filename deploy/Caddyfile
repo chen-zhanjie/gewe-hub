@@ -1,0 +1,12 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$GEWEHUB_DOMAIN} {
+	encode zstd gzip
+
+	reverse_proxy /api/* server:3000
+	reverse_proxy /webhook/* server:3000
+	reverse_proxy /files/* server:3000
+	reverse_proxy web:80
+}

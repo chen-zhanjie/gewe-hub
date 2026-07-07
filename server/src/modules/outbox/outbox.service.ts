@@ -3,12 +3,13 @@ import type { Prisma } from "@prisma/client";
 import type { MessageEnvelope } from "@gewehub/contracts";
 import type { MessageNode } from "@gewehub/contracts";
 import { AdminEventsService } from "../admin-events/admin-events.service.js";
+import { firstText, loadConversationIdentityProfile } from "../conversations/conversation-identity.js";
 import { extractRevokedMessageRef, normalizeGewePayload } from "../normalizer/normalizer.js";
 import { normalizeWebhookPayload } from "../gewe/webhook-utils.js";
 import { ContactsSyncService } from "../contacts/contacts-sync.service.js";
 import { DeliveryService } from "../delivery/delivery.service.js";
 import { buildDeliveryEventId } from "../delivery/delivery-utils.js";
-import { GeweClientService } from "../gewe/gewe-client.service.js";
+import { GeweClientService, GeweRequestTimeoutError } from "../gewe/gewe-client.service.js";
 import { MediaService } from "../media/media.service.js";
 import { hydrateMessageReferencesFromLocalMessages } from "../messages/message-reference.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -51,6 +52,19 @@ export class OutboxService implements OnModuleInit {
         }
       });
     } catch (error) {
+      if (task.taskType === "send" && error instanceof SendResultUnknownError) {
+        await this.prisma.outboxTask.update({
+          where: { id: task.id },
+          data: {
+            status: "dead",
+            retryCount: task.retryCount + 1,
+            nextRetryAt: null,
+            leaseUntil: null,
+            lastError: error.message
+          }
+        });
+        return;
+      }
       const next = transitionAfterFailure(
         {
           retryCount: task.retryCount,
@@ -210,6 +224,17 @@ export class OutboxService implements OnModuleInit {
         }
       });
     } catch (error) {
+      if (error instanceof GeweRequestTimeoutError) {
+        const message = "GeWe 请求超时，发送结果未知，已停止自动重试以避免重复发送";
+        await this.prisma.sendRequest.update({
+          where: { id: sendRequest.id },
+          data: {
+            status: "unknown",
+            errorMessage: message
+          }
+        });
+        throw new SendResultUnknownError(message);
+      }
       await this.prisma.sendRequest.update({
         where: { id: sendRequest.id },
         data: {
@@ -431,6 +456,13 @@ export class OutboxService implements OnModuleInit {
         nickname: envelope.account.name
       }
     });
+    const conversationIdentity = await loadConversationIdentityProfile(this.prisma, {
+      accountId: account.id,
+      peerWxid: envelope.conversation.wxid,
+      type: envelope.conversation.type,
+    });
+    const conversationName = firstText(conversationIdentity?.name, envelope.conversation.name);
+    const conversationAvatarUrl = firstText(conversationIdentity?.avatarUrl);
 
     const conversation = await this.prisma.conversation.upsert({
       where: {
@@ -443,12 +475,14 @@ export class OutboxService implements OnModuleInit {
         accountId: account.id,
         peerWxid: envelope.conversation.wxid,
         type: envelope.conversation.type,
-        name: envelope.conversation.name,
+        name: conversationName,
+        avatarUrl: conversationAvatarUrl,
         isHidden: false
       },
       update: {
         type: envelope.conversation.type,
-        name: envelope.conversation.name
+        name: conversationName,
+        avatarUrl: conversationAvatarUrl
       },
       include: {
         app: true
@@ -727,6 +761,13 @@ function parseSyncContactsPayload(payload: unknown, refId: string) {
     accountId: asString(record?.accountId) ?? refId,
     mode: asString(record?.mode) === "cache" ? "cache" as const : "full" as const
   };
+}
+
+class SendResultUnknownError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SendResultUnknownError";
+  }
 }
 
 function parseSyncGroupMembersPayload(payload: unknown, refId: string) {

@@ -9,6 +9,7 @@ const labels: Record<string, string> = {
   delivering: "投递中",
   pending: "等待中",
   unknown: "未知",
+  result_unknown: "结果未知",
   left: "已离开",
   removed: "已移除",
   inactive: "未活跃",
@@ -22,7 +23,7 @@ const labels: Record<string, string> = {
 
 const success = new Set(["online", "delivered", "acked", "sent"]);
 const progress = new Set(["queued", "delivering", "pending"]);
-const warning = new Set(["unknown", "left", "inactive"]);
+const warning = new Set(["unknown", "result_unknown", "left", "inactive"]);
 const failure = new Set(["failed", "offline", "dead"]);
 const neutral = new Set(["disabled", "revoked", "skipped", "removed"]);
 
