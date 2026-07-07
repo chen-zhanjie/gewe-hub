@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Pencil, Plus, RefreshCcw, Users } from "lucide-react";
+import { MessageCircle, Pencil, Plus, Users } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/ui/DataTable";
 import {
@@ -13,16 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/Dialog";
 import { EntityCell } from "@/components/ui/EntityCell";
-import {
-  Sheet,
-  SheetBody,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/Sheet";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { TimeText } from "@/components/ui/TimeText";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -32,11 +24,9 @@ import {
   useSaveAccountMutation,
   useSyncContactsMutation,
 } from "../queries";
+import { ContactsSheet, type ContactRow, type ContactStatusFilter, type GroupRow } from "./ContactsSheet";
 
 type AccountRow = ReturnType<typeof mapAccountRow>;
-type ContactRow = ReturnType<typeof mapContactRow>;
-type GroupRow = ReturnType<typeof mapGroupRow>;
-type ContactStatusFilter = "" | "active" | "deleted" | "blocked";
 
 const EMPTY_ACCOUNT_DRAFT = {
   appId: "",
@@ -46,6 +36,7 @@ const EMPTY_ACCOUNT_DRAFT = {
 };
 
 export function AccountsPage() {
+  const router = useRouter({ warn: false });
   const accountsQuery = useAccountsQuery();
   const saveAccountMutation = useSaveAccountMutation();
   const syncContactsMutation = useSyncContactsMutation();
@@ -64,6 +55,7 @@ export function AccountsPage() {
   const [groups, setGroups] = useState<BackendGroup[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [contactsError, setContactsError] = useState<string | null>(null);
+  const [openingChatKey, setOpeningChatKey] = useState<string | null>(null);
 
   const accountColumns = useMemo<ColumnDef<AccountRow>[]>(() => [
     {
@@ -151,7 +143,23 @@ export function AccountsPage() {
       cell: ({ row }) => <TimeText value={row.original.lastSyncedAt} />,
       meta: { align: "right" },
     },
-  ], []);
+    {
+      id: "actions",
+      header: "操作",
+      enableSorting: false,
+      meta: { align: "right", sticky: "right" },
+      cell: ({ row }) => (
+        <OpenChatButton
+          label={row.original.name}
+          disabled={!selectedAccount || !canOpenContactChat(row.original.status)}
+          loading={openingChatKey === openChatKey("private", row.original.wxid)}
+          onClick={() => {
+            if (selectedAccount) void handleOpenChat(selectedAccount.id, row.original.wxid, "private", row.original.name);
+          }}
+        />
+      ),
+    },
+  ], [openingChatKey, selectedAccount]);
 
   const groupColumns = useMemo<ColumnDef<GroupRow>[]>(() => [
     {
@@ -175,7 +183,23 @@ export function AccountsPage() {
       cell: ({ row }) => <TimeText value={row.original.lastSyncedAt} />,
       meta: { align: "right" },
     },
-  ], []);
+    {
+      id: "actions",
+      header: "操作",
+      enableSorting: false,
+      meta: { align: "right", sticky: "right" },
+      cell: ({ row }) => (
+        <OpenChatButton
+          label={row.original.name}
+          disabled={!selectedAccount || !canOpenGroupChat(row.original.status)}
+          loading={openingChatKey === openChatKey("group", row.original.wxid)}
+          onClick={() => {
+            if (selectedAccount) void handleOpenChat(selectedAccount.id, row.original.wxid, "group", row.original.name);
+          }}
+        />
+      ),
+    },
+  ], [openingChatKey, selectedAccount]);
 
   useEffect(() => {
     if (!formOpen) return;
@@ -257,6 +281,30 @@ export function AccountsPage() {
     }
   }
 
+  async function handleOpenChat(accountId: string, peerWxid: string, type: OpenConversationType, displayName: string) {
+    const key = openChatKey(type, peerWxid);
+    if (openingChatKey) return;
+    setOpeningChatKey(key);
+    try {
+      const conversation = await apiFetch<OpenConversationResponse>("/api/conversations/open", {
+        method: "POST",
+        body: JSON.stringify({ accountId, peerWxid, type }),
+      });
+      toast.success(`已打开 ${displayName}`);
+      await router.navigate({
+        to: "/workbench",
+        search: {
+          accountId,
+          conversationId: conversation.id,
+        },
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "发起聊天失败");
+    } finally {
+      setOpeningChatKey(null);
+    }
+  }
+
   function updateContactSearch(nextSearch: string) {
     setContactSearch(nextSearch);
     if (selectedAccount) void loadContacts(selectedAccount.id, nextSearch, contactStatus);
@@ -321,7 +369,8 @@ export function AccountsPage() {
         }}
       />
       <ContactsSheet
-        account={selectedAccount}
+        open={selectedAccount !== null}
+        accountName={selectedAccount ? readAccountDisplayName(selectedAccount) : undefined}
         contacts={contacts.map(mapContactRow)}
         groups={groups.map(mapGroupRow)}
         loading={contactsLoading}
@@ -434,109 +483,6 @@ function AccountFormDialog({
   );
 }
 
-function ContactsSheet({
-  account,
-  contacts,
-  groups,
-  loading,
-  error,
-  search,
-  status,
-  syncing,
-  contactColumns,
-  groupColumns,
-  onSearchChange,
-  onStatusChange,
-  onSync,
-  onOpenChange,
-}: {
-  account: BackendAccount | null;
-  contacts: ContactRow[];
-  groups: GroupRow[];
-  loading: boolean;
-  error: string | null;
-  search: string;
-  status: ContactStatusFilter;
-  syncing: boolean;
-  contactColumns: ColumnDef<ContactRow>[];
-  groupColumns: ColumnDef<GroupRow>[];
-  onSearchChange: (search: string) => void;
-  onStatusChange: (status: string) => void;
-  onSync: () => void;
-  onOpenChange: (open: boolean) => void;
-}) {
-  return (
-    <Sheet open={account !== null} onOpenChange={onOpenChange}>
-      <SheetContent className="w-[640px]">
-        <SheetHeader className="pr-14">
-          <SheetTitle>联系人</SheetTitle>
-          <SheetDescription>{account ? readAccountDisplayName(account) : "查看账号联系人与群列表"}</SheetDescription>
-        </SheetHeader>
-        <SheetBody>
-          {error ? <div className="mb-3 rounded-md border border-destructive/30 bg-background px-3 py-2 text-sm text-destructive">{error}</div> : null}
-          <Tabs defaultValue="contacts">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <TabsList>
-                <TabsTrigger value="contacts">联系人</TabsTrigger>
-                <TabsTrigger value="groups">群列表</TabsTrigger>
-              </TabsList>
-              <button
-                type="button"
-                aria-label="同步通讯录"
-                disabled={!account || syncing}
-                onClick={onSync}
-                className="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <RefreshCcw className={cn("size-4", syncing && "animate-spin")} />
-                {syncing ? "同步中" : "同步通讯录"}
-              </button>
-            </div>
-            <TabsContent value="contacts">
-              <DataTable
-                ariaLabel="联系人列表"
-                columns={contactColumns}
-                data={contacts}
-                getRowId={(row) => row.id}
-                loading={loading}
-                emptyText="暂无联系人"
-                toolbar={{
-                  searchPlaceholder: "搜索联系人",
-                  searchValue: search,
-                  onSearchChange,
-                  searchDebounceMs: 0,
-                  facets: [
-                    {
-                      label: "联系人状态",
-                      value: status,
-                      options: [
-                        { label: "全部", value: "" },
-                        { label: "active", value: "active" },
-                        { label: "deleted", value: "deleted" },
-                        { label: "blocked", value: "blocked" },
-                      ],
-                      onValueChange: onStatusChange,
-                    },
-                  ],
-                }}
-              />
-            </TabsContent>
-            <TabsContent value="groups">
-              <DataTable
-                ariaLabel="群列表"
-                columns={groupColumns}
-                data={groups}
-                getRowId={(row) => row.id}
-                loading={loading}
-                emptyText="暂无群聊"
-              />
-            </TabsContent>
-          </Tabs>
-        </SheetBody>
-      </SheetContent>
-    </Sheet>
-  );
-}
-
 function AccountStatusSummary({ accounts, loading }: { accounts: BackendAccount[]; loading: boolean }) {
   const offlineAccounts = accounts.filter((account) => account.onlineStatus === "offline");
   const hasOfflineAccounts = offlineAccounts.length > 0;
@@ -585,9 +531,45 @@ interface BackendGroup {
   avatarUrl?: string | null;
   platformRemark?: string | null;
   memberCount?: number | null;
-  status?: string;
+  status?: "active" | "disbanded" | "quit";
   lastSyncedAt?: string | Date | null;
   _count?: { members?: number };
+}
+
+type OpenConversationType = "private" | "group";
+
+interface OpenConversationResponse {
+  id: string;
+  accountId: string;
+  peerWxid: string;
+  type: OpenConversationType;
+  name?: string | null;
+  avatarUrl?: string | null;
+}
+
+function OpenChatButton({
+  label,
+  disabled,
+  loading,
+  onClick,
+}: {
+  label: string;
+  disabled: boolean;
+  loading: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={`发起聊天 ${label}`}
+      title={`发起聊天 ${label}`}
+      disabled={disabled || loading}
+      onClick={onClick}
+      className="rounded-md border p-2 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <MessageCircle className={cn("size-4", loading && "animate-pulse")} />
+    </button>
+  );
 }
 
 function mapAccountRow(account: BackendAccount) {
@@ -640,6 +622,18 @@ function mapGroupRow(group: BackendGroup) {
     status: group.status ?? "active",
     lastSyncedAt: group.lastSyncedAt,
   };
+}
+
+function canOpenContactChat(status: ContactRow["status"]): boolean {
+  return status === "active";
+}
+
+function canOpenGroupChat(status: GroupRow["status"]): boolean {
+  return status === "active";
+}
+
+function openChatKey(type: OpenConversationType, peerWxid: string): string {
+  return `${type}:${peerWxid}`;
 }
 
 function sortAccountsForOperations(accounts: BackendAccount[]): BackendAccount[] {

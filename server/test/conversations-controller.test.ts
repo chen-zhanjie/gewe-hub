@@ -120,6 +120,177 @@ describe("ConversationsController", () => {
     expect(prisma.conversation.findMany).not.toHaveBeenCalled();
   });
 
+  it("打开私聊时从联系人资料 upsert 会话并返回展示字段", async () => {
+    const prisma = {
+      wechatAccount: {
+        findUnique: vi.fn(async () => ({ id: "acc_1" })),
+      },
+      contact: {
+        findUnique: vi.fn(async () => ({
+          id: "contact_1",
+          accountId: "acc_1",
+          wxid: "wxid_friend",
+          nickname: "陈可乐",
+          avatarUrl: "https://avatar.example/friend.jpg",
+          platformRemark: "可乐备注",
+          status: "active",
+        })),
+      },
+      conversation: {
+        upsert: vi.fn(async () => ({
+          id: "conv_friend",
+          accountId: "acc_1",
+          peerWxid: "wxid_friend",
+          type: "private",
+          name: "陈可乐",
+          avatarUrl: "https://avatar.example/friend.jpg",
+          platformRemark: "可乐备注",
+          isHidden: false,
+        })),
+      },
+    };
+    const controller = new ConversationsController(prisma as never);
+
+    const result = await controller.open({
+      accountId: "acc_1",
+      peerWxid: "wxid_friend",
+      type: "private",
+    });
+
+    expect(prisma.wechatAccount.findUnique).toHaveBeenCalledWith({
+      where: { id: "acc_1" },
+      select: { id: true },
+    });
+    expect(prisma.contact.findUnique).toHaveBeenCalledWith({
+      where: { accountId_wxid: { accountId: "acc_1", wxid: "wxid_friend" } },
+    });
+    expect(prisma.conversation.upsert).toHaveBeenCalledWith({
+      where: {
+        accountId_peerWxid: {
+          accountId: "acc_1",
+          peerWxid: "wxid_friend",
+        },
+      },
+      create: expect.objectContaining({
+        accountId: "acc_1",
+        peerWxid: "wxid_friend",
+        type: "private",
+        name: "陈可乐",
+        avatarUrl: "https://avatar.example/friend.jpg",
+        platformRemark: "可乐备注",
+      }),
+      update: expect.objectContaining({
+        type: "private",
+        name: "陈可乐",
+        avatarUrl: "https://avatar.example/friend.jpg",
+        platformRemark: "可乐备注",
+        isHidden: false,
+      }),
+      include: { app: true, account: true },
+    });
+    expect(result).toMatchObject({
+      id: "conv_friend",
+      accountId: "acc_1",
+      peerWxid: "wxid_friend",
+      type: "private",
+      name: "陈可乐",
+      avatarUrl: "https://avatar.example/friend.jpg",
+      platformRemark: "可乐备注",
+    });
+  });
+
+  it("打开群聊时从群资料 upsert 会话并保留成员数", async () => {
+    const prisma = {
+      wechatAccount: {
+        findUnique: vi.fn(async () => ({ id: "acc_1" })),
+      },
+      group: {
+        findUnique: vi.fn(async () => ({
+          id: "group_1",
+          accountId: "acc_1",
+          wxid: "room@chatroom",
+          name: "产品群",
+          avatarUrl: "https://avatar.example/group.jpg",
+          platformRemark: "核心客户群",
+          memberCount: 12,
+          status: "active",
+        })),
+      },
+      conversation: {
+        upsert: vi.fn(async () => ({
+          id: "conv_group",
+          accountId: "acc_1",
+          peerWxid: "room@chatroom",
+          type: "group",
+          name: "产品群",
+          avatarUrl: "https://avatar.example/group.jpg",
+          platformRemark: "核心客户群",
+        })),
+      },
+    };
+    const controller = new ConversationsController(prisma as never);
+
+    const result = await controller.open({
+      accountId: "acc_1",
+      peerWxid: "room@chatroom",
+      type: "group",
+    });
+
+    expect(prisma.group.findUnique).toHaveBeenCalledWith({
+      where: { accountId_wxid: { accountId: "acc_1", wxid: "room@chatroom" } },
+    });
+    expect(prisma.conversation.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          accountId: "acc_1",
+          peerWxid: "room@chatroom",
+          type: "group",
+          name: "产品群",
+          avatarUrl: "https://avatar.example/group.jpg",
+          platformRemark: "核心客户群",
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      id: "conv_group",
+      accountId: "acc_1",
+      peerWxid: "room@chatroom",
+      type: "group",
+      name: "产品群",
+      avatarUrl: "https://avatar.example/group.jpg",
+      platformRemark: "核心客户群",
+      memberCount: 12,
+    });
+  });
+
+  it("联系人状态不可用时拒绝打开私聊会话", async () => {
+    const prisma = {
+      wechatAccount: {
+        findUnique: vi.fn(async () => ({ id: "acc_1" })),
+      },
+      contact: {
+        findUnique: vi.fn(async () => ({
+          accountId: "acc_1",
+          wxid: "wxid_friend",
+          status: "blocked",
+        })),
+      },
+      conversation: {
+        upsert: vi.fn(),
+      },
+    };
+    const controller = new ConversationsController(prisma as never);
+
+    await expect(
+      controller.open({
+        accountId: "acc_1",
+        peerWxid: "wxid_friend",
+        type: "private",
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.conversation.upsert).not.toHaveBeenCalled();
+  });
+
   it("消息列表一次性带齐发送者快照与原始 payload、投递记录", async () => {
     const prisma = {
       message: {

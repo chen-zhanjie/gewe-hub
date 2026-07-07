@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query }
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
+  firstText,
   loadConversationIdentityProfiles,
   mergeConversationIdentity,
 } from "./conversation-identity.js";
@@ -18,6 +19,12 @@ const updateConversationSchema = z.object({
   platformRemark: z.string().nullable().optional(),
   pinned: z.boolean().optional(),
   hidden: z.boolean().optional()
+});
+
+const openConversationSchema = z.object({
+  accountId: z.string().min(1),
+  peerWxid: z.string().min(1),
+  type: z.enum(["private", "group"])
 });
 
 @Controller("/api/conversations")
@@ -92,6 +99,48 @@ export class ConversationsController {
       }
     });
     return this.attachSenderProfiles(messages);
+  }
+
+  @Post("open")
+  async open(@Body() rawBody: unknown) {
+    const body = openConversationSchema.parse(rawBody);
+    const account = await this.prisma.wechatAccount.findUnique({
+      where: { id: body.accountId },
+      select: { id: true }
+    });
+    if (!account) throw new BadRequestException("账号不存在");
+
+    const profile = body.type === "private"
+      ? await this.loadOpenContactProfile(body.accountId, body.peerWxid)
+      : await this.loadOpenGroupProfile(body.accountId, body.peerWxid);
+
+    const conversation = await this.prisma.conversation.upsert({
+      where: {
+        accountId_peerWxid: {
+          accountId: body.accountId,
+          peerWxid: body.peerWxid
+        }
+      },
+      create: {
+        accountId: body.accountId,
+        peerWxid: body.peerWxid,
+        type: body.type,
+        name: profile.name,
+        avatarUrl: profile.avatarUrl,
+        platformRemark: profile.platformRemark,
+        status: "active"
+      },
+      update: {
+        type: body.type,
+        name: profile.name,
+        avatarUrl: profile.avatarUrl,
+        platformRemark: profile.platformRemark,
+        isHidden: false,
+        status: "active"
+      },
+      include: { app: true, account: true }
+    });
+    return body.type === "group" ? { ...conversation, memberCount: profile.memberCount ?? null } : conversation;
   }
 
   @Patch(":id")
@@ -259,6 +308,43 @@ export class ConversationsController {
     `);
     return rows.map((row) => row.id);
   }
+
+  private async loadOpenContactProfile(accountId: string, peerWxid: string): Promise<OpenConversationProfile> {
+    const contact = await this.prisma.contact.findUnique({
+      where: {
+        accountId_wxid: {
+          accountId,
+          wxid: peerWxid
+        }
+      }
+    });
+    if (!contact) throw new BadRequestException("联系人不存在或尚未同步");
+    if (contact.status !== "active") throw new BadRequestException("联系人状态不可用");
+    return {
+      name: firstText(contact.nickname, contact.wxid) ?? contact.wxid,
+      avatarUrl: firstText(contact.avatarUrl) ?? null,
+      platformRemark: firstText(contact.platformRemark) ?? null
+    };
+  }
+
+  private async loadOpenGroupProfile(accountId: string, peerWxid: string): Promise<OpenConversationProfile> {
+    const group = await this.prisma.group.findUnique({
+      where: {
+        accountId_wxid: {
+          accountId,
+          wxid: peerWxid
+        }
+      }
+    });
+    if (!group) throw new BadRequestException("群聊不存在或尚未同步");
+    if (group.status !== "active") throw new BadRequestException("群聊状态不可用");
+    return {
+      name: firstText(group.name, group.wxid) ?? group.wxid,
+      avatarUrl: firstText(group.avatarUrl) ?? null,
+      platformRemark: firstText(group.platformRemark) ?? null,
+      memberCount: group.memberCount ?? null
+    };
+  }
 }
 
 function buildConversationUpdateData(body: z.infer<typeof updateConversationSchema>) {
@@ -281,6 +367,13 @@ interface SenderProfile {
   platformRemark?: string | null;
   avatarUrl?: string | null;
   status?: string;
+}
+
+interface OpenConversationProfile {
+  name: string | null;
+  avatarUrl: string | null;
+  platformRemark: string | null;
+  memberCount?: number | null;
 }
 
 interface MessageWithIdentityContext {

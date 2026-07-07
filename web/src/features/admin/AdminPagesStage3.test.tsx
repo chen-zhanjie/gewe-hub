@@ -3,9 +3,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdminPage } from "./AdminPages";
 import { mockFetch, render } from "./AdminPages.test-utils";
 
+const routerNavigateMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@tanstack/react-router", () => ({
+  useRouter: () => ({ navigate: routerNavigateMock }),
+}));
+
 describe("AdminPage stage 3 management surfaces", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    routerNavigateMock.mockReset();
   });
 
   it("应用管理只保留表格页面，新增应用在 Sheet 中完成", async () => {
@@ -170,6 +177,114 @@ describe("AdminPage stage 3 management surfaces", () => {
     expect(within(contactsSheet).getByRole("table", { name: "联系人列表" })).toBeInTheDocument();
     expect(within(contactsSheet).getByPlaceholderText("搜索联系人")).toBeInTheDocument();
     expect(within(contactsSheet).getByRole("button", { name: "同步通讯录" })).toBeInTheDocument();
+  });
+
+  it("联系人和群列表可以发起聊天并跳转到工作台会话", async () => {
+    const fetchMock = mockFetch({
+      "/api/accounts": [
+        {
+          id: "acc_real_1",
+          appId: "wx_app",
+          wxid: "wxid_bot",
+          nickname: "客服主号",
+          platformRemark: "平台主号",
+          onlineStatus: "online",
+          source: "manual",
+        },
+      ],
+      "/api/contacts?accountId=acc_real_1": [
+        {
+          id: "contact_1",
+          wxid: "wxid_friend",
+          nickname: "陈可乐",
+          avatarUrl: "https://avatar.example/friend.jpg",
+          platformRemark: null,
+          status: "active",
+        },
+        {
+          id: "contact_blocked",
+          wxid: "wxid_blocked",
+          nickname: "拉黑用户",
+          status: "blocked",
+        },
+      ],
+      "/api/groups?accountId=acc_real_1": [
+        {
+          id: "group_1",
+          wxid: "room@chatroom",
+          name: "产品群",
+          avatarUrl: "https://avatar.example/group.jpg",
+          platformRemark: null,
+          memberCount: 12,
+          status: "active",
+        },
+        {
+          id: "group_quit",
+          wxid: "quit@chatroom",
+          name: "已退群",
+          status: "quit",
+        },
+      ],
+      "/api/conversations/open": {
+        id: "conv_friend",
+        accountId: "acc_real_1",
+        peerWxid: "wxid_friend",
+        type: "private",
+        name: "陈可乐",
+        avatarUrl: "https://avatar.example/friend.jpg",
+      },
+    });
+    window.history.replaceState(null, "", "/accounts");
+
+    render(<AdminPage page="accounts" />);
+
+    const accountsTable = await screen.findByRole("table", { name: "微信账号列表" });
+    fireEvent.click(await within(accountsTable).findByRole("button", { name: "联系人" }));
+
+    const contactsSheet = await screen.findByRole("dialog", { name: "联系人" });
+    const contactsTable = within(contactsSheet).getByRole("table", { name: "联系人列表" });
+    fireEvent.click(await within(contactsTable).findByRole("button", { name: "发起聊天 陈可乐" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/conversations/open",
+        expect.objectContaining({
+          method: "POST",
+          credentials: "include",
+          body: JSON.stringify({ accountId: "acc_real_1", peerWxid: "wxid_friend", type: "private" }),
+        }),
+      ),
+    );
+    expect(routerNavigateMock).toHaveBeenCalledWith({
+      to: "/workbench",
+      search: {
+        accountId: "acc_real_1",
+        conversationId: "conv_friend",
+      },
+    });
+
+    expect(within(contactsTable).getByRole("button", { name: "发起聊天 拉黑用户" })).toBeDisabled();
+    const groupsTab = within(contactsSheet).getByRole("tab", { name: "群列表" });
+    groupsTab.focus();
+    fireEvent.keyDown(groupsTab, { key: "Enter" });
+    await waitFor(() => expect(groupsTab).toHaveAttribute("aria-selected", "true"));
+
+    const groupsTable = await within(contactsSheet).findByRole("table", { name: "群列表" });
+    const openGroupButton = await within(groupsTable).findByRole("button", { name: "发起聊天 产品群" });
+    expect(openGroupButton).toBeEnabled();
+    expect(within(groupsTable).getByRole("button", { name: "发起聊天 已退群" })).toBeDisabled();
+    fireEvent.click(openGroupButton);
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/conversations/open",
+        expect.objectContaining({
+          method: "POST",
+          credentials: "include",
+          body: JSON.stringify({ accountId: "acc_real_1", peerWxid: "room@chatroom", type: "group" }),
+        }),
+      ),
+    );
   });
 
   it("推送日志和发送记录只保留一层快速状态筛选", async () => {
