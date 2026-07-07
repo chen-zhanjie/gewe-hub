@@ -215,6 +215,11 @@ describe("WorkbenchPage detail surfaces", () => {
         hasMore: false,
       },
       "/api/groups/group_1/members/member_1": { id: "member_1", platformRemark: "客户负责人" },
+      "/api/groups/group_1/sync-members": { id: "task_sync_group_1" },
+      "/api/outbox/tasks/task_sync_group_1": {
+        id: "task_sync_group_1",
+        status: "done",
+      },
     });
 
     renderWorkbenchPage();
@@ -252,6 +257,24 @@ describe("WorkbenchPage detail surfaces", () => {
     expect(
       fetchMock.mock.calls.filter(([input]) => String(input).replace("http://localhost", "") === "/api/groups/group_1/members?take=50&skip=0"),
     ).toHaveLength(2);
+
+    fireEvent.click(within(panel).getByRole("button", { name: "同步群成员" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/groups/group_1/sync-members",
+        expect.objectContaining({
+          method: "POST",
+          credentials: "include",
+        }),
+      ),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/outbox/tasks/task_sync_group_1",
+      expect.objectContaining({ credentials: "include" }),
+    );
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([input]) => String(input).replace("http://localhost", "") === "/api/groups/group_1/members?take=50&skip=0")).toHaveLength(3),
+    );
   });
 
   it("群成员列表首屏 50 条、加载更多并回车触发服务端搜索", async () => {

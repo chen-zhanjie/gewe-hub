@@ -316,11 +316,15 @@ export function WorkbenchPage({
           loading={conversationSurface.groupMembersQuery.isLoading}
           error={conversationSurface.groupMembersError}
           savingMemberId={conversationSurface.savingMemberId}
+          syncing={conversationSurface.syncingGroupMembers}
           loadingMore={conversationSurface.loadingMoreMembers}
           searching={conversationSurface.searchingMembers}
           onOpenContact={openContactProfile}
           onSaveRemark={(memberId, remark) => {
             void conversationSurface.handleSaveGroupMemberRemark(memberId, remark);
+          }}
+          onSync={() => {
+            void conversationSurface.handleSyncGroupMembers();
           }}
           onLoadMore={() => {
             void conversationSurface.handleLoadMoreGroupMembers();

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   bindWorkbenchConversation,
+  syncWorkbenchGroupMembers,
   unbindWorkbenchConversation,
   updateWorkbenchConversation,
   updateWorkbenchGroupMember,
@@ -10,6 +11,7 @@ import {
   type WorkbenchGroupMembersData,
 } from "@/features/workbench/queries";
 import type { BindingDraft } from "@/features/workbench/workbench-conversation-surface-types";
+import { waitForOutboxTaskDone } from "@/lib/outbox-task";
 import {
   asBackendConversation,
   formatNullableNumber,
@@ -42,6 +44,7 @@ export function useWorkbenchConversationSurfaceController({
   const [conversationRemarkDraft, setConversationRemarkDraft] = useState("");
   const [confirmingUnbind, setConfirmingUnbind] = useState(false);
   const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
+  const [syncingGroupMembers, setSyncingGroupMembers] = useState(false);
   const [loadingMoreMembers, setLoadingMoreMembers] = useState(false);
   const [searchingMembers, setSearchingMembers] = useState(false);
   const [memberError, setMemberError] = useState<string | null>(null);
@@ -65,6 +68,7 @@ export function useWorkbenchConversationSurfaceController({
     setRemarkError(null);
     setMemberError(null);
     setSavingMemberId(null);
+    setSyncingGroupMembers(false);
     setConversationRemarkDraft(raw?.platformRemark ?? "");
     setConfirmingUnbind(false);
     setLoadingMoreMembers(false);
@@ -144,6 +148,23 @@ export function useWorkbenchConversationSurfaceController({
     }
   }
 
+  async function handleSyncGroupMembers() {
+    const group = groupMembersQuery.data?.group;
+    if (!selectedConversation || !group || syncingGroupMembers) return;
+    setSyncingGroupMembers(true);
+    setMemberError(null);
+    try {
+      const task = await syncWorkbenchGroupMembers(group.id);
+      toast.success("群成员同步任务已创建");
+      await waitForOutboxTaskDone(task.id);
+      await refreshGroupMembers(selectedConversation, groupMembersQuery.data?.search ?? "");
+    } catch (syncError) {
+      setMemberError(syncError instanceof Error ? syncError.message : "同步群成员失败");
+    } finally {
+      setSyncingGroupMembers(false);
+    }
+  }
+
   async function handleLoadMoreGroupMembers() {
     if (!selectedConversation || loadingMoreMembers || !groupMembersQuery.data?.hasMore) return;
     setLoadingMoreMembers(true);
@@ -184,6 +205,7 @@ export function useWorkbenchConversationSurfaceController({
     setConfirmingUnbind,
     groupMembersQuery,
     savingMemberId,
+    syncingGroupMembers,
     loadingMoreMembers,
     searchingMembers,
     groupMembersError: readQueryError(groupMembersQuery.error) ?? memberError,
@@ -192,6 +214,7 @@ export function useWorkbenchConversationSurfaceController({
     requestUnbindConversation,
     confirmUnbindConversation,
     handleSaveGroupMemberRemark,
+    handleSyncGroupMembers,
     handleLoadMoreGroupMembers,
     handleSearchGroupMembers,
   };

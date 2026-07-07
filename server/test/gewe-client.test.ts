@@ -46,6 +46,7 @@ describe("GeweClientService", () => {
     await client.getBriefInfo("wx_app", ["wxid_a", "10000@chatroom"]);
     await client.getDetailInfo("wx_app", ["wxid_a"]);
     await client.getChatroomMemberList("wx_app", "10000@chatroom");
+    await client.getChatroomMemberDetail("wx_app", "10000@chatroom", ["wxid_a"]);
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
@@ -71,6 +72,11 @@ describe("GeweClientService", () => {
       5,
       "http://api.geweapi.com/gewe/v2/api/group/getChatroomMemberList",
       expect.objectContaining({ body: JSON.stringify({ appId: "wx_app", chatroomId: "10000@chatroom" }) })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      6,
+      "http://api.geweapi.com/gewe/v2/api/group/getChatroomMemberDetail",
+      expect.objectContaining({ body: JSON.stringify({ appId: "wx_app", chatroomId: "10000@chatroom", memberWxids: ["wxid_a"] }) })
     );
   });
 

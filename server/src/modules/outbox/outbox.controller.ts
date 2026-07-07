@@ -18,6 +18,13 @@ export class OutboxController {
     });
   }
 
+  @Get(":id")
+  async get(@Param("id") id: string) {
+    return this.prisma.outboxTask.findUniqueOrThrow({
+      where: { id }
+    });
+  }
+
   @Post(":id/retry")
   async retry(@Param("id") id: string) {
     return this.outbox.retry(id);

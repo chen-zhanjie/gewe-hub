@@ -1,4 +1,4 @@
-import { MoreHorizontal, Pencil, Search, UserRound } from "lucide-react";
+import { MoreHorizontal, Pencil, RefreshCcw, Search, UserRound } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
 import { SkeletonBlock } from "@/components/ui/SkeletonBlock";
@@ -26,10 +26,12 @@ interface GroupMembersPanelProps {
   loading: boolean;
   error: string | null;
   savingMemberId: string | null;
+  syncing: boolean;
   loadingMore: boolean;
   searching: boolean;
   onOpenContact: (wxid: string) => void;
   onSaveRemark: (memberId: string, remark: string) => void;
+  onSync: () => void;
   onLoadMore: () => void;
   onSearch: (search: string) => void;
 }
@@ -40,10 +42,12 @@ export function GroupMembersPanel({
   loading,
   error,
   savingMemberId,
+  syncing,
   loadingMore,
   searching,
   onOpenContact,
   onSaveRemark,
+  onSync,
   onLoadMore,
   onSearch,
 }: GroupMembersPanelProps) {
@@ -51,8 +55,18 @@ export function GroupMembersPanel({
 
   return (
     <aside aria-label="群成员面板" className="flex w-72 shrink-0 flex-col border-l bg-background">
-      <div className="border-b px-4 py-3">
+      <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
         <h2 className="text-sm font-medium">成员 {data?.total ?? 0}</h2>
+        <button
+          type="button"
+          aria-label="同步群成员"
+          title="同步群成员"
+          disabled={!data?.group || syncing}
+          onClick={onSync}
+          className="rounded-md border p-2 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <RefreshCcw className={cn("size-4", syncing && "animate-spin")} />
+        </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         <GroupMembersContent
@@ -83,7 +97,7 @@ function GroupMembersContent({
   onSaveRemark,
   onLoadMore,
   onSearch,
-}: Omit<GroupMembersPanelProps, "conversation">) {
+}: Omit<GroupMembersPanelProps, "conversation" | "syncing" | "onSync">) {
   const [search, setSearch] = useState(data?.search ?? "");
   const [editingMember, setEditingMember] = useState<WorkbenchGroupMember | null>(null);
   const filteredMembers = useMemo(() => filterGroupMembers(data?.members ?? [], search), [data?.members, search]);

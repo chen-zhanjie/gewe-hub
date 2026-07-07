@@ -98,6 +98,11 @@ export interface WorkbenchSendResponse {
   status?: string;
 }
 
+export interface WorkbenchOutboxTaskResponse {
+  id: string;
+  status?: string;
+}
+
 export interface BindConversationRequest {
   appId: string;
   deliveryFilter: "all" | "at_only";
@@ -274,6 +279,12 @@ export async function updateWorkbenchGroupMember(groupId: string, memberId: stri
   return apiFetch(`/api/groups/${groupId}/members/${memberId}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function syncWorkbenchGroupMembers(groupId: string): Promise<WorkbenchOutboxTaskResponse> {
+  return apiFetch<WorkbenchOutboxTaskResponse>(`/api/groups/${groupId}/sync-members`, {
+    method: "POST",
   });
 }
 

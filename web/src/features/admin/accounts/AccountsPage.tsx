@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
-import { MessageCircle, Pencil, Plus, Users } from "lucide-react";
+import { MessageCircle, Pencil, Plus, RefreshCcw, Users } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/ui/DataTable";
 import {
@@ -17,6 +17,7 @@ import { EntityCell } from "@/components/ui/EntityCell";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { TimeText } from "@/components/ui/TimeText";
 import { apiFetch } from "@/lib/api";
+import { waitForOutboxTaskDone } from "@/lib/outbox-task";
 import { cn } from "@/lib/utils";
 import {
   type BackendAccount,
@@ -56,6 +57,7 @@ export function AccountsPage() {
   const [contactsLoading, setContactsLoading] = useState(false);
   const [contactsError, setContactsError] = useState<string | null>(null);
   const [openingChatKey, setOpeningChatKey] = useState<string | null>(null);
+  const [syncingGroupKey, setSyncingGroupKey] = useState<string | null>(null);
 
   const accountColumns = useMemo<ColumnDef<AccountRow>[]>(() => [
     {
@@ -189,17 +191,27 @@ export function AccountsPage() {
       enableSorting: false,
       meta: { align: "right", sticky: "right" },
       cell: ({ row }) => (
-        <OpenChatButton
-          label={row.original.name}
-          disabled={!selectedAccount || !canOpenGroupChat(row.original.status)}
-          loading={openingChatKey === openChatKey("group", row.original.wxid)}
-          onClick={() => {
-            if (selectedAccount) void handleOpenChat(selectedAccount.id, row.original.wxid, "group", row.original.name);
-          }}
-        />
+        <div className="flex items-center justify-end gap-2">
+          <SyncGroupMembersButton
+            label={row.original.name}
+            disabled={!canSyncGroupMembers(row.original.status)}
+            loading={syncingGroupKey === row.original.id}
+            onClick={() => {
+              void handleSyncGroupMembers(row.original.id, row.original.name);
+            }}
+          />
+          <OpenChatButton
+            label={row.original.name}
+            disabled={!selectedAccount || !canOpenGroupChat(row.original.status)}
+            loading={openingChatKey === openChatKey("group", row.original.wxid)}
+            onClick={() => {
+              if (selectedAccount) void handleOpenChat(selectedAccount.id, row.original.wxid, "group", row.original.name);
+            }}
+          />
+        </div>
       ),
     },
-  ], [openingChatKey, selectedAccount]);
+  ], [openingChatKey, selectedAccount, syncingGroupKey]);
 
   useEffect(() => {
     if (!formOpen) return;
@@ -302,6 +314,23 @@ export function AccountsPage() {
       toast.error(error instanceof Error ? error.message : "发起聊天失败");
     } finally {
       setOpeningChatKey(null);
+    }
+  }
+
+  async function handleSyncGroupMembers(groupId: string, displayName: string) {
+    if (syncingGroupKey) return;
+    setSyncingGroupKey(groupId);
+    try {
+      const task = await apiFetch<OutboxTaskResponse>(`/api/groups/${groupId}/sync-members`, {
+        method: "POST",
+      });
+      toast.success(`已创建 ${displayName} 的群成员同步任务`);
+      await waitForOutboxTaskDone(task.id);
+      if (selectedAccount) void loadContacts(selectedAccount.id, contactSearch, contactStatus);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "同步群成员失败");
+    } finally {
+      setSyncingGroupKey(null);
     }
   }
 
@@ -547,6 +576,11 @@ interface OpenConversationResponse {
   avatarUrl?: string | null;
 }
 
+interface OutboxTaskResponse {
+  id: string;
+  status?: string;
+}
+
 function OpenChatButton({
   label,
   disabled,
@@ -568,6 +602,31 @@ function OpenChatButton({
       className="rounded-md border p-2 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
     >
       <MessageCircle className={cn("size-4", loading && "animate-pulse")} />
+    </button>
+  );
+}
+
+function SyncGroupMembersButton({
+  label,
+  disabled,
+  loading,
+  onClick,
+}: {
+  label: string;
+  disabled: boolean;
+  loading: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={`同步群成员 ${label}`}
+      title={`同步群成员 ${label}`}
+      disabled={disabled || loading}
+      onClick={onClick}
+      className="rounded-md border p-2 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <RefreshCcw className={cn("size-4", loading && "animate-spin")} />
     </button>
   );
 }
@@ -629,6 +688,10 @@ function canOpenContactChat(status: ContactRow["status"]): boolean {
 }
 
 function canOpenGroupChat(status: GroupRow["status"]): boolean {
+  return status === "active";
+}
+
+function canSyncGroupMembers(status: GroupRow["status"]): boolean {
   return status === "active";
 }
 

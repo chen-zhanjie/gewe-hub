@@ -80,7 +80,7 @@ describe("ContactsSyncService", () => {
     });
   });
 
-  it("同步群成员时 upsert 当前成员，并软标记缺失成员为 left", async () => {
+  it("同步群成员时拉取成员详情补齐资料，并软标记缺失成员为 left", async () => {
     const prisma = {
       group: {
         findUniqueOrThrow: vi.fn(async () => ({
@@ -103,12 +103,21 @@ describe("ContactsSyncService", () => {
           memberList: [
             {
               wxid: "wxid_a",
-              nickName: "Alice",
+              nickName: "列表昵称",
               displayName: "A",
               smallHeadImgUrl: "https://avatar/a.jpg"
             }
           ]
         }
+      })),
+      getChatroomMemberDetail: vi.fn(async () => ({
+        data: [
+          {
+            userName: "wxid_a",
+            nickName: "Alice",
+            smallHeadImgUrl: "https://avatar/detail-a.jpg"
+          }
+        ]
       }))
     };
     const service = new ContactsSyncService(prisma as never, gewe as never);
@@ -117,6 +126,7 @@ describe("ContactsSyncService", () => {
 
     expect(result).toEqual({ members: 1, markedLeft: 1 });
     expect(gewe.getChatroomMemberList).toHaveBeenCalledWith("wx_app", "10000@chatroom");
+    expect(gewe.getChatroomMemberDetail).toHaveBeenCalledWith("wx_app", "10000@chatroom", ["wxid_a"]);
     expect(prisma.groupMember.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { groupId_wxid: { groupId: "group_1", wxid: "wxid_a" } },
@@ -125,7 +135,7 @@ describe("ContactsSyncService", () => {
           wxid: "wxid_a",
           nickname: "Alice",
           displayName: "A",
-          avatarUrl: "https://avatar/a.jpg",
+          avatarUrl: "https://avatar/detail-a.jpg",
           status: "active"
         })
       })

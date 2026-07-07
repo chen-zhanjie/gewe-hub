@@ -36,6 +36,10 @@ interface ChatroomMemberListResponse {
   };
 }
 
+interface ChatroomMemberDetailResponse {
+  data?: unknown[];
+}
+
 @Injectable()
 export class ContactsSyncService implements OnModuleInit {
   private timer: NodeJS.Timeout | undefined;
@@ -160,7 +164,17 @@ export class ContactsSyncService implements OnModuleInit {
     });
     const response = await this.gewe.getChatroomMemberList(group.account.appId, group.wxid);
     const data = (response as ChatroomMemberListResponse).data ?? {};
-    const members = toMemberInfo(data.memberList);
+    const listMembers = toMemberInfo(data.memberList);
+    const details = await this.fetchGroupMemberDetails(group.account.appId, group.wxid, listMembers.map((member) => member.wxid));
+    const detailByWxid = new Map(details.map((item) => [item.wxid, item]));
+    const members = listMembers.map((member) => {
+      const detail = detailByWxid.get(member.wxid);
+      return {
+        ...member,
+        nickname: detail?.nickname ?? member.nickname,
+        avatarUrl: detail?.avatarUrl ?? member.avatarUrl
+      };
+    });
     const now = new Date();
 
     for (const member of members) {
@@ -330,6 +344,16 @@ export class ContactsSyncService implements OnModuleInit {
     const response = await this.gewe.getBriefInfo(appId, wxids);
     return toBriefInfo((response as BriefInfoResponse).data);
   }
+
+  private async fetchGroupMemberDetails(appId: string, chatroomId: string, wxids: string[]) {
+    if (wxids.length === 0) return [];
+    const details = [];
+    for (const chunk of chunkArray(wxids, 100)) {
+      const response = await this.gewe.getChatroomMemberDetail(appId, chatroomId, chunk);
+      details.push(...toMemberInfo((response as ChatroomMemberDetailResponse).data));
+    }
+    return details;
+  }
 }
 
 function toStringArray(value: unknown): string[] {
@@ -364,6 +388,14 @@ function toMemberInfo(value: unknown): Array<{ wxid: string; nickname?: string; 
       avatarUrl: asString(record?.smallHeadImgUrl ?? record?.bigHeadImgUrl ?? record?.avatarUrl)
     }];
   });
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

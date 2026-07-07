@@ -66,6 +66,10 @@ export class GeweClientService {
     return this.post("/gewe/v2/api/group/getChatroomMemberList", { appId, chatroomId });
   }
 
+  async getChatroomMemberDetail(appId: string, chatroomId: string, memberWxids: string[]) {
+    return this.post("/gewe/v2/api/group/getChatroomMemberDetail", { appId, chatroomId, memberWxids });
+  }
+
   async sendText(params: { appId: string; toWxid: string; content: string; ats?: string[] }) {
     return this.post("/gewe/v2/api/message/postText", params);
   }

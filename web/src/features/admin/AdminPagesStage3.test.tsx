@@ -233,6 +233,11 @@ describe("AdminPage stage 3 management surfaces", () => {
         name: "陈可乐",
         avatarUrl: "https://avatar.example/friend.jpg",
       },
+      "/api/groups/group_1/sync-members": { id: "task_group_1" },
+      "/api/outbox/tasks/task_group_1": {
+        id: "task_group_1",
+        status: "done",
+      },
     });
     window.history.replaceState(null, "", "/accounts");
 
@@ -273,7 +278,25 @@ describe("AdminPage stage 3 management surfaces", () => {
     const openGroupButton = await within(groupsTable).findByRole("button", { name: "发起聊天 产品群" });
     expect(openGroupButton).toBeEnabled();
     expect(within(groupsTable).getByRole("button", { name: "发起聊天 已退群" })).toBeDisabled();
-    fireEvent.click(openGroupButton);
+    fireEvent.click(within(groupsTable).getByRole("button", { name: "同步群成员 产品群" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/groups/group_1/sync-members",
+        expect.objectContaining({
+          method: "POST",
+          credentials: "include",
+        }),
+      ),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/outbox/tasks/task_group_1",
+      expect.objectContaining({ credentials: "include" }),
+    );
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([input]) => String(input).replace("http://localhost", "") === "/api/groups?accountId=acc_real_1")).toHaveLength(2),
+    );
+    const refreshedOpenGroupButton = await within(groupsTable).findByRole("button", { name: "发起聊天 产品群" });
+    fireEvent.click(refreshedOpenGroupButton);
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
