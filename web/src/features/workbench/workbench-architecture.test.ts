@@ -29,6 +29,10 @@ describe("Workbench 前端架构", () => {
     expect(queriesSource).toContain("useWorkbenchMessagesQuery");
   });
 
+  it("运行源码不保留静态工作台 mock 数据，避免误接模拟数据", () => {
+    expect(existsSync(resolve(__dirname, "../../mock/workspace.ts"))).toBe(false);
+  });
+
   it("工作台 query 显式声明列表和实体 staleTime 策略", () => {
     const queriesSource = readFileSync(resolve(__dirname, "queries.ts"), "utf8");
 
