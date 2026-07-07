@@ -117,6 +117,8 @@ export function MessageComposer({
         <div className="inline-flex overflow-hidden rounded-md border bg-background">
           <button
             type="button"
+            aria-label={voiceRecording ? "停止录制并发送语音" : "开启麦克风录制语音"}
+            title={voiceRecording ? "停止录制并发送语音" : "开启麦克风录制语音"}
             disabled={!selected || (sending && !voiceRecording)}
             onClick={onVoiceRecord}
             className={cn(
@@ -131,8 +133,8 @@ export function MessageComposer({
             <PopoverTrigger asChild>
               <button
                 type="button"
-                aria-label="语音发送选项"
-                title="语音发送选项"
+                aria-label="语音发送方式"
+                title="语音发送方式"
                 disabled={!selected || sending || voiceRecording}
                 className="inline-flex w-9 items-center justify-center border-l text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -142,12 +144,13 @@ export function MessageComposer({
             <PopoverContent align="start" className="w-48 p-1">
               <button
                 type="button"
+                aria-label="导入语音文件"
                 disabled={!selected || sending || voiceRecording}
                 onClick={() => voiceInputRef.current?.click()}
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Upload className="size-4" />
-                选择语音文件
+                导入语音文件
               </button>
             </PopoverContent>
           </Popover>

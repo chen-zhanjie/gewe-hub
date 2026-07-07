@@ -144,16 +144,16 @@ describe("WorkbenchPage composer", () => {
     await screen.findByText("客服主号");
     const voiceInput = screen.getByLabelText("语音文件上传输入") as HTMLInputElement;
     const voiceInputClick = vi.spyOn(voiceInput, "click");
-    expect(screen.getByRole("button", { name: "语音发送选项" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "录制语音" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "选择语音文件" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "录制语音" }));
+    expect(screen.getByRole("button", { name: "语音发送方式" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "开启麦克风录制语音" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "导入语音文件" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "开启麦克风录制语音" }));
 
     await waitFor(() => expect(getUserMedia).toHaveBeenCalledWith({ audio: true }));
     expect(voiceInputClick).not.toHaveBeenCalled();
     expect(recorders[0]?.state).toBe("recording");
 
-    fireEvent.click(await screen.findByRole("button", { name: "停止并发送" }));
+    fireEvent.click(await screen.findByRole("button", { name: "停止录制并发送语音" }));
 
     await waitFor(() => {
       const sendCall = fetchMock.mock.calls.find(([input]) => String(input).replace("http://localhost", "") === "/api/send");
@@ -206,11 +206,11 @@ describe("WorkbenchPage composer", () => {
     await screen.findByText("客服主号");
     const voiceInput = screen.getByLabelText("语音文件上传输入") as HTMLInputElement;
     const voiceInputClick = vi.spyOn(voiceInput, "click");
-    expect(screen.getByRole("button", { name: "录制语音" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "选择语音文件" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "开启麦克风录制语音" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "导入语音文件" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "语音发送选项" }));
-    fireEvent.click(await screen.findByRole("button", { name: "选择语音文件" }));
+    fireEvent.click(screen.getByRole("button", { name: "语音发送方式" }));
+    fireEvent.click(await screen.findByRole("button", { name: "导入语音文件" }));
 
     expect(voiceInputClick).toHaveBeenCalledTimes(1);
   });
