@@ -1,0 +1,10 @@
+packages:
+  - "packages/*"
+  - "server"
+  - "web"
+onlyBuiltDependencies:
+  - "@prisma/client"
+  - "@prisma/engines"
+  - "@scarf/scarf"
+  - "esbuild"
+  - "prisma"

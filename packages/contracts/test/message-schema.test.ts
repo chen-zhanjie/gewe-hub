@@ -1,0 +1,147 @@
+import { describe, expect, it } from "vitest";
+import {
+  ackResponseSchema,
+  messageEnvelopeSchema,
+  messageNodeSchema,
+  sendResponseSchema,
+  sendRequestSchema
+} from "../src/index";
+
+describe("标准消息契约", () => {
+  it("接受合法的 text 消息信封，并保持所有微信 ID 为字符串", () => {
+    const parsed = messageEnvelopeSchema.parse({
+      schemaVersion: 1,
+      eventType: "message.created",
+      messageId: "msg_9154866412345678",
+      status: "normal",
+      isSelf: false,
+      isAtMe: true,
+      account: {
+        id: "acc_1",
+        wxid: "wxid_bot",
+        name: "机器人昵称",
+        remark: "客服号1"
+      },
+      conversation: {
+        id: "cvs_1",
+        type: "group",
+        wxid: "48315023241@chatroom",
+        name: "客户群 A",
+        remark: "VIP客户群"
+      },
+      sender: {
+        wxid: "wxid_abc",
+        name: "陈可乐",
+        remark: "张总-决策人",
+        isOwner: false
+      },
+      mentions: [
+        { wxid: "wxid_bot", name: "机器人", isMe: true, resolved: true },
+        { name: "云知序", resolved: false }
+      ],
+      content: { type: "text", text: "@机器人 看看这个" },
+      quote: null,
+      renderedText: "@机器人 看看这个",
+      sentAt: "2026-07-05T20:49:00.000+08:00",
+      metadata: {
+        debounceMs: 2000,
+        maxWaitMs: 8000
+      }
+    });
+
+    expect(parsed.messageId).toBe("msg_9154866412345678");
+    expect(parsed.account.wxid).toBe("wxid_bot");
+  });
+
+  it("拒绝散落的未知 MessageNode type", () => {
+    expect(() =>
+      messageNodeSchema.parse({ type: "photo", text: "[图片]" })
+    ).toThrow();
+  });
+
+  it("接受 message.revoked 事件最小载荷", () => {
+    const parsed = messageEnvelopeSchema.parse({
+      schemaVersion: 1,
+      eventType: "message.revoked",
+      messageId: "msg_1",
+      status: "revoked",
+      isSelf: false,
+      isAtMe: false,
+      account: { wxid: "wxid_bot" },
+      conversation: { id: "cvs_1", type: "private", wxid: "wxid_a" },
+      sender: { wxid: "wxid_a", isOwner: false },
+      mentions: [],
+      content: { type: "system", text: "撤回了一条消息", rawType: "REVOKE_MSG" },
+      quote: null,
+      renderedText: "撤回了一条消息",
+      sentAt: "2026-07-05T20:49:00.000+08:00",
+      revokedAt: "2026-07-05T20:50:00.000+08:00"
+    });
+
+    expect(parsed.status).toBe("revoked");
+  });
+
+  it("校验发送请求第一版支持类型", () => {
+    expect(sendRequestSchema.parse({ conversationId: "cvs_1", type: "text", text: "你好" }).type).toBe("text");
+    expect(
+      sendRequestSchema.parse({
+        conversationId: "cvs_1",
+        type: "image",
+        contentBase64: "iVBORw0KGgo=",
+        mimeType: "image/png",
+        fileName: "screenshot.png"
+      }).type
+    ).toBe("image");
+    expect(
+      sendRequestSchema.parse({
+        conversationId: "cvs_1",
+        type: "file",
+        contentBase64: "SGVsbG8=",
+        mimeType: "text/plain",
+        fileName: "note.txt"
+      }).type
+    ).toBe("file");
+    expect(
+      sendRequestSchema.parse({
+        conversationId: "cvs_1",
+        type: "voice",
+        contentBase64: "UklGRg==",
+        mimeType: "audio/webm",
+        fileName: "recording.webm",
+        durationMs: 2600
+      }).type
+    ).toBe("voice");
+    expect(
+      sendRequestSchema.parse({
+        conversationId: "cvs_1",
+        type: "video",
+        mediaUrl: "https://cdn.example/video.mp4",
+        thumbUrl: "https://cdn.example/thumb.jpg",
+        durationMs: 10_000
+      }).type
+    ).toBe("video");
+    expect(
+      sendRequestSchema.parse({
+        conversationId: "cvs_1",
+        type: "link",
+        title: "链接标题",
+        desc: "链接描述",
+        linkUrl: "https://example.com/article",
+        thumbUrl: "https://example.com/thumb.jpg"
+      }).type
+    ).toBe("link");
+    expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "image" })).toThrow();
+    expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "file" })).toThrow();
+    expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "video", mediaUrl: "https://cdn.example/video.mp4" })).toThrow();
+    expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "link", linkUrl: "https://example.com/article" })).toThrow();
+    expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "sticker" })).toThrow();
+  });
+
+  it("校验 ACK 与发送响应契约", () => {
+    expect(ackResponseSchema.parse({ ok: true, acked: 2 }).acked).toBe(2);
+    expect(sendResponseSchema.parse({ id: "send_1", status: "pending" }).status).toBe("pending");
+    expect(sendResponseSchema.parse({ id: "send_1", status: "sent", messageId: "msg_1" }).messageId).toBe("msg_1");
+    expect(() => ackResponseSchema.parse({ ok: false, acked: 0 })).toThrow();
+    expect(() => sendResponseSchema.parse({ id: "send_1", status: "unknown" })).toThrow();
+  });
+});

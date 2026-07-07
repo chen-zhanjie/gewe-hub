@@ -1,0 +1,128 @@
+import { describe, expect, it, vi } from "vitest";
+import type { AccountSummary, MessageItem } from "@/lib/workspace-data";
+import {
+  buildVisibleMessages,
+  compareMessagesBySentAt,
+  createLocalTextSend,
+  mapLocalTextSendToMessageItem,
+  mergeMessagesById,
+} from "./workbench-local-sends";
+
+describe("workbench-local-sends", () => {
+  it("创建本地发送中消息草稿", () => {
+    vi.spyOn(Date, "now").mockReturnValue(123);
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-06T07:16:37.000Z"));
+
+    const send = createLocalTextSend("conv_1", "你好");
+
+    expect(send).toMatchObject({
+      id: "local_text_1783322197000_i",
+      conversationId: "conv_1",
+      text: "你好",
+      status: "pending",
+      createdAtIso: "2026-07-06T07:16:37.000Z",
+    });
+
+    vi.useRealTimers();
+  });
+
+  it("将本地发送草稿映射为自发消息", () => {
+    const account: AccountSummary = {
+      id: "acc_1",
+      name: "客服主号",
+      wxid: "wxid_bot",
+      status: "online",
+    };
+
+    const message = mapLocalTextSendToMessageItem(
+      {
+        id: "local_1",
+        conversationId: "conv_1",
+        text: "本地消息",
+        status: "failed",
+        errorMessage: "网络错误",
+        sendRequestId: "send_1",
+        createdAtIso: "2026-07-06T07:16:37.000Z",
+      },
+      account,
+    );
+
+    expect(message).toMatchObject({
+      id: "local_1",
+      messageId: "local_1",
+      senderName: "客服主号",
+      isSelf: true,
+      content: { type: "text", text: "本地消息" },
+      localSend: {
+        conversationId: "conv_1",
+        text: "本地消息",
+        status: "failed",
+        errorMessage: "网络错误",
+        sendRequestId: "send_1",
+      },
+    });
+  });
+
+  it("构造可见消息时过滤已被服务端 sendRequestId 替换的本地消息并按时间排序", () => {
+    const server = messageFixture("server_1", "send_1", "2026-07-06T07:16:39.000Z");
+    const visible = buildVisibleMessages(
+      [server],
+      [
+        {
+          id: "local_replaced",
+          conversationId: "conv_1",
+          text: "已替换",
+          status: "pending",
+          sendRequestId: "send_1",
+          createdAtIso: "2026-07-06T07:16:38.000Z",
+        },
+        {
+          id: "local_visible",
+          conversationId: "conv_1",
+          text: "仍显示",
+          status: "pending",
+          createdAtIso: "2026-07-06T07:16:37.000Z",
+        },
+      ],
+      "conv_1",
+    );
+
+    expect(visible.map((message) => message.id)).toEqual(["local_visible", "server_1"]);
+  });
+
+  it("按 id 合并消息并按 sentAtIso 比较顺序", () => {
+    const first = messageFixture("m1", null, "2026-07-06T07:16:37.000Z");
+    const duplicate = messageFixture("m1", null, "2026-07-06T07:16:38.000Z");
+    const second = messageFixture("m2", null, "2026-07-06T07:16:39.000Z");
+
+    expect(mergeMessagesById([first, duplicate, second]).map((message) => message.id)).toEqual(["m1", "m2"]);
+    expect(compareMessagesBySentAt(first, second)).toBeLessThan(0);
+  });
+});
+
+function messageFixture(id: string, sendRequestId: string | null, sentAtIso: string): MessageItem {
+  return {
+    id,
+    messageId: id,
+    sendRequestId,
+    senderName: "客户",
+    senderProfile: {
+      wxid: "wxid_user",
+      nickname: "客户",
+      displayName: "客户",
+      platformRemark: null,
+      avatarUrl: null,
+      status: "active",
+    },
+    isSelf: false,
+    sentAt: sentAtIso,
+    sentAtIso,
+    status: "normal",
+    content: { type: "text", text: id },
+    standardJson: { type: "text", text: id },
+    rawPayload: null,
+    deliveries: [],
+  };
+}

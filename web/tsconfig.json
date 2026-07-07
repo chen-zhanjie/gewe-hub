@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "jsx": "react-jsx",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "types": ["vitest/globals", "@testing-library/jest-dom", "vite/client"],
+    "paths": {
+      "@/*": ["src/*"],
+      "@gewehub/contracts": ["../packages/contracts/src/index.ts"],
+      "@gewehub/contracts/*": ["../packages/contracts/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx", "vite.config.ts"]
+}

@@ -1,0 +1,246 @@
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
+import type { BindingDraft, DetailSectionId, DetailSectionState } from "@/features/workbench/DetailPanel";
+import {
+  bindWorkbenchConversation,
+  unbindWorkbenchConversation,
+  updateWorkbenchConversation,
+  updateWorkbenchGroupMember,
+  useWorkbenchGroupMembersQuery,
+  type HubAppSummary,
+  type WorkbenchGroupMembersData,
+} from "@/features/workbench/queries";
+import {
+  asBackendConversation,
+  formatNullableNumber,
+  parseOptionalNumber,
+  readQueryError,
+} from "@/features/workbench/workbench-helpers";
+import type { BackendMessage, ConversationSummary } from "@/lib/workspace-data";
+
+const detailSectionsStorageKey = "gewehub.workbench.detailSections";
+
+const defaultDetailSections: DetailSectionState = {
+  info: true,
+  binding: true,
+  members: true,
+  debug: true,
+};
+
+interface WorkbenchDetailControllerOptions {
+  selectedConversation?: ConversationSummary;
+  apps: HubAppSummary[];
+  refreshWorkspace: () => Promise<unknown>;
+  refreshGroupMembers: (conversation: ConversationSummary, search?: string) => Promise<WorkbenchGroupMembersData>;
+  searchGroupMembers: (conversation: ConversationSummary, search: string) => Promise<WorkbenchGroupMembersData>;
+  loadMoreGroupMembers: (conversation: ConversationSummary) => Promise<WorkbenchGroupMembersData | undefined>;
+}
+
+export function useWorkbenchDetailController({
+  selectedConversation,
+  apps,
+  refreshWorkspace,
+  refreshGroupMembers,
+  searchGroupMembers,
+  loadMoreGroupMembers,
+}: WorkbenchDetailControllerOptions) {
+  const [detailSections, setDetailSections] = useState<DetailSectionState>(() => readStoredDetailSections());
+  const [bindingSaving, setBindingSaving] = useState(false);
+  const [remarkSaving, setRemarkSaving] = useState(false);
+  const [bindingError, setBindingError] = useState<string | null>(null);
+  const [remarkError, setRemarkError] = useState<string | null>(null);
+  const [conversationRemarkDraft, setConversationRemarkDraft] = useState("");
+  const [confirmingUnbind, setConfirmingUnbind] = useState(false);
+  const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
+  const [loadingMoreMembers, setLoadingMoreMembers] = useState(false);
+  const [searchingMembers, setSearchingMembers] = useState(false);
+  const [memberError, setMemberError] = useState<string | null>(null);
+  const [bindingDraft, setBindingDraft] = useState<BindingDraft>({
+    appId: "",
+    deliveryFilter: "all",
+    debounceMs: "",
+    maxWaitMs: "",
+  });
+  const groupMembersQuery = useWorkbenchGroupMembersQuery(selectedConversation, detailSections.members);
+
+  useEffect(() => {
+    const raw = asBackendConversation(selectedConversation?.raw);
+    setBindingDraft({
+      appId: raw?.app?.id ?? "",
+      deliveryFilter: raw?.deliveryFilter ?? "all",
+      debounceMs: formatNullableNumber(raw?.debounceMs),
+      maxWaitMs: formatNullableNumber(raw?.maxWaitMs),
+    });
+    setBindingError(null);
+    setRemarkError(null);
+    setMemberError(null);
+    setSavingMemberId(null);
+    setConversationRemarkDraft(raw?.platformRemark ?? "");
+    setConfirmingUnbind(false);
+    setLoadingMoreMembers(false);
+    setSearchingMembers(false);
+  }, [selectedConversation?.id, selectedConversation?.raw]);
+
+  function toggleDetailSection(sectionId: DetailSectionId) {
+    setDetailSections((current) => {
+      const next = { ...current, [sectionId]: !current[sectionId] };
+      persistDetailSections(next);
+      return next;
+    });
+  }
+
+  async function handleSaveBinding() {
+    if (!selectedConversation || !bindingDraft.appId || bindingSaving) return;
+    setBindingSaving(true);
+    setBindingError(null);
+    try {
+      await bindWorkbenchConversation(selectedConversation.id, {
+        appId: bindingDraft.appId,
+        deliveryFilter: bindingDraft.deliveryFilter,
+        debounceMs: parseOptionalNumber(bindingDraft.debounceMs),
+        maxWaitMs: parseOptionalNumber(bindingDraft.maxWaitMs),
+      });
+      await refreshWorkspace();
+    } catch (saveError) {
+      setBindingError(saveError instanceof Error ? saveError.message : "保存绑定失败");
+    } finally {
+      setBindingSaving(false);
+    }
+  }
+
+  async function handleSaveConversationRemark() {
+    if (!selectedConversation || remarkSaving) return;
+    setRemarkSaving(true);
+    setRemarkError(null);
+    try {
+      await updateWorkbenchConversation(selectedConversation.id, {
+        platformRemark: conversationRemarkDraft.trim() || null,
+      });
+      await refreshWorkspace();
+    } catch (saveError) {
+      setRemarkError(saveError instanceof Error ? saveError.message : "保存备注失败");
+    } finally {
+      setRemarkSaving(false);
+    }
+  }
+
+  function requestUnbindConversation() {
+    if (!selectedConversation || !selectedConversation.raw.app?.id || bindingSaving) return;
+    setConfirmingUnbind(true);
+  }
+
+  async function confirmUnbindConversation() {
+    if (!selectedConversation || !selectedConversation.raw.app?.id || bindingSaving) return;
+    setBindingSaving(true);
+    setBindingError(null);
+    try {
+      await unbindWorkbenchConversation(selectedConversation.id);
+      await refreshWorkspace();
+      toast.success("已解绑应用");
+      setConfirmingUnbind(false);
+    } catch (unbindError) {
+      setBindingError(unbindError instanceof Error ? unbindError.message : "解绑失败");
+    } finally {
+      setBindingSaving(false);
+    }
+  }
+
+  async function handleSaveGroupMemberRemark(memberId: string, remark: string) {
+    const group = groupMembersQuery.data?.group;
+    if (!selectedConversation || !group || savingMemberId) return;
+    setSavingMemberId(memberId);
+    setMemberError(null);
+    try {
+      await updateWorkbenchGroupMember(group.id, memberId, {
+        platformRemark: remark.trim() || null,
+      });
+      await refreshGroupMembers(selectedConversation, groupMembersQuery.data?.search ?? "");
+    } catch (saveError) {
+      setMemberError(saveError instanceof Error ? saveError.message : "保存成员备注失败");
+    } finally {
+      setSavingMemberId(null);
+    }
+  }
+
+  async function handleLoadMoreGroupMembers() {
+    if (!selectedConversation || loadingMoreMembers || !groupMembersQuery.data?.hasMore) return;
+    setLoadingMoreMembers(true);
+    setMemberError(null);
+    try {
+      await loadMoreGroupMembers(selectedConversation);
+    } catch (loadError) {
+      setMemberError(loadError instanceof Error ? loadError.message : "加载更多群成员失败");
+    } finally {
+      setLoadingMoreMembers(false);
+    }
+  }
+
+  async function handleSearchGroupMembers(search: string) {
+    if (!selectedConversation || searchingMembers) return;
+    setSearchingMembers(true);
+    setMemberError(null);
+    try {
+      await searchGroupMembers(selectedConversation, search);
+    } catch (searchError) {
+      setMemberError(searchError instanceof Error ? searchError.message : "搜索群成员失败");
+    } finally {
+      setSearchingMembers(false);
+    }
+  }
+
+  return {
+    detailSections,
+    apps,
+    bindingDraft,
+    setBindingDraft,
+    bindingSaving,
+    bindingError,
+    conversationRemarkDraft,
+    setConversationRemarkDraft,
+    remarkSaving,
+    remarkError,
+    confirmingUnbind,
+    setConfirmingUnbind,
+    groupMembersQuery,
+    savingMemberId,
+    loadingMoreMembers,
+    searchingMembers,
+    groupMembersError: readQueryError(groupMembersQuery.error) ?? memberError,
+    toggleDetailSection,
+    handleSaveConversationRemark,
+    handleSaveBinding,
+    requestUnbindConversation,
+    confirmUnbindConversation,
+    handleSaveGroupMemberRemark,
+    handleLoadMoreGroupMembers,
+    handleSearchGroupMembers,
+  };
+}
+
+function readStoredDetailSections(): DetailSectionState {
+  if (typeof window === "undefined") return defaultDetailSections;
+  try {
+    const storage = window.localStorage;
+    const raw = storage.getItem(detailSectionsStorageKey);
+    if (!raw) return defaultDetailSections;
+    const parsed = JSON.parse(raw) as Partial<Record<DetailSectionId, unknown>>;
+    return {
+      ...defaultDetailSections,
+      info: typeof parsed.info === "boolean" ? parsed.info : defaultDetailSections.info,
+      binding: typeof parsed.binding === "boolean" ? parsed.binding : defaultDetailSections.binding,
+      members: typeof parsed.members === "boolean" ? parsed.members : defaultDetailSections.members,
+      debug: typeof parsed.debug === "boolean" ? parsed.debug : defaultDetailSections.debug,
+    };
+  } catch {
+    return defaultDetailSections;
+  }
+}
+
+function persistDetailSections(sections: DetailSectionState) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(detailSectionsStorageKey, JSON.stringify(sections));
+  } catch {
+    // Ignore storage failures so the workbench remains usable in restricted browsers.
+  }
+}
