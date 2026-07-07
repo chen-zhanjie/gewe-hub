@@ -10,6 +10,8 @@ COPY web/package.json web/package.json
 RUN pnpm install --frozen-lockfile --ignore-scripts --filter @gewehub/contracts --filter @gewehub/web --prod=false
 
 FROM deps AS build
+ARG VITE_CALLBACK_BASE_URL
+ENV VITE_CALLBACK_BASE_URL=$VITE_CALLBACK_BASE_URL
 COPY packages/contracts packages/contracts
 COPY web web
 RUN pnpm --filter @gewehub/contracts build

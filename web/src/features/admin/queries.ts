@@ -26,6 +26,7 @@ export interface ObservabilitySummary {
 export interface GeweStatus {
   ok: boolean;
   callbackUrl: string;
+  callbackBaseUrl?: string | null;
   baseUrl: string;
 }
 
@@ -109,9 +110,10 @@ export function useSetGeweCallbackMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: () =>
+    mutationFn: (payload: { baseUrl: string }) =>
       apiFetch("/api/gewe/set-callback", {
         method: "POST",
+        body: JSON.stringify(payload),
       }),
     onSuccess: async () => {
       // Invalidate GeWe status after callback configuration changes.

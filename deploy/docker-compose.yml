@@ -77,6 +77,8 @@ services:
     build:
       context: ..
       dockerfile: web/Dockerfile
+      args:
+        VITE_CALLBACK_BASE_URL: ${VITE_CALLBACK_BASE_URL:-http://3i2956l679.51vip.biz}
     depends_on:
       - server
     ports:

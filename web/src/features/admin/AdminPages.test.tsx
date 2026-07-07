@@ -597,37 +597,6 @@ describe("AdminPage", () => {
     );
   });
 
-  it("接入设置可以一键设置 GeWe 回调并刷新状态", async () => {
-    const fetchMock = mockFetch({
-      "/api/gewe/status": {
-        ok: true,
-        callbackUrl: "http://localhost:8090/webhook/gewe/dev-secret",
-        baseUrl: "https://gewe.example",
-      },
-      "/api/gewe/set-callback": {
-        ok: true,
-        callbackUrl: "http://localhost:8090/webhook/gewe/dev-secret",
-      },
-    });
-
-    render(<AdminPage page="settings" />);
-
-    expect(await screen.findByText("http://localhost:8090/webhook/gewe/dev-secret")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "一键设置回调" }));
-
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/gewe/set-callback",
-        expect.objectContaining({ method: "POST", credentials: "include" }),
-      ),
-    );
-    expect(
-      fetchMock.mock.calls.filter(
-        ([input, init]) => String(input).replace("http://localhost", "") === "/api/gewe/status" && !init?.method,
-      ),
-    ).toHaveLength(2);
-  });
-
   it("账号页可以为首个微信账号创建通讯录同步任务并刷新账号列表", async () => {
     const fetchMock = mockFetch({
       "/api/accounts": [

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Activity, Database, Settings, ShieldCheck } from "lucide-react";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -9,10 +9,20 @@ export function SettingsPage() {
   const setCallbackMutation = useSetGeweCallbackMutation();
   const status = statusQuery.data ?? null;
   const setCallbackError = readAdminQueryError(setCallbackMutation.error);
+  const defaultCallbackBaseUrl = useMemo(() => resolveCallbackBaseUrl(), []);
+  const [callbackBaseUrl, setCallbackBaseUrl] = useState(defaultCallbackBaseUrl);
+  const effectiveCallbackBaseUrl = normalizeCallbackBaseUrl(callbackBaseUrl) || defaultCallbackBaseUrl;
+  const callbackPreviewUrl = buildCallbackPreviewUrl(status?.callbackUrl, effectiveCallbackBaseUrl);
+
+  useEffect(() => {
+    setCallbackBaseUrl(defaultCallbackBaseUrl);
+  }, [defaultCallbackBaseUrl]);
 
   async function handleSetCallback() {
     if (setCallbackMutation.isPending) return;
-    await setCallbackMutation.mutateAsync();
+    await setCallbackMutation.mutateAsync({
+      baseUrl: effectiveCallbackBaseUrl,
+    });
   }
 
   return (
@@ -25,9 +35,20 @@ export function SettingsPage() {
       </div>
       <section className="rounded-lg border bg-background p-4">
         <h2 className="text-sm font-medium">回调 URL</h2>
+        <label className="mt-3 block text-xs font-medium text-muted-foreground" htmlFor="callback-base-url">
+          回调 URL 前缀
+        </label>
+        <input
+          id="callback-base-url"
+          aria-label="回调 URL 前缀"
+          value={callbackBaseUrl}
+          onChange={(event) => setCallbackBaseUrl(event.target.value)}
+          placeholder={defaultCallbackBaseUrl}
+          className="mt-2 h-10 w-full rounded-md border bg-background px-3 font-mono text-sm outline-none focus:border-primary"
+        />
         <div className="mt-3 flex items-center gap-2 rounded-md bg-muted p-3">
-          <code className="min-w-0 flex-1 truncate font-mono text-xs">{status?.callbackUrl ?? "未加载"}</code>
-          <CopyButton value={status?.callbackUrl ?? ""} label="复制回调 URL" />
+          <code className="min-w-0 flex-1 truncate font-mono text-xs">{callbackPreviewUrl ?? "未加载"}</code>
+          <CopyButton value={callbackPreviewUrl ?? ""} label="复制回调 URL" />
         </div>
         {setCallbackError ? <div className="mt-3 rounded-md border border-destructive/30 bg-background px-3 py-2 text-sm text-destructive">{setCallbackError}</div> : null}
         <button
@@ -44,6 +65,30 @@ export function SettingsPage() {
       </section>
     </PageShell>
   );
+}
+
+function buildCallbackPreviewUrl(callbackUrl: string | undefined, baseUrl: string): string | null {
+  if (!callbackUrl) return null;
+  try {
+    const path = new URL(callbackUrl).pathname;
+    return `${baseUrl}${path}`;
+  } catch {
+    return callbackUrl;
+  }
+}
+
+function resolveCallbackBaseUrl(): string {
+  return normalizeCallbackBaseUrl(import.meta.env.VITE_CALLBACK_BASE_URL) || browserOrigin();
+}
+
+function browserOrigin(): string {
+  if (typeof window === "undefined") return "";
+  return window.location.origin;
+}
+
+function normalizeCallbackBaseUrl(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.trim().replace(/\/+$/, "");
 }
 
 function LoadState({
