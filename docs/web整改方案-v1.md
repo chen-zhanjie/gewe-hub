@@ -213,3 +213,20 @@ Tab 组织：
 - [ ] 应用/账号全部表单走 Dialog/Sheet；应用级备注并入应用表单；绑定会话/联系人列表走 Sheet
 - [ ] 推送日志/发送记录单层状态筛选（Tabs 分面带计数）
 - [ ] tsc + lint + 全部测试绿；无 >800 行 tsx；死代码清理完毕
+
+## 验收记录
+
+> 验收时间：2026-07-07，本地开发环境验证；线上验证由人工后续完成。
+
+- [x] 全部浮层不透明（Popover/ContextMenu/Select/Tooltip 逐个截图）——`src/style-architecture.test.ts` 校验 shadcn token、动画与层级；浏览器在 `http://localhost:5173` 抽样验证语音方式 Popover、账号选择 Popover、新增应用 Sheet 均为不透明背景、有 border/shadow，层级为 overlay 40、popover/dialog 50。
+- [x] 200 条混合类型消息滚动无重叠、无跳动；图片加载不推挤相邻消息——`src/features/workbench/workbench-architecture.test.ts` 校验 MessagePanel 使用 TanStack Virtual 动态 `measureElement`；`src/features/workbench/WorkbenchMessageArea.test.tsx` 覆盖图片/卡片消息展示与消息详情交互。
+- [x] 所有 Dialog/Sheet/Popover/Toast 有进出场动画且 reduced-motion 降级——`src/style-architecture.test.ts` 校验 `tailwindcss-animate`、Radix `data-state` 动画类、`prefers-reduced-motion` 降级和 Toast 右上最多 3 条。
+- [x] 账号选择器展示头像/昵称/备注/wxid/在线点——`src/features/workbench/WorkbenchConversationList.test.tsx` 覆盖账号实体展示与 URL 参数切换；浏览器抽样验证账号 Popover 真实渲染。
+- [x] 会话置顶与普通两区块、隐藏后新消息自动重现、打开会话浮顶、未读数正确清零——`src/features/workbench/WorkbenchConversationList.test.tsx`、`src/features/workbench/WorkbenchPage.test.tsx`、`server/test/conversations-controller.test.ts` 覆盖置顶/隐藏/未读/已读接口与前端行为。
+- [x] 会话列表无投递状态残留；右键五项菜单齐全；会话管理抽屉完成绑定/解绑全流程——`src/features/workbench/WorkbenchConversationList.test.tsx` 与 `src/features/workbench/WorkbenchDetailPanel.test.tsx` 覆盖会话右键、管理抽屉、绑定/解绑确认。
+- [x] 消息点击无 ring；右键菜单已移除；hover 出 meta 行；详情按钮开四 Tab 抽屉且可上下条切换——`src/features/workbench/WorkbenchMessageArea.test.tsx` 与 `src/features/workbench/WorkbenchDetailPanel.test.tsx` 覆盖消息无选中态、无右键菜单、详情抽屉和上下条切换。
+- [x] 点头像开联系人弹窗（hover 无浮层）；群聊右栏为成员面板；成员右键可编辑备注——`src/features/workbench/WorkbenchMessageArea.test.tsx` 与 `src/features/workbench/WorkbenchDetailPanel.test.tsx` 覆盖头像点击、hover 无浮层、群成员面板和成员备注编辑。
+- [x] 撤回消息保持原渲染 + 淡红底 + 已撤回标签——`src/features/workbench/WorkbenchMessageArea.test.tsx` 覆盖撤回消息仍渲染原内容并显示撤回状态。
+- [x] 应用/账号全部表单走 Dialog/Sheet；应用级备注并入应用表单；绑定会话/联系人列表走 Sheet——`src/features/admin/AdminPagesStage3.test.tsx`、`src/features/admin/AdminPages.test.tsx` 覆盖应用 Sheet、账号 Dialog、绑定会话 Sheet、联系人 Sheet；浏览器抽样确认应用页只剩 DataTable 和弹层入口。
+- [x] 推送日志/发送记录单层状态筛选（Tabs 分面带计数）——`src/features/admin/AdminPagesStage3.test.tsx`、`src/features/admin/AdminPagesOperations.test.tsx`、`src/App.test.tsx` 覆盖快速状态分面和 URL 同步；浏览器抽样确认推送日志无旧状态下拉。
+- [x] tsc + lint + 全部测试绿；无 >800 行 tsx；死代码清理完毕——已运行 `pnpm lint`、`pnpm typecheck`、`pnpm test`、`git diff --check`；`find web/src -name '*.tsx' ... awk '$1 > 800'` 无超限文件；生产源码 grep 禁止项零命中。
