@@ -163,7 +163,10 @@ export function mapConversationSummary(
 export function mapMessageItem(message: BackendMessage): MessageItem {
   const payload = asRecord(message.payload);
   const sender = asRecord(payload?.sender);
-  const content = asMessageNode(payload?.content, message.renderedText);
+  const content = mergeTopLevelQuote(
+    asMessageNode(payload?.content, message.renderedText),
+    payload?.quote,
+  );
   const senderProfile = normalizeSenderProfile(message.senderProfile, message.senderWxid);
   return {
     id: message.id,
@@ -184,6 +187,16 @@ export function mapMessageItem(message: BackendMessage): MessageItem {
     standardJson: message.payload,
     rawPayload: message.webhookEvent?.rawPayload ?? null,
     deliveries: message.deliveries ?? [],
+  };
+}
+
+function mergeTopLevelQuote(content: MessageNode, quoteValue: unknown): MessageNode {
+  if (content.quote) return content;
+  const quote = asRecord(quoteValue) ? asMessageNode(quoteValue) : null;
+  if (!quote) return content;
+  return {
+    ...content,
+    quote,
   };
 }
 

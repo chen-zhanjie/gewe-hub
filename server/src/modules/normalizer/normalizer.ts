@@ -683,9 +683,13 @@ function definedEntries(record: Record<string, unknown>): Record<string, unknown
 
 function detectAtMe(payload: Record<string, unknown>): boolean {
   const pushContent = asString(payload.pushContent) ?? "";
-  return (
-    pushContent.includes("在群聊中@了你") || pushContent.includes("@了所有人")
-  );
+  if (pushContent.includes("在群聊中@了你") || pushContent.includes("@了所有人")) {
+    return true;
+  }
+
+  const accountWxid = asString(payload.wxid ?? payload.toUser);
+  if (!accountWxid) return false;
+  return extractAtUserList(asString(payload.msgSource)).includes(accountWxid);
 }
 
 function extractMentions(

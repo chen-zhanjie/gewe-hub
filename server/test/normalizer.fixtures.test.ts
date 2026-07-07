@@ -563,6 +563,30 @@ describe("GeWe 样本标准化", () => {
     ]);
   });
 
+  it("群聊引用消息外层 MsgSource atuserlist 包含当前账号时标记 @ 我", () => {
+    const result = normalizeGewePayload(
+      addMsgPayload({
+        MsgType: 49,
+        FromUserName: { string: "48315023241@chatroom" },
+        ToUserName: { string: "wxid_bot" },
+        PushContent: "陈可乐 : ？@陳可乐\u2005",
+        MsgSource: {
+          string:
+            "<msgsource><atuserlist>wxid_bot</atuserlist><membercount>3</membercount></msgsource>",
+        },
+        Content: {
+          string:
+            'wxid_sender:\n<msg><appmsg><title>？@陳可乐\u2005</title><type>57</type><refermsg><type>1</type><svrid>2661228331246470465</svrid><displayname>陈可乐</displayname><content>@陳可乐\u2005</content></refermsg></appmsg></msg>',
+        },
+      }),
+    );
+
+    expect(result?.isAtMe).toBe(true);
+    expect(result?.mentions).toEqual([
+      { name: "陳可乐", wxid: "wxid_bot", isMe: true, resolved: true },
+    ]);
+  });
+
   it("原始 HTTP JSON 字符串进入解析时保留 AddMsg 大整数消息 ID", () => {
     const raw =
       '{"TypeName":"AddMsg","Appid":"wx_app","Wxid":"wxid_bot","Data":{"MsgType":1,"NewMsgId":5004026754542010999,"CreateTime":1783308565,"FromUserName":{"string":"wxid_sender"},"ToUserName":{"string":"wxid_bot"},"Content":{"string":"hello"}}}';

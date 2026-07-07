@@ -524,9 +524,18 @@ export class OutboxService implements OnModuleInit {
         payloadVersion: hydratedEnvelope.schemaVersion
       },
       update: {
+        webhookEventId,
+        messageId: hydratedEnvelope.messageId,
+        rawMessageId: String(normalizedPayload.newMsgId ?? normalizedPayload.msgId ?? hydratedEnvelope.messageId),
+        type: hydratedEnvelope.content.type,
         payload: hydratedEnvelope as unknown as Prisma.InputJsonValue,
         renderedText: hydratedEnvelope.renderedText.slice(0, 500),
-        status: hydratedEnvelope.status
+        status: hydratedEnvelope.status,
+        senderWxid: hydratedEnvelope.sender.wxid,
+        isSelf: hydratedEnvelope.isSelf,
+        isAtMe: hydratedEnvelope.isAtMe,
+        sentAt: new Date(hydratedEnvelope.sentAt),
+        payloadVersion: hydratedEnvelope.schemaVersion
       },
       include: {
         conversation: {

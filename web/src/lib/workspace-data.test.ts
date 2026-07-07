@@ -109,4 +109,60 @@ describe("workspace-data", () => {
     expect(message.senderName).toBe("陈可乐");
     expect(message.senderProfile.wxid).toBe("wxid_sender");
   });
+
+  it("把标准消息顶层 quote 合并到内容节点供聊天气泡渲染", () => {
+    const message = mapMessageItem({
+      id: "row_1",
+      messageId: "msg_quote_1",
+      senderWxid: "wxid_sender",
+      isSelf: false,
+      status: "normal",
+      sentAt: "2026-07-07T10:25:13.000Z",
+      payload: {
+        sender: { wxid: "wxid_sender", name: "陈可乐", isOwner: false },
+        content: { type: "text", text: "为啥不说话" },
+        quote: {
+          type: "text",
+          text: "@陳可乐\u2005说话",
+          senderName: "陈可乐",
+          sourceMessageId: "msg_2146752681472263200",
+        },
+      },
+      deliveries: [],
+    });
+
+    expect(message.content).toMatchObject({
+      type: "text",
+      text: "为啥不说话",
+      quote: {
+        type: "text",
+        text: "@陳可乐\u2005说话",
+        senderName: "陈可乐",
+        sourceMessageId: "msg_2146752681472263200",
+      },
+    });
+  });
+
+  it("内容节点已有 quote 时不被顶层 quote 覆盖", () => {
+    const message = mapMessageItem({
+      id: "row_1",
+      messageId: "msg_quote_2",
+      senderWxid: "wxid_sender",
+      isSelf: false,
+      status: "normal",
+      sentAt: "2026-07-07T10:25:13.000Z",
+      payload: {
+        content: {
+          type: "chat_record",
+          text: "聊天记录",
+          items: [],
+          quote: { type: "text", text: "内层引用" },
+        },
+        quote: { type: "text", text: "顶层引用" },
+      },
+      deliveries: [],
+    });
+
+    expect(message.content.quote).toEqual({ type: "text", text: "内层引用" });
+  });
 });

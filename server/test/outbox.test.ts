@@ -141,6 +141,29 @@ describe("outbox 状态机", () => {
     );
   });
 
+  it("重复处理同一回调消息时会刷新标准消息字段", async () => {
+    const { prisma, service } = buildIncomingMessageOutbox({
+      isSelf: false,
+      existingMessage: true,
+      msgSource: "<msgsource><atuserlist>wxid_bot</atuserlist></msgsource>",
+    });
+
+    await service.tick();
+
+    expect(prisma.message.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          type: "text",
+          status: "normal",
+          senderWxid: "wxid_sender",
+          isSelf: false,
+          isAtMe: true,
+          payloadVersion: 1,
+        }),
+      }),
+    );
+  });
+
   it("会话 upsert 只负责确保会话存在，不在重试前置阶段增加计数", async () => {
     const { prisma, service } = buildIncomingMessageOutbox({ isSelf: false });
 
@@ -366,9 +389,11 @@ function buildRevokeOutboxPrisma(
 function buildIncomingMessageOutbox({
   isSelf,
   existingMessage = false,
+  msgSource,
 }: {
   isSelf: boolean;
   existingMessage?: boolean;
+  msgSource?: string;
 }) {
   const newMsgId = isSelf ? "5004026754542011001" : "5004026754542011000";
   const rawPayload = {
@@ -384,6 +409,7 @@ function buildIncomingMessageOutbox({
       ToUserName: { string: isSelf ? "wxid_target" : "wxid_bot" },
       PushContent: "陈可乐 : hello",
       Content: { string: "hello" },
+      ...(msgSource ? { MsgSource: msgSource } : {}),
       IsSelf: isSelf ? 1 : 0,
     },
   };
