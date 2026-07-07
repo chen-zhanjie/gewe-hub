@@ -7,7 +7,7 @@ import { GeweClientService } from "../gewe/gewe-client.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { mapSendRequestToGewe } from "./send-utils.js";
 
-const sendRequestStatusSchema = z.enum(["pending", "sent", "failed"]);
+const sendRequestStatusSchema = z.enum(["success", "failed", "in_progress", "pending", "sent"]);
 const DEFAULT_TAKE = 100;
 const MAX_TAKE = 200;
 
@@ -120,7 +120,7 @@ export class SendController {
     @Query("skip") rawSkip: string | undefined
   ) {
     const where: Prisma.SendRequestWhereInput = {};
-    if (status) where.status = sendRequestStatusSchema.parse(status);
+    if (status) where.status = mapSendRequestStatus(status);
 
     return this.prisma.sendRequest.findMany({
       where,
@@ -129,6 +129,18 @@ export class SendController {
       take: parseTake(rawTake),
       skip: parseSkip(rawSkip)
     });
+  }
+}
+
+function mapSendRequestStatus(status: string): NonNullable<Prisma.SendRequestWhereInput["status"]> {
+  const parsed = sendRequestStatusSchema.parse(status);
+  switch (parsed) {
+    case "success":
+      return "sent";
+    case "in_progress":
+      return "pending";
+    default:
+      return parsed;
   }
 }
 

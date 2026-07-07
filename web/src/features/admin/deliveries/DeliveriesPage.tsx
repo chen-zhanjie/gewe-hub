@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertCircle, CheckCircle2, ClipboardList, RotateCcw } from "lucide-react";
+import { ClipboardList, RotateCcw } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,9 +26,13 @@ import type { DeliveryFilters } from "../AdminPages";
 
 const DEFAULT_PAGE_SIZE = 20;
 const PAGE_SIZE_OPTIONS = [20, 50] as const;
-const DELIVERY_STATUSES = ["queued", "delivering", "delivered", "acked", "failed"] as const;
+const DELIVERY_STATUS_FACETS = [
+  { label: "全部", value: "" },
+  { label: "成功", value: "success" },
+  { label: "失败", value: "failed" },
+  { label: "进行中", value: "in_progress" },
+] as const;
 
-type DeliveryStatusFilter = "" | (typeof DELIVERY_STATUSES)[number];
 type DeliveryRow = ReturnType<typeof mapDeliveryRow>;
 
 const DEFAULT_DELIVERY_FILTERS: DeliveryFilters = {
@@ -178,28 +182,13 @@ export function DeliveriesPage({
 
   return (
     <PageShell description="查询投递状态、失败原因和人工重投入口。">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background p-3">
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          投递状态
-          <select
-            aria-label="投递状态筛选"
-            value={filters.status}
-            onChange={(event) => updateFilters({ ...filters, status: asDeliveryStatusFilter(event.target.value), page: 1 })}
-            className="rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none"
-          >
-            <option value="">全部状态</option>
-            {DELIVERY_STATUSES.map((status) => (
-              <option key={status} value={status}>{status}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <DeliveryStatusSummary
+      <QuickStatusTabs
+        label="推送日志状态"
+        value={filters.status}
         rows={rows}
-        focusedOnFailed={filters.status === "failed"}
+        options={DELIVERY_STATUS_FACETS}
         messageId={filters.messageId}
-        onShowAll={() => updateFilters({ ...filters, status: "", page: 1 })}
-        onShowFailed={() => updateFilters({ ...filters, status: "failed", page: 1 })}
+        onChange={(status) => updateFilters({ ...filters, status, page: 1 })}
         onClearMessageFilter={() => updateFilters({ ...filters, messageId: undefined, page: 1 })}
       />
       <LoadState loading={loading} error={error} empty={!loading && rows.length === 0} emptyText="暂无投递记录" />
@@ -215,14 +204,6 @@ export function DeliveriesPage({
           searchPlaceholder: "搜索投递记录",
           searchValue: deliverySearch,
           onSearchChange: setDeliverySearch,
-          facets: [
-            {
-              label: "投递状态",
-              value: filters.status,
-              options: buildStatusFacetOptions(DELIVERY_STATUSES),
-              onValueChange: (status) => updateFilters({ ...filters, status: asDeliveryStatusFilter(status), page: 1 }),
-            },
-          ],
           onRefresh: () => {
             void reload();
           },
@@ -283,49 +264,43 @@ export function DeliveriesPage({
   );
 }
 
-function DeliveryStatusSummary({
+function QuickStatusTabs({
+  label,
+  value,
   rows,
-  focusedOnFailed,
+  options,
   messageId,
-  onShowAll,
-  onShowFailed,
+  onChange,
   onClearMessageFilter,
 }: {
+  label: string;
+  value: DeliveryFilters["status"];
   rows: DeliveryRow[];
-  focusedOnFailed: boolean;
+  options: typeof DELIVERY_STATUS_FACETS;
   messageId?: string;
-  onShowAll: () => void;
-  onShowFailed: () => void;
+  onChange: (status: DeliveryFilters["status"]) => void;
   onClearMessageFilter: () => void;
 }) {
-  const failedCount = rows.filter((row) => row.status === "failed").length;
-  const Icon = focusedOnFailed && failedCount > 0 ? AlertCircle : CheckCircle2;
-
   return (
     <section
-      role="status"
-      aria-label="推送日志状态摘要"
-      className={cn(
-        "flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background px-4 py-3 shadow-sm",
-        focusedOnFailed && failedCount > 0 ? "border-destructive/30 text-destructive" : "border-emerald-200 text-emerald-800",
-      )}
+      aria-label={label}
+      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background px-4 py-3"
     >
-      <div className="flex min-w-0 items-start gap-3">
-        <Icon className="mt-0.5 size-4 shrink-0" />
-        <div className="min-w-0">
-          <div className="text-sm font-medium">
-            {focusedOnFailed
-              ? failedCount > 0
-                ? `发现 ${failedCount} 条失败投递`
-                : "暂无失败投递"
-              : failedCount > 0
-                ? `全部投递中有 ${failedCount} 条失败`
-                : "全部投递无失败"}
-          </div>
-          <div className={cn("mt-1 text-sm", focusedOnFailed && failedCount > 0 ? "text-destructive" : "text-emerald-700")}>
-            {messageId ? `当前按消息 ${messageId} 预筛选` : focusedOnFailed ? "当前优先显示失败项" : "当前显示全部投递记录"}
-          </div>
-        </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={value === option.value}
+            onClick={() => onChange(option.value)}
+            className={cn(
+              "inline-flex h-8 items-center rounded-full border px-3 text-xs text-muted-foreground hover:text-foreground",
+              value === option.value && "border-primary/50 bg-primary/10 text-primary",
+            )}
+          >
+            {option.label} <span className="ml-1 tabular-nums">{countRowsByFacet(rows, option.value)}</span>
+          </button>
+        ))}
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         {messageId ? (
@@ -337,13 +312,6 @@ function DeliveryStatusSummary({
             清除消息筛选
           </button>
         ) : null}
-        <button
-          type="button"
-          onClick={focusedOnFailed ? onShowAll : onShowFailed}
-          className="inline-flex h-9 items-center rounded-md border bg-background px-3 text-sm text-foreground hover:bg-muted"
-        >
-          {focusedOnFailed ? "查看全部投递" : "只看失败投递"}
-        </button>
       </div>
     </section>
   );
@@ -518,21 +486,15 @@ function buildDeliveryPath(filters: DeliveryFilters): string {
   return `/api/deliveries?${params.toString()}`;
 }
 
-function asDeliveryStatusFilter(value: string): DeliveryStatusFilter {
-  return DELIVERY_STATUSES.includes(value as (typeof DELIVERY_STATUSES)[number])
-    ? (value as DeliveryStatusFilter)
-    : "";
-}
-
 function asPageSize(value: number): number {
   return PAGE_SIZE_OPTIONS.includes(value as (typeof PAGE_SIZE_OPTIONS)[number])
     ? value
     : DEFAULT_PAGE_SIZE;
 }
 
-function buildStatusFacetOptions<TStatus extends string>(statuses: readonly TStatus[]) {
-  return [
-    { label: "全部状态", value: "" },
-    ...statuses.map((status) => ({ label: status, value: status })),
-  ];
+function countRowsByFacet(rows: DeliveryRow[], status: DeliveryFilters["status"]): number {
+  if (!status) return rows.length;
+  if (status === "success") return rows.filter((row) => row.status === "delivered" || row.status === "acked").length;
+  if (status === "in_progress") return rows.filter((row) => row.status === "queued" || row.status === "delivering").length;
+  return rows.filter((row) => row.status === status).length;
 }

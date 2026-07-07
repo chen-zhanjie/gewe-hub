@@ -32,8 +32,8 @@ const searchStatusSchema = <TStatuses extends readonly [string, ...string[]]>(st
 const searchPageSchema = z.coerce.number().int().min(1).optional().catch(undefined);
 const searchPageSizeSchema = z.coerce.number().int().refine((value) => value === 20 || value === 50).optional().catch(undefined);
 
-const DELIVERY_ROUTE_STATUSES = ["all", "queued", "delivering", "delivered", "acked", "failed"] as const;
-const SEND_REQUEST_ROUTE_STATUSES = ["pending", "sent", "failed"] as const;
+const DELIVERY_ROUTE_STATUSES = ["all", "success", "failed", "in_progress", "queued", "delivering", "delivered", "acked"] as const;
+const SEND_REQUEST_ROUTE_STATUSES = ["success", "failed", "in_progress", "pending", "sent"] as const;
 
 type DeliveryRouteStatus = (typeof DELIVERY_ROUTE_STATUSES)[number];
 type SendRequestRouteStatus = (typeof SEND_REQUEST_ROUTE_STATUSES)[number];
@@ -220,13 +220,19 @@ function SendRequestPageRoute() {
   );
 }
 
-function asDeliveryFilterStatus(value: unknown): "" | Exclude<DeliveryRouteStatus, "all"> {
+function asDeliveryFilterStatus(value: unknown): "" | "success" | "failed" | "in_progress" {
   if (value === "all") return "";
-  return DELIVERY_ROUTE_STATUSES.includes(value as DeliveryRouteStatus) ? (value as Exclude<DeliveryRouteStatus, "all">) : "failed";
+  if (value === "delivered" || value === "acked") return "success";
+  if (value === "queued" || value === "delivering") return "in_progress";
+  if (value === "success" || value === "failed" || value === "in_progress") return value;
+  return "failed";
 }
 
-function asSendRequestRouteStatus(value: unknown): "" | SendRequestRouteStatus {
-  return SEND_REQUEST_ROUTE_STATUSES.includes(value as SendRequestRouteStatus) ? (value as SendRequestRouteStatus) : "";
+function asSendRequestRouteStatus(value: unknown): "" | "success" | "failed" | "in_progress" {
+  if (value === "sent") return "success";
+  if (value === "pending") return "in_progress";
+  if (value === "success" || value === "failed" || value === "in_progress") return value;
+  return "";
 }
 
 function LoginRoute() {

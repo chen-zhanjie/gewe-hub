@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { PrismaService } from "../prisma/prisma.service.js";
 
-const deliveryStatusSchema = z.enum(["queued", "delivering", "delivered", "acked", "failed"]);
+const deliveryStatusSchema = z.enum(["success", "failed", "in_progress", "queued", "delivering", "delivered", "acked"]);
 const DEFAULT_TAKE = 100;
 const MAX_TAKE = 200;
 
@@ -21,7 +21,7 @@ export class DeliveryAdminController {
     @Query("skip") rawSkip: string | undefined
   ) {
     const where: Prisma.DeliveryWhereInput = {};
-    if (status) where.status = deliveryStatusSchema.parse(status);
+    if (status) where.status = mapDeliveryStatus(status);
     if (appId) where.appId = appId;
     const messageWhere: Prisma.MessageWhereInput = {};
     if (conversationId) messageWhere.conversationId = conversationId;
@@ -58,6 +58,18 @@ export class DeliveryAdminController {
         ackedAt: null
       }
     });
+  }
+}
+
+function mapDeliveryStatus(status: string): NonNullable<Prisma.DeliveryWhereInput["status"]> {
+  const parsed = deliveryStatusSchema.parse(status);
+  switch (parsed) {
+    case "success":
+      return { in: ["delivered", "acked"] };
+    case "in_progress":
+      return { in: ["queued", "delivering"] };
+    default:
+      return parsed;
   }
 }
 

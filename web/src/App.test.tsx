@@ -87,7 +87,7 @@ describe("App", () => {
           message: { conversation: { platformRemark: "产品体验群", peerWxid: "room@chatroom" } },
         },
       ]),
-      "/api/deliveries?take=20&skip=0&status=queued": response(200, [
+      "/api/deliveries?take=20&skip=0&status=in_progress": response(200, [
         {
           eventId: "del_queued_1",
           status: "queued",
@@ -118,7 +118,7 @@ describe("App", () => {
       expect.objectContaining({ credentials: "include" }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "查看全部投递" }));
+    fireEvent.click(screen.getByRole("button", { name: "全部 1" }));
 
     expect(await screen.findByText("del_all_1")).toBeInTheDocument();
     await waitFor(() => expect(window.location.search).toBe("?status=all"));
@@ -127,10 +127,10 @@ describe("App", () => {
       expect.objectContaining({ credentials: "include" }),
     );
 
-    fireEvent.change(screen.getByLabelText("投递状态筛选"), { target: { value: "queued" } });
+    fireEvent.click(screen.getByRole("button", { name: "进行中 0" }));
 
     expect(await screen.findByText("del_queued_1")).toBeInTheDocument();
-    await waitFor(() => expect(window.location.search).toBe("?status=queued"));
+    await waitFor(() => expect(window.location.search).toBe("?status=in_progress"));
   });
 
   it("推送日志会话名可以直达工作台对应会话", async () => {
@@ -374,10 +374,10 @@ describe("App", () => {
     window.history.replaceState(null, "", "/apps");
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "应用管理" })).toBeInTheDocument();
+    await waitFor(() => expect(window.location.pathname).toBe("/apps"));
     const appCard = await screen.findByText("Hermes 助手");
     fireEvent.click(within(appCard.closest("section")!).getByRole("button", { name: "查看绑定会话" }));
-    fireEvent.click(await screen.findByRole("link", { name: "打开工作台会话 应用绑定群" }));
+    fireEvent.click(await screen.findByRole("button", { name: "打开工作台会话 应用绑定群" }));
 
     await waitFor(() => expect(window.location.pathname).toBe("/workbench"));
     await waitFor(() => expect(window.location.search).toBe("?conversationId=conv_app_bound"));
@@ -395,7 +395,7 @@ describe("App", () => {
       "/api/auth/me": response(200, { user: { username: "admin", role: "admin" } }),
       ...workbenchRoutes(),
       "/api/observability/summary": response(200, { failedTasks: 0 }),
-      "/api/send-requests?take=50&skip=0&status=sent": response(200, [
+      "/api/send-requests?take=50&skip=0&status=success": response(200, [
         {
           id: "send_sent_50",
           type: "text",
@@ -422,11 +422,11 @@ describe("App", () => {
 
     expect(await screen.findByText("send_sent_50")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/send-requests?take=50&skip=0&status=sent",
+      "/api/send-requests?take=50&skip=0&status=success",
       expect.objectContaining({ credentials: "include" }),
     );
 
-    fireEvent.change(screen.getByLabelText("发送状态筛选"), { target: { value: "failed" } });
+    fireEvent.click(screen.getByRole("button", { name: "失败 0" }));
 
     await waitFor(() => expect(window.location.search).toBe("?status=failed&pageSize=50"));
     await waitFor(() =>

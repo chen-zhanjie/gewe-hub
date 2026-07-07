@@ -43,11 +43,13 @@ describe("AdminPage", () => {
     render(<AdminPage page="apps" />);
 
     await screen.findByText("暂无应用");
+    fireEvent.click(screen.getByRole("button", { name: "新增应用" }));
+    const formSheet = await screen.findByRole("dialog", { name: "新增应用" });
     fireEvent.change(screen.getByLabelText("应用名称"), { target: { value: "Hermes 新应用" } });
     fireEvent.change(screen.getByLabelText("Owner wxid"), { target: { value: "wxid_owner" } });
     fireEvent.change(screen.getByLabelText("默认防抖毫秒"), { target: { value: "2000" } });
     fireEvent.change(screen.getByLabelText("默认最大等待毫秒"), { target: { value: "8000" } });
-    fireEvent.click(screen.getByRole("button", { name: "新建应用" }));
+    fireEvent.click(within(formSheet).getByRole("button", { name: "保存应用" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -57,6 +59,7 @@ describe("AdminPage", () => {
           body: JSON.stringify({
             name: "Hermes 新应用",
             ownerWxid: "wxid_owner",
+            mainConversationId: undefined,
             defaultDebounceMs: 2000,
             defaultMaxWaitMs: 8000,
             deliverSelfMessages: false,
@@ -142,11 +145,12 @@ describe("AdminPage", () => {
 
     const appCard = await screen.findByText("真实 Hermes 应用");
     fireEvent.click(within(appCard.closest("section")!).getByRole("button", { name: "编辑应用" }));
-    fireEvent.change(screen.getByLabelText("应用名称"), { target: { value: "Hermes 生产应用" } });
-    fireEvent.change(screen.getByLabelText("Owner wxid"), { target: { value: "wxid_owner_prod" } });
-    fireEvent.change(screen.getByLabelText("默认防抖毫秒"), { target: { value: "2500" } });
-    fireEvent.change(screen.getByLabelText("默认最大等待毫秒"), { target: { value: "9000" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存应用" }));
+    const formSheet = await screen.findByRole("dialog", { name: "编辑应用" });
+    fireEvent.change(within(formSheet).getByLabelText("应用名称"), { target: { value: "Hermes 生产应用" } });
+    fireEvent.change(within(formSheet).getByLabelText("Owner wxid"), { target: { value: "wxid_owner_prod" } });
+    fireEvent.change(within(formSheet).getByLabelText("默认防抖毫秒"), { target: { value: "2500" } });
+    fireEvent.change(within(formSheet).getByLabelText("默认最大等待毫秒"), { target: { value: "9000" } });
+    fireEvent.click(within(formSheet).getByRole("button", { name: "保存应用" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -156,9 +160,11 @@ describe("AdminPage", () => {
           body: JSON.stringify({
             name: "Hermes 生产应用",
             ownerWxid: "wxid_owner_prod",
+            mainConversationId: undefined,
             defaultDebounceMs: 2500,
             defaultMaxWaitMs: 9000,
             deliverSelfMessages: false,
+            accountRemarks: [],
           }),
           credentials: "include",
         }),
@@ -225,6 +231,9 @@ describe("AdminPage", () => {
           ownerWxid: "wxid_owner_real",
           token: "ghub_real_token_123456",
           defaultDebounceMs: 1500,
+          defaultMaxWaitMs: 6000,
+          deliverSelfMessages: false,
+          accountRemarks: [],
           _count: { conversations: 7 },
         },
       ],
@@ -247,11 +256,11 @@ describe("AdminPage", () => {
     render(<AdminPage page="apps" />);
 
     expect(await screen.findByText("真实 Hermes 应用")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("备注应用"), { target: { value: "app_real" } });
-    fireEvent.change(screen.getByLabelText("备注微信账号"), { target: { value: "acc_real_1" } });
-    fireEvent.change(screen.getByLabelText("应用级账号备注"), { target: { value: "应用主控账号" } });
-    fireEvent.change(screen.getByLabelText("账号标签"), { target: { value: "owner,prod" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存账号备注" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑应用" }));
+    const formSheet = await screen.findByRole("dialog", { name: "编辑应用" });
+    fireEvent.change(within(formSheet).getByLabelText("账号备注：平台主号"), { target: { value: "应用主控账号" } });
+    fireEvent.change(within(formSheet).getByLabelText("账号标签：平台主号"), { target: { value: "owner,prod" } });
+    fireEvent.click(within(formSheet).getByRole("button", { name: "保存应用" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -259,6 +268,12 @@ describe("AdminPage", () => {
         expect.objectContaining({
           method: "PATCH",
           body: JSON.stringify({
+            name: "真实 Hermes 应用",
+            ownerWxid: "wxid_owner_real",
+            mainConversationId: undefined,
+            defaultDebounceMs: 1500,
+            defaultMaxWaitMs: 6000,
+            deliverSelfMessages: false,
             accountRemarks: [
               {
                 accountId: "acc_real_1",
@@ -297,7 +312,8 @@ describe("AdminPage", () => {
 
     const table = await screen.findByRole("table", { name: "推送日志列表" });
     expect(screen.getByRole("button", { name: "刷新" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "投递状态: failed" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "失败 1" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("投递状态筛选")).not.toBeInTheDocument();
     expect(screen.getByLabelText("每页数量")).toHaveValue("20");
     expect(within(table).getByText("del_real_1")).toBeInTheDocument();
     expect(within(table).getByText("真实 Hermes 应用")).toBeInTheDocument();
@@ -348,15 +364,14 @@ describe("AdminPage", () => {
     render(<AdminPage page="deliveries" onDeliveryFiltersChange={deliveryFilterChange} />);
 
     expect(await screen.findByText("del_failed_focus_1")).toBeInTheDocument();
-    const summary = screen.getByRole("status", { name: "推送日志状态摘要" });
-    expect(summary).toHaveTextContent("发现 1 条失败投递");
-    expect(summary).toHaveTextContent("当前优先显示失败项");
+    expect(screen.getByRole("region", { name: "推送日志状态" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "失败 1" })).toHaveAttribute("aria-pressed", "true");
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/deliveries?take=20&skip=0&status=failed",
       expect.objectContaining({ credentials: "include" }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "查看全部投递" }));
+    fireEvent.click(screen.getByRole("button", { name: "全部 1" }));
 
     expect(await screen.findByText("del_all_1")).toBeInTheDocument();
     expect(deliveryFilterChange).toHaveBeenLastCalledWith({ status: "", page: 1, pageSize: 20 });
@@ -554,7 +569,7 @@ describe("AdminPage", () => {
     render(<AdminPage page="deliveries" deliveryFilters={{ status: "", page: 1, pageSize: 20 }} onDeliveryFiltersChange={deliveryFilterChange} />);
 
     expect(await screen.findByText("del_delivered_1")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("投递状态筛选"), { target: { value: "failed" } });
+    fireEvent.click(screen.getByRole("button", { name: "失败 0" }));
 
     expect(await screen.findByText("del_failed_1")).toBeInTheDocument();
     expect(deliveryFilterChange).toHaveBeenLastCalledWith({ status: "failed", page: 1, pageSize: 20 });
@@ -623,6 +638,8 @@ describe("AdminPage", () => {
           onlineStatus: "online",
         },
       ],
+      "/api/contacts?accountId=acc_real_1": [],
+      "/api/groups?accountId=acc_real_1": [],
       "/api/contacts/sync": {
         id: "task_sync_1",
         taskType: "sync_contacts",
@@ -633,7 +650,9 @@ describe("AdminPage", () => {
     render(<AdminPage page="accounts" />);
 
     expect(await screen.findByText("客服主号")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "同步" }));
+    fireEvent.click(screen.getByRole("button", { name: "联系人" }));
+    const contactsSheet = await screen.findByRole("dialog", { name: "联系人" });
+    fireEvent.click(within(contactsSheet).getByRole("button", { name: "同步通讯录" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -680,12 +699,12 @@ describe("AdminPage", () => {
     expect(summary).toHaveTextContent("1 个账号离线");
     expect(summary).toHaveTextContent("离线主号");
 
-    const accountList = screen.getByRole("list", { name: "微信账号列表" });
-    const accountItems = within(accountList).getAllByRole("listitem");
-    expect(accountItems[0]).toHaveTextContent("离线主号");
-    expect(accountItems[0]).toHaveTextContent("离线");
-    expect(accountItems[1]).toHaveTextContent("在线主号");
-    expect(accountItems[1]).toHaveTextContent("在线");
+    const accountTable = screen.getByRole("table", { name: "微信账号列表" });
+    const accountRows = within(accountTable).getAllByRole("row").slice(1);
+    expect(accountRows[0]).toHaveTextContent("离线主号");
+    expect(accountRows[0]).toHaveTextContent("离线");
+    expect(accountRows[1]).toHaveTextContent("在线主号");
+    expect(accountRows[1]).toHaveTextContent("在线");
   });
 
   it("账号页可以手动录入微信账号并刷新列表", async () => {
@@ -696,11 +715,13 @@ describe("AdminPage", () => {
     render(<AdminPage page="accounts" />);
 
     await screen.findByText("暂无微信账号");
-    fireEvent.change(screen.getByLabelText("GeWe appId"), { target: { value: "wx_app_manual" } });
-    fireEvent.change(screen.getByLabelText("账号 wxid"), { target: { value: "wxid_manual_bot" } });
-    fireEvent.change(screen.getByLabelText("账号昵称"), { target: { value: "手动主号" } });
-    fireEvent.change(screen.getByLabelText("平台备注"), { target: { value: "本地测试号" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存账号" }));
+    fireEvent.click(screen.getByRole("button", { name: "新增账号" }));
+    const accountDialog = await screen.findByRole("dialog", { name: "新增账号" });
+    fireEvent.change(within(accountDialog).getByLabelText("GeWe appId"), { target: { value: "wx_app_manual" } });
+    fireEvent.change(within(accountDialog).getByLabelText("账号 wxid"), { target: { value: "wxid_manual_bot" } });
+    fireEvent.change(within(accountDialog).getByLabelText("账号昵称"), { target: { value: "手动主号" } });
+    fireEvent.change(within(accountDialog).getByLabelText("平台备注"), { target: { value: "本地测试号" } });
+    fireEvent.click(within(accountDialog).getByRole("button", { name: "保存账号" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -749,9 +770,10 @@ describe("AdminPage", () => {
 
     expect(await screen.findByText("旧备注")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "编辑账号" }));
-    fireEvent.change(screen.getByLabelText("账号昵称"), { target: { value: "客服新名" } });
-    fireEvent.change(screen.getByLabelText("平台备注"), { target: { value: "主控账号" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存账号" }));
+    const accountDialog = await screen.findByRole("dialog", { name: "编辑账号" });
+    fireEvent.change(within(accountDialog).getByLabelText("账号昵称"), { target: { value: "客服新名" } });
+    fireEvent.change(within(accountDialog).getByLabelText("平台备注"), { target: { value: "主控账号" } });
+    fireEvent.click(within(accountDialog).getByRole("button", { name: "保存账号" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(

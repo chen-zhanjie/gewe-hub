@@ -30,14 +30,14 @@ export function AdminPage({
 }
 
 export interface DeliveryFilters {
-  status: "" | "queued" | "delivering" | "delivered" | "acked" | "failed";
+  status: "" | "success" | "failed" | "in_progress";
   messageId?: string;
   page: number;
   pageSize: number;
 }
 
 export interface SendRequestFilters {
-  status: "" | "pending" | "sent" | "failed";
+  status: "" | "success" | "failed" | "in_progress";
   page: number;
   pageSize: number;
 }

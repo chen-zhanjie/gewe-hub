@@ -20,13 +20,18 @@ import { JsonViewer } from "@/components/ui/JsonViewer";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { TimeText } from "@/components/ui/TimeText";
 import { apiFetch } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import type { SendRequestFilters } from "../AdminPages";
 
 const DEFAULT_PAGE_SIZE = 20;
 const PAGE_SIZE_OPTIONS = [20, 50] as const;
-const SEND_REQUEST_STATUSES = ["pending", "sent", "failed"] as const;
+const SEND_REQUEST_STATUS_FACETS = [
+  { label: "全部", value: "" },
+  { label: "成功", value: "success" },
+  { label: "失败", value: "failed" },
+  { label: "进行中", value: "in_progress" },
+] as const;
 
-type SendRequestStatusFilter = "" | (typeof SEND_REQUEST_STATUSES)[number];
 type SendRequestRow = ReturnType<typeof mapSendRow>;
 
 const DEFAULT_SEND_REQUEST_FILTERS: SendRequestFilters = {
@@ -159,22 +164,13 @@ export function SendRequestsPage({
 
   return (
     <PageShell description="追踪后台和应用发起的发送请求。">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background p-3">
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          发送状态
-          <select
-            aria-label="发送状态筛选"
-            value={filters.status}
-            onChange={(event) => updateFilters({ ...filters, status: asSendRequestStatusFilter(event.target.value), page: 1 })}
-            className="rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none"
-          >
-            <option value="">全部状态</option>
-            {SEND_REQUEST_STATUSES.map((status) => (
-              <option key={status} value={status}>{status}</option>
-            ))}
-          </select>
-        </label>
-      </div>
+      <QuickStatusTabs
+        label="发送记录状态"
+        value={filters.status}
+        rows={rows}
+        options={SEND_REQUEST_STATUS_FACETS}
+        onChange={(status) => updateFilters({ ...filters, status, page: 1 })}
+      />
       <LoadState loading={loading} error={error} empty={!loading && rows.length === 0} emptyText="暂无发送记录" />
       {revokeError ? <div className="rounded-md border border-destructive/30 bg-background px-3 py-2 text-sm text-destructive">{revokeError}</div> : null}
       <DataTable
@@ -188,14 +184,6 @@ export function SendRequestsPage({
           searchPlaceholder: "搜索发送记录",
           searchValue: sendSearch,
           onSearchChange: setSendSearch,
-          facets: [
-            {
-              label: "发送状态",
-              value: filters.status,
-              options: buildStatusFacetOptions(SEND_REQUEST_STATUSES),
-              onValueChange: (status) => updateFilters({ ...filters, status: asSendRequestStatusFilter(status), page: 1 }),
-            },
-          ],
           onRefresh: () => {
             void reload();
           },
@@ -251,6 +239,39 @@ export function SendRequestsPage({
         </AlertDialogContent>
       </AlertDialog>
     </PageShell>
+  );
+}
+
+function QuickStatusTabs({
+  label,
+  value,
+  rows,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: SendRequestFilters["status"];
+  rows: SendRequestRow[];
+  options: typeof SEND_REQUEST_STATUS_FACETS;
+  onChange: (status: SendRequestFilters["status"]) => void;
+}) {
+  return (
+    <section aria-label={label} className="flex flex-wrap items-center gap-2 rounded-lg border bg-background px-4 py-3">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          aria-pressed={value === option.value}
+          onClick={() => onChange(option.value)}
+          className={cn(
+            "inline-flex h-8 items-center rounded-full border px-3 text-xs text-muted-foreground hover:text-foreground",
+            value === option.value && "border-primary/50 bg-primary/10 text-primary",
+          )}
+        >
+          {option.label} <span className="ml-1 tabular-nums">{countRowsByFacet(rows, option.value)}</span>
+        </button>
+      ))}
+    </section>
   );
 }
 
@@ -426,23 +447,17 @@ function buildSendRequestPath(filters: SendRequestFilters): string {
   return `/api/send-requests?${params.toString()}`;
 }
 
-function asSendRequestStatusFilter(value: string): SendRequestStatusFilter {
-  return SEND_REQUEST_STATUSES.includes(value as (typeof SEND_REQUEST_STATUSES)[number])
-    ? (value as SendRequestStatusFilter)
-    : "";
-}
-
 function asPageSize(value: number): number {
   return PAGE_SIZE_OPTIONS.includes(value as (typeof PAGE_SIZE_OPTIONS)[number])
     ? value
     : DEFAULT_PAGE_SIZE;
 }
 
-function buildStatusFacetOptions<TStatus extends string>(statuses: readonly TStatus[]) {
-  return [
-    { label: "全部状态", value: "" },
-    ...statuses.map((status) => ({ label: status, value: status })),
-  ];
+function countRowsByFacet(rows: SendRequestRow[], status: SendRequestFilters["status"]): number {
+  if (!status) return rows.length;
+  if (status === "success") return rows.filter((row) => row.status === "sent").length;
+  if (status === "in_progress") return rows.filter((row) => row.status === "pending").length;
+  return rows.filter((row) => row.status === status).length;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

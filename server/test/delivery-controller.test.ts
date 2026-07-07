@@ -64,6 +64,32 @@ describe("DeliveryAdminController", () => {
     });
   });
 
+  it.each([
+    ["success", { in: ["delivered", "acked"] }],
+    ["in_progress", { in: ["queued", "delivering"] }],
+    ["queued", "queued"],
+    ["delivering", "delivering"],
+    ["delivered", "delivered"],
+    ["acked", "acked"]
+  ])("查询 deliveries 时将状态分面 %s 映射为 Prisma status 条件", async (status, expectedStatus) => {
+    const prisma = {
+      delivery: {
+        findMany: vi.fn(async () => [])
+      }
+    };
+    const controller = new DeliveryAdminController(prisma as never);
+
+    await controller.listDeliveries(status, undefined, undefined, undefined, undefined, undefined);
+
+    expect(prisma.delivery.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          status: expectedStatus
+        }
+      })
+    );
+  });
+
   it("支持按公开 messageId 过滤 delivery，并可与会话过滤组合", async () => {
     const prisma = {
       delivery: {

@@ -174,7 +174,9 @@ describe("AdminPage operations", () => {
     expect(updatedAt).toHaveAttribute("title", "2026-07-06 15:16:37");
     expect(screen.getByPlaceholderText("搜索发送记录")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "刷新" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "发送状态: 全部状态" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "发送记录状态" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "全部 1" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("发送状态筛选")).not.toBeInTheDocument();
     expect(screen.getByLabelText("每页数量")).toHaveValue("20");
     fireEvent.click(within(table).getByRole("button", { name: "撤回" }));
 
@@ -257,7 +259,7 @@ describe("AdminPage operations", () => {
           geweResponse: { ret: 500, msg: "发送失败" },
         },
       ],
-      "/api/send-requests?take=20&skip=0&status=sent": [
+      "/api/send-requests?take=20&skip=0&status=success": [
         {
           id: "send_sent_1",
           type: "text",
@@ -287,7 +289,7 @@ describe("AdminPage operations", () => {
           geweResponse: { ret: 200, msg: "发送成功" },
         })),
       ],
-      "/api/send-requests?take=20&skip=20&status=sent": [
+      "/api/send-requests?take=20&skip=20&status=success": [
         {
           id: "send_sent_page_2",
           type: "image",
@@ -303,7 +305,7 @@ describe("AdminPage operations", () => {
           geweResponse: { ret: 200, msg: "发送成功" },
         },
       ],
-      "/api/send-requests?take=50&skip=0&status=sent": [
+      "/api/send-requests?take=50&skip=0&status=success": [
         {
           id: "send_sent_50",
           type: "text",
@@ -336,30 +338,30 @@ describe("AdminPage operations", () => {
       expect.objectContaining({ credentials: "include" }),
     );
 
-    fireEvent.change(screen.getByLabelText("发送状态筛选"), { target: { value: "sent" } });
+    fireEvent.click(screen.getByRole("button", { name: "成功 0" }));
 
     expect(await screen.findByText("send_sent_1")).toBeInTheDocument();
-    expect(sendRequestFilterChange).toHaveBeenLastCalledWith({ status: "sent", page: 1, pageSize: 20 });
+    expect(sendRequestFilterChange).toHaveBeenLastCalledWith({ status: "success", page: 1, pageSize: 20 });
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/send-requests?take=20&skip=0&status=sent",
+      "/api/send-requests?take=20&skip=0&status=success",
       expect.objectContaining({ credentials: "include" }),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
 
     expect(await screen.findByText("send_sent_page_2")).toBeInTheDocument();
-    expect(sendRequestFilterChange).toHaveBeenLastCalledWith({ status: "sent", page: 2, pageSize: 20 });
+    expect(sendRequestFilterChange).toHaveBeenLastCalledWith({ status: "success", page: 2, pageSize: 20 });
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/send-requests?take=20&skip=20&status=sent",
+      "/api/send-requests?take=20&skip=20&status=success",
       expect.objectContaining({ credentials: "include" }),
     );
 
     fireEvent.change(screen.getByLabelText("每页数量"), { target: { value: "50" } });
 
     expect(await screen.findByText("send_sent_50")).toBeInTheDocument();
-    expect(sendRequestFilterChange).toHaveBeenLastCalledWith({ status: "sent", page: 1, pageSize: 50 });
+    expect(sendRequestFilterChange).toHaveBeenLastCalledWith({ status: "success", page: 1, pageSize: 50 });
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/send-requests?take=50&skip=0&status=sent",
+      "/api/send-requests?take=50&skip=0&status=success",
       expect.objectContaining({ credentials: "include" }),
     );
   });

@@ -36,6 +36,8 @@ export interface BackendAccount {
   nickname?: string | null;
   platformRemark?: string | null;
   onlineStatus?: "online" | "offline" | "unknown";
+  source?: "auto" | "manual";
+  lastSyncedAt?: string | Date | null;
 }
 
 export interface SaveAccountPayload {

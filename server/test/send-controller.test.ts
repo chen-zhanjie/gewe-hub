@@ -363,6 +363,30 @@ describe("SendController", () => {
     });
   });
 
+  it.each([
+    ["success", "sent"],
+    ["in_progress", "pending"],
+    ["sent", "sent"],
+    ["pending", "pending"]
+  ])("查询发送记录时将状态分面 %s 映射为 Prisma status 条件", async (status, expectedStatus) => {
+    const prisma = {
+      sendRequest: {
+        findMany: vi.fn(async () => [])
+      }
+    };
+    const controller = new SendController(prisma as never, {} as never);
+
+    await controller.list(status, undefined, undefined);
+
+    expect(prisma.sendRequest.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          status: expectedStatus
+        }
+      })
+    );
+  });
+
   it("查询发送记录 take 上限为 200", async () => {
     const prisma = {
       sendRequest: {
