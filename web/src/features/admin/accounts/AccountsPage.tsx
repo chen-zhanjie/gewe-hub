@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
-import { MessageCircle, Pencil, Plus, RefreshCcw, Users } from "lucide-react";
+import { MessageCircle, Pencil, Plus, Users } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/ui/DataTable";
 import {
@@ -23,8 +23,10 @@ import {
   type BackendAccount,
   useAccountsQuery,
   useSaveAccountMutation,
+  useSyncAccountProfileMutation,
   useSyncContactsMutation,
 } from "../queries";
+import { SyncAccountProfileButton, SyncGroupMembersButton } from "./AccountActionButtons";
 import { ContactsSheet, type ContactRow, type ContactStatusFilter, type GroupRow } from "./ContactsSheet";
 
 type AccountRow = ReturnType<typeof mapAccountRow>;
@@ -40,6 +42,7 @@ export function AccountsPage() {
   const router = useRouter({ warn: false });
   const accountsQuery = useAccountsQuery();
   const saveAccountMutation = useSaveAccountMutation();
+  const syncAccountProfileMutation = useSyncAccountProfileMutation();
   const syncContactsMutation = useSyncContactsMutation();
   const accounts = accountsQuery.data ?? [];
   const displayAccounts = sortAccountsForOperations(accounts);
@@ -58,6 +61,7 @@ export function AccountsPage() {
   const [contactsError, setContactsError] = useState<string | null>(null);
   const [openingChatKey, setOpeningChatKey] = useState<string | null>(null);
   const [syncingGroupKey, setSyncingGroupKey] = useState<string | null>(null);
+  const [syncingProfileAccountId, setSyncingProfileAccountId] = useState<string | null>(null);
 
   const accountColumns = useMemo<ColumnDef<AccountRow>[]>(() => [
     {
@@ -93,6 +97,14 @@ export function AccountsPage() {
       meta: { align: "right", sticky: "right" },
       cell: ({ row }) => (
         <div className="flex items-center justify-end gap-2">
+          <SyncAccountProfileButton
+            label={row.original.name}
+            disabled={!row.original.appId || syncingProfileAccountId === row.original.id}
+            loading={syncingProfileAccountId === row.original.id}
+            onClick={() => {
+              void handleSyncAccountProfile(row.original.source);
+            }}
+          />
           <button
             type="button"
             aria-label="联系人"
@@ -116,7 +128,7 @@ export function AccountsPage() {
         </div>
       ),
     },
-  ], []);
+  ], [syncingProfileAccountId]);
 
   const contactColumns = useMemo<ColumnDef<ContactRow>[]>(() => [
     {
@@ -290,6 +302,23 @@ export function AccountsPage() {
       toast.success("通讯录同步任务已创建");
     } catch (error) {
       setSyncError(error instanceof Error ? error.message : "同步失败");
+    }
+  }
+
+  async function handleSyncAccountProfile(account: BackendAccount) {
+    if (syncAccountProfileMutation.isPending || syncingProfileAccountId) return;
+    if (!account.appId) {
+      toast.error("账号缺少 GeWe appId，无法更新信息");
+      return;
+    }
+    setSyncingProfileAccountId(account.id);
+    try {
+      await syncAccountProfileMutation.mutateAsync(account.id);
+      toast.success("账号信息已更新");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "更新账号信息失败");
+    } finally {
+      setSyncingProfileAccountId(null);
     }
   }
 
@@ -606,31 +635,6 @@ function OpenChatButton({
   );
 }
 
-function SyncGroupMembersButton({
-  label,
-  disabled,
-  loading,
-  onClick,
-}: {
-  label: string;
-  disabled: boolean;
-  loading: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={`同步群成员 ${label}`}
-      title={`同步群成员 ${label}`}
-      disabled={disabled || loading}
-      onClick={onClick}
-      className="rounded-md border p-2 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      <RefreshCcw className={cn("size-4", loading && "animate-spin")} />
-    </button>
-  );
-}
-
 function mapAccountRow(account: BackendAccount) {
   return {
     id: account.id,
@@ -639,6 +643,7 @@ function mapAccountRow(account: BackendAccount) {
     entity: {
       platformRemark: account.platformRemark,
       displayName: account.nickname,
+      avatarUrl: account.avatarUrl,
       wxid: account.wxid,
     },
     appId: account.appId,

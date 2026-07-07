@@ -34,6 +34,7 @@ export interface BackendAccount {
   appId?: string | null;
   wxid: string;
   nickname?: string | null;
+  avatarUrl?: string | null;
   platformRemark?: string | null;
   onlineStatus?: "online" | "offline" | "unknown";
   source?: "auto" | "manual";
@@ -138,6 +139,21 @@ export function useSaveAccountMutation() {
       }),
     onSuccess: async () => {
       // Invalidate account list after account create or update.
+      await queryClient.invalidateQueries({ queryKey: accountsQueryKeys.list });
+    },
+  });
+}
+
+export function useSyncAccountProfileMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (accountId: string) =>
+      apiFetch(`/api/accounts/${accountId}/sync-profile`, {
+        method: "POST",
+      }),
+    onSuccess: async () => {
+      // Invalidate account list after GeWe profile and online status refresh.
       await queryClient.invalidateQueries({ queryKey: accountsQueryKeys.list });
     },
   });

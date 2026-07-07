@@ -46,6 +46,10 @@ export class GeweClientService {
     return this.post("/gewe/v2/api/login/checkOnline", appId ? { appId } : {});
   }
 
+  async getProfile(appId: string) {
+    return this.post("/gewe/v2/api/personal/getProfile", { appId });
+  }
+
   async fetchContactsList(appId: string) {
     return this.post("/gewe/v2/api/contacts/fetchContactsList", { appId });
   }

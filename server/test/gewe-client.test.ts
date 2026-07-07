@@ -80,6 +80,25 @@ describe("GeweClientService", () => {
     );
   });
 
+  it("封装获取当前微信账号个人资料的 GeWe API", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ret: 200, msg: "ok", data: {} }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new GeweClientService();
+
+    await client.getProfile("wx_app");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://api.geweapi.com/gewe/v2/api/personal/getProfile",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "X-GEWE-TOKEN": "test-gewe-token"
+        }),
+        body: JSON.stringify({ appId: "wx_app" })
+      })
+    );
+  });
+
   it("按媒体类型调用 GeWe 下载接口并提取临时文件 URL", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       ret: 200,
