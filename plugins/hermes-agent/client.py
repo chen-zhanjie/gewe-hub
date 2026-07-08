@@ -170,6 +170,7 @@ class GeWeHubClient:
         html_content_base64: str | None = None,
         html_file_path: str | None = None,
         html_file_name: str | None = None,
+        thumb_url: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         sources = [
@@ -201,6 +202,9 @@ class GeWeHubClient:
                 raise GeWeHubError(f"html file does not exist: {html_file}")
             payload["htmlContentBase64"] = base64.b64encode(html_file.read_bytes()).decode("ascii")
             payload["htmlFileName"] = html_file_name or html_file.name
+        normalized_thumb_url = str(thumb_url or "").strip()
+        if normalized_thumb_url:
+            payload["thumbUrl"] = normalized_thumb_url
         if idempotency_key:
             payload["idempotencyKey"] = idempotency_key
         return await self._request("POST", "/api/send", json=payload)

@@ -38,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     send_html.add_argument("--conversation-id", required=True)
     send_html.add_argument("--title", required=True)
     send_html.add_argument("--desc", default="")
+    send_html.add_argument("--thumb-url")
     send_html.add_argument("--idempotency-key")
     source = send_html.add_mutually_exclusive_group(required=True)
     source.add_argument("--file", dest="html_file")
@@ -63,6 +64,8 @@ async def run_send_html(args: argparse.Namespace) -> int:
             "desc": args.desc or "",
             "idempotency_key": args.idempotency_key,
         }
+        if args.thumb_url:
+            kwargs["thumb_url"] = args.thumb_url
         if args.html_file:
             html_file = Path(args.html_file)
             if not html_file.is_file():

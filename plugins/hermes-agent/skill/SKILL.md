@@ -67,6 +67,7 @@ python /Users/agent/project/GeWeHub/plugins/hermes-agent/cli.py send-html \
   --conversation-id conv_xxx \
   --title "日报" \
   --desc "今日 AI 工程日报" \
+  --thumb-url "https://example.com/cover.jpg" \
   --file ./report.html
 ```
 
@@ -82,6 +83,8 @@ cat report.html | python /Users/agent/project/GeWeHub/plugins/hermes-agent/cli.p
 ```
 
 成功输出是 JSON。后续需要引用页面时，直接读取顶层 `html_public_url` 字段；不要从 `raw_response` 里二次解析。
+
+`--thumb-url` 可选，用于设置微信链接卡片缩略图；不传时由 GeWe 或客户端按默认链接卡片处理。
 
 ```json
 {

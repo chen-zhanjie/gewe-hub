@@ -349,6 +349,7 @@ async def test_client_send_html_sources_use_html_payload(tmp_path):
         title="日报",
         desc="今日 AI 日报",
         html_content="<html>content</html>",
+        thumb_url="https://example.com/cover.jpg",
         idempotency_key="html_content_1",
     )
     file_result = await client.send_html(
@@ -375,6 +376,7 @@ async def test_client_send_html_sources_use_html_payload(tmp_path):
             "title": "日报",
             "desc": "今日 AI 日报",
             "htmlContent": "<html>content</html>",
+            "thumbUrl": "https://example.com/cover.jpg",
             "idempotencyKey": "html_content_1",
         },
         {
@@ -436,6 +438,8 @@ def test_cli_send_html_file_outputs_public_url(monkeypatch, tmp_path, capsys):
                 "CLI 报告",
                 "--desc",
                 "本地文件",
+                "--thumb-url",
+                "https://example.com/cover.jpg",
                 "--file",
                 str(html_file),
             ]
@@ -449,6 +453,7 @@ def test_cli_send_html_file_outputs_public_url(monkeypatch, tmp_path, capsys):
             "conversation_id": "cvs_1",
             "title": "CLI 报告",
             "desc": "本地文件",
+            "thumb_url": "https://example.com/cover.jpg",
             "html_content_base64": "PCFkb2N0eXBlIGh0bWw+PGh0bWw+Y2xpPC9odG1sPg==",
             "html_file_name": "report.html",
             "idempotency_key": None,

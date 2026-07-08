@@ -454,6 +454,7 @@ python plugins/hermes-agent/cli.py send-html \
   --conversation-id conv_xxx \
   --title "日报" \
   --desc "今日 AI 工程日报" \
+  --thumb-url https://example.com/cover.jpg \
   --file ./report.html
 ```
 
@@ -486,6 +487,7 @@ cat report.html | python plugins/hermes-agent/cli.py send-html \
 - `--content <html>`：直接发送命令行传入的 HTML 字符串。
 - `--stdin`：从标准输入读取 HTML。
 - `--url <url>`：发送已经托管好的 HTML URL，不读取本地文件。
+- `--thumb-url <url>`：可选，作为微信链接卡片缩略图。
 - `--file`、`--content`、`--stdin`、`--url` 四选一。
 - 本地文件路径只在 CLI 进程内使用，不进入服务端请求体。
 

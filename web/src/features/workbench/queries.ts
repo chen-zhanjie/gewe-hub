@@ -105,6 +105,7 @@ export interface SendHtmlRequest {
   title: string;
   desc: string;
   linkUrl?: string;
+  thumbUrl?: string;
   htmlContent?: string;
   htmlContentBase64?: string;
   htmlFileName?: string;
@@ -299,6 +300,7 @@ export async function sendWorkbenchPayload(
       title: payload.title ?? "",
       desc: payload.desc ?? "",
       ...(payload.linkUrl ? { linkUrl: payload.linkUrl } : {}),
+      ...(payload.thumbUrl ? { thumbUrl: payload.thumbUrl } : {}),
       ...(payload.htmlContent ? { htmlContent: payload.htmlContent } : {}),
       ...(payload.htmlContentBase64 ? { htmlContentBase64: payload.htmlContentBase64 } : {}),
       ...(payload.htmlFileName ? { htmlFileName: payload.htmlFileName } : {}),

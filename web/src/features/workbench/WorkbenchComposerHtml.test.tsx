@@ -27,6 +27,7 @@ describe("WorkbenchPage HTML composer", () => {
     const dialog = await screen.findByRole("dialog", { name: "发送 HTML" });
     fireEvent.change(within(dialog).getByLabelText("HTML 标题"), { target: { value: "日报" } });
     fireEvent.change(within(dialog).getByLabelText("HTML 描述"), { target: { value: "今日 AI 日报" } });
+    fireEvent.change(within(dialog).getByLabelText("HTML 缩略图 URL"), { target: { value: "https://example.com/cover.jpg" } });
     fireEvent.change(within(dialog).getByLabelText("HTML 内容"), {
       target: { value: "<!doctype html><html><body>日报</body></html>" },
     });
@@ -42,6 +43,7 @@ describe("WorkbenchPage HTML composer", () => {
             type: "html",
             title: "日报",
             desc: "今日 AI 日报",
+            thumbUrl: "https://example.com/cover.jpg",
             htmlContent: "<!doctype html><html><body>日报</body></html>",
           }),
           credentials: "include",

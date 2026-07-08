@@ -31,6 +31,7 @@ interface HtmlDraft {
   title: string;
   desc: string;
   linkUrl: string;
+  thumbUrl: string;
   htmlContent: string;
   file: File | null;
 }
@@ -81,6 +82,7 @@ export function useWorkbenchComposerController({
     title: "",
     desc: "",
     linkUrl: "",
+    thumbUrl: "",
     htmlContent: "",
     file: null,
   });
@@ -286,6 +288,7 @@ export function useWorkbenchComposerController({
     if (!selectedConversation || sending) return;
     const title = htmlDraft.title.trim() || defaultHtmlTitle(htmlDraft);
     const desc = htmlDraft.desc.trim() || title;
+    const thumbnail = htmlDraft.thumbUrl.trim() ? { thumbUrl: htmlDraft.thumbUrl.trim() } : {};
 
     setSending(true);
     setSendError(null);
@@ -298,6 +301,7 @@ export function useWorkbenchComposerController({
           title,
           desc,
           linkUrl,
+          ...thumbnail,
         });
         closeHtmlForm();
         return;
@@ -313,6 +317,7 @@ export function useWorkbenchComposerController({
           desc,
           htmlContentBase64,
           htmlFileName: file.name,
+          ...thumbnail,
         });
         closeHtmlForm();
         return;
@@ -325,6 +330,7 @@ export function useWorkbenchComposerController({
         title,
         desc,
         htmlContent,
+        ...thumbnail,
       });
       closeHtmlForm();
     } catch (sendError) {
@@ -402,7 +408,7 @@ export function useWorkbenchComposerController({
 
   function closeHtmlForm() {
     setShowHtmlForm(false);
-    setHtmlDraft({ source: "content", title: "", desc: "", linkUrl: "", htmlContent: "", file: null });
+    setHtmlDraft({ source: "content", title: "", desc: "", linkUrl: "", thumbUrl: "", htmlContent: "", file: null });
     if (htmlFileInputRef.current) htmlFileInputRef.current.value = "";
   }
 

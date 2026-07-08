@@ -44,6 +44,7 @@ export interface HtmlDraft {
   title: string;
   desc: string;
   linkUrl: string;
+  thumbUrl: string;
   htmlContent: string;
   file: File | null;
 }
@@ -676,6 +677,16 @@ function HtmlSendDialog({
               value={draft.desc}
               onChange={(event) => onDraftChange((current) => ({ ...current, desc: event.target.value }))}
               className="mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+            />
+          </label>
+          <label className="text-xs text-muted-foreground">
+            缩略图 URL
+            <input
+              aria-label="HTML 缩略图 URL"
+              value={draft.thumbUrl}
+              onChange={(event) => onDraftChange((current) => ({ ...current, thumbUrl: event.target.value }))}
+              className="mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+              placeholder="https://..."
             />
           </label>
           {draft.source === "content" ? (
