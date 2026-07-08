@@ -2,6 +2,12 @@ import type { WorkbenchMediaSendType } from "@/features/workbench/queries";
 
 type MediaSendType = WorkbenchMediaSendType;
 
+export interface ThumbnailPayload {
+  thumbContentBase64: string;
+  thumbMimeType: string;
+  thumbFileName: string;
+}
+
 export function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   let binary = "";
@@ -68,6 +74,82 @@ export function readMediaDurationMs(file: File, elementName: "audio" | "video"):
   });
 }
 
+export async function readThumbnailFilePayload(file: File): Promise<ThumbnailPayload> {
+  return {
+    thumbContentBase64: await readFileAsArrayBuffer(file).then(arrayBufferToBase64),
+    thumbMimeType: file.type || guessImageMimeType(file.name),
+    thumbFileName: file.name || "thumbnail.jpg",
+  };
+}
+
+export function readVideoFrameThumbnailPayload(file: File): Promise<ThumbnailPayload | undefined> {
+  if (typeof URL.createObjectURL !== "function") {
+    return Promise.resolve(undefined);
+  }
+
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    const canvas = document.createElement("canvas");
+    let settled = false;
+    const timeout = window.setTimeout(() => finish(undefined), 5000);
+
+    function finish(value: ThumbnailPayload | undefined) {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      URL.revokeObjectURL(objectUrl);
+      video.removeAttribute("src");
+      resolve(value);
+    }
+
+    function drawFrame() {
+      const width = video.videoWidth || 640;
+      const height = video.videoHeight || 360;
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        finish(undefined);
+        return;
+      }
+      context.drawImage(video, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+      const base64 = dataUrl.split(",")[1];
+      finish(
+        base64
+          ? {
+              thumbContentBase64: base64,
+              thumbMimeType: "image/jpeg",
+              thumbFileName: `${stripFileExtension(file.name) || "video"}-cover.jpg`,
+            }
+          : undefined,
+      );
+    }
+
+    video.preload = "metadata";
+    video.muted = true;
+    video.playsInline = true;
+    video.addEventListener(
+      "loadedmetadata",
+      () => {
+        try {
+          video.currentTime = Number.isFinite(video.duration) && video.duration > 0 ? Math.min(0.1, video.duration / 10) : 0;
+        } catch {
+          drawFrame();
+        }
+      },
+      { once: true },
+    );
+    video.addEventListener("seeked", drawFrame, { once: true });
+    video.addEventListener("error", () => finish(undefined), { once: true });
+    video.src = objectUrl;
+  });
+}
+
+const DEFAULT_LINK_THUMBNAIL_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAZAAAAGQCAIAAAAP3aGbAAAACXBIWXMAAAABAAAAAQBPJcTWAAAFN0lEQVR4nO3UMQ0AIQDAwCf5nRER+PeHBTbS5E5Bp4659gdQ8L8OALhlWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZB31HBo9AxX7DAAAAAElFTkSuQmCC";
+
 export function guessMimeType(fileName: string, type: MediaSendType): string {
   const lowerName = fileName.toLowerCase();
   if (lowerName.endsWith(".silk")) return "audio/silk";
@@ -112,6 +194,18 @@ export function readTransferFiles(dataTransfer: Pick<DataTransfer, "files"> & Pa
 
 function isFileLike(value: unknown): value is File {
   return typeof value === "object" && value !== null && "name" in value && "size" in value && "type" in value;
+}
+
+function guessImageMimeType(fileName: string): string {
+  const lowerName = fileName.toLowerCase();
+  if (lowerName.endsWith(".png")) return "image/png";
+  if (lowerName.endsWith(".gif")) return "image/gif";
+  if (lowerName.endsWith(".webp")) return "image/webp";
+  return "image/jpeg";
+}
+
+function stripFileExtension(fileName: string): string {
+  return fileName.replace(/\.[^.]+$/, "");
 }
 
 export function selectVoiceRecordingMimeType(): string | undefined {

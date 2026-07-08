@@ -10,6 +10,14 @@ import {
   Video,
 } from "lucide-react";
 import type { ClipboardEvent, RefObject } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/Dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/Popover";
 import { cn } from "@/lib/utils";
 import type { WorkbenchMediaSendType } from "@/features/workbench/queries";
@@ -27,6 +35,12 @@ export interface LinkDraft {
   desc: string;
   linkUrl: string;
   thumbUrl: string;
+  thumbFile: File | null;
+}
+
+export interface VideoDraft {
+  file: File | null;
+  thumbFile: File | null;
 }
 
 export function MessageComposer({
@@ -34,22 +48,31 @@ export function MessageComposer({
   sending,
   voiceRecording,
   messageText,
-  videoThumbUrl,
+  showVideoForm,
+  videoDraft,
   showLinkForm,
   linkDraft,
   pendingAttachments,
   sendError,
+  parsingLink,
   voiceInputRef,
   imageInputRef,
   videoInputRef,
+  videoThumbInputRef,
+  linkThumbInputRef,
   fileInputRef,
   onMessageTextChange,
-  onVideoThumbUrlChange,
+  onShowVideoFormChange,
+  onVideoDraftChange,
   onShowLinkFormChange,
+  onCloseVideoForm,
+  onCloseLinkForm,
   onLinkDraftChange,
   onSendMedia,
   onVoiceRecord,
+  onSendVideo,
   onSendLink,
+  onParseLink,
   onRemovePendingAttachment,
   onSendPendingAttachments,
   onPaste,
@@ -59,22 +82,31 @@ export function MessageComposer({
   sending: boolean;
   voiceRecording: boolean;
   messageText: string;
-  videoThumbUrl: string;
+  showVideoForm: boolean;
+  videoDraft: VideoDraft;
   showLinkForm: boolean;
   linkDraft: LinkDraft;
   pendingAttachments: PendingAttachment[];
   sendError: string | null;
+  parsingLink: boolean;
   voiceInputRef: RefObject<HTMLInputElement | null>;
   imageInputRef: RefObject<HTMLInputElement | null>;
   videoInputRef: RefObject<HTMLInputElement | null>;
+  videoThumbInputRef: RefObject<HTMLInputElement | null>;
+  linkThumbInputRef: RefObject<HTMLInputElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
   onMessageTextChange: (text: string) => void;
-  onVideoThumbUrlChange: (url: string) => void;
+  onShowVideoFormChange: (show: boolean) => void;
+  onVideoDraftChange: (draft: VideoDraft | ((current: VideoDraft) => VideoDraft)) => void;
   onShowLinkFormChange: (show: boolean | ((current: boolean) => boolean)) => void;
+  onCloseVideoForm: () => void;
+  onCloseLinkForm: () => void;
   onLinkDraftChange: (draft: LinkDraft | ((current: LinkDraft) => LinkDraft)) => void;
   onSendMedia: (file: File | undefined, type: MediaSendType) => void;
   onVoiceRecord: () => void;
+  onSendVideo: () => void;
   onSendLink: () => void;
+  onParseLink: () => void;
   onRemovePendingAttachment: (attachmentId: string) => void;
   onSendPendingAttachments: () => void;
   onPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
@@ -98,14 +130,6 @@ export function MessageComposer({
           accept="image/*"
           className="sr-only"
           onChange={(event) => onSendMedia(event.currentTarget.files?.[0], "image")}
-        />
-        <input
-          ref={videoInputRef}
-          aria-label="选择视频文件"
-          type="file"
-          accept="video/*"
-          className="sr-only"
-          onChange={(event) => onSendMedia(event.currentTarget.files?.[0], "video")}
         />
         <input
           ref={fileInputRef}
@@ -167,22 +191,12 @@ export function MessageComposer({
         <button
           type="button"
           disabled={!selected || sending}
-          onClick={() => videoInputRef.current?.click()}
+          onClick={() => onShowVideoFormChange(true)}
           className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Video className="size-4" />
           视频
         </button>
-        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm text-muted-foreground">
-          <span className="shrink-0">视频缩略图 URL</span>
-          <input
-            aria-label="视频缩略图 URL"
-            value={videoThumbUrl}
-            onChange={(event) => onVideoThumbUrlChange(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent text-foreground outline-none"
-            placeholder="https://..."
-          />
-        </label>
         <button
           type="button"
           disabled={!selected || sending}
@@ -205,66 +219,29 @@ export function MessageComposer({
           文件
         </button>
       </div>
-      {showLinkForm ? (
-        <div className="mb-3 grid grid-cols-2 gap-2">
-          <label className="min-w-0 rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground">
-            链接标题
-            <input
-              aria-label="链接标题"
-              value={linkDraft.title}
-              onChange={(event) => onLinkDraftChange((current) => ({ ...current, title: event.target.value }))}
-              className="mt-1 block w-full bg-transparent text-sm text-foreground outline-none"
-            />
-          </label>
-          <label className="min-w-0 rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground">
-            链接地址
-            <input
-              aria-label="链接地址"
-              value={linkDraft.linkUrl}
-              onChange={(event) => onLinkDraftChange((current) => ({ ...current, linkUrl: event.target.value }))}
-              className="mt-1 block w-full bg-transparent text-sm text-foreground outline-none"
-              placeholder="https://..."
-            />
-          </label>
-          <label className="min-w-0 rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground">
-            链接描述
-            <input
-              aria-label="链接描述"
-              value={linkDraft.desc}
-              onChange={(event) => onLinkDraftChange((current) => ({ ...current, desc: event.target.value }))}
-              className="mt-1 block w-full bg-transparent text-sm text-foreground outline-none"
-            />
-          </label>
-          <div className="flex min-w-0 gap-2">
-            <label className="min-w-0 flex-1 rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground">
-              链接缩略图 URL
-              <input
-                aria-label="链接缩略图 URL"
-                value={linkDraft.thumbUrl}
-                onChange={(event) => onLinkDraftChange((current) => ({ ...current, thumbUrl: event.target.value }))}
-                className="mt-1 block w-full bg-transparent text-sm text-foreground outline-none"
-                placeholder="https://..."
-              />
-            </label>
-            <button
-              type="button"
-              disabled={
-                !selected ||
-                sending ||
-                !linkDraft.title.trim() ||
-                !linkDraft.desc.trim() ||
-                !linkDraft.linkUrl.trim() ||
-                !linkDraft.thumbUrl.trim()
-              }
-              onClick={onSendLink}
-              className="inline-flex shrink-0 items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Send className="size-4" />
-              发送链接
-            </button>
-          </div>
-        </div>
-      ) : null}
+      <VideoSendDialog
+        open={showVideoForm}
+        selected={selected}
+        sending={sending}
+        draft={videoDraft}
+        videoInputRef={videoInputRef}
+        coverInputRef={videoThumbInputRef}
+        onOpenChange={(open) => (open ? onShowVideoFormChange(true) : onCloseVideoForm())}
+        onDraftChange={onVideoDraftChange}
+        onSend={onSendVideo}
+      />
+      <LinkSendDialog
+        open={showLinkForm}
+        selected={selected}
+        sending={sending}
+        draft={linkDraft}
+        thumbInputRef={linkThumbInputRef}
+        onOpenChange={(open) => (open ? onShowLinkFormChange(true) : onCloseLinkForm())}
+        onDraftChange={onLinkDraftChange}
+        onParse={onParseLink}
+        onSend={onSendLink}
+        parsing={parsingLink}
+      />
       {pendingAttachments.length > 0 ? (
         <PendingAttachmentBar
           attachments={pendingAttachments}
@@ -359,6 +336,227 @@ function PendingAttachmentBar({
         ))}
       </div>
     </div>
+  );
+}
+
+function VideoSendDialog({
+  open,
+  selected,
+  sending,
+  draft,
+  videoInputRef,
+  coverInputRef,
+  onOpenChange,
+  onDraftChange,
+  onSend,
+}: {
+  open: boolean;
+  selected: boolean;
+  sending: boolean;
+  draft: VideoDraft;
+  videoInputRef: RefObject<HTMLInputElement | null>;
+  coverInputRef: RefObject<HTMLInputElement | null>;
+  onOpenChange: (open: boolean) => void;
+  onDraftChange: (draft: VideoDraft | ((current: VideoDraft) => VideoDraft)) => void;
+  onSend: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <input
+          ref={videoInputRef}
+          aria-label="上传视频文件"
+          type="file"
+          accept="video/*"
+          className="sr-only"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0] ?? null;
+            onDraftChange((current) => ({ ...current, file }));
+          }}
+        />
+        <input
+          ref={coverInputRef}
+          aria-label="上传视频封面图"
+          type="file"
+          accept="image/*"
+          className="sr-only"
+          onChange={(event) => {
+            const thumbFile = event.currentTarget.files?.[0] ?? null;
+            onDraftChange((current) => ({ ...current, thumbFile }));
+          }}
+        />
+        <DialogHeader>
+          <DialogTitle>发送视频</DialogTitle>
+          <DialogDescription>上传视频文件，可选上传封面图</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <button
+            type="button"
+            disabled={!selected || sending}
+            onClick={() => videoInputRef.current?.click()}
+            className="flex w-full items-center justify-between gap-3 rounded-md border px-3 py-3 text-left text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span className="min-w-0">
+              <span className="block font-medium">视频文件</span>
+              <span className="block truncate text-xs text-muted-foreground">{draft.file?.name ?? "点击上传视频文件"}</span>
+            </span>
+            <Video className="size-4 shrink-0 text-muted-foreground" />
+          </button>
+          <button
+            type="button"
+            disabled={!selected || sending}
+            onClick={() => coverInputRef.current?.click()}
+            className="flex w-full items-center justify-between gap-3 rounded-md border px-3 py-3 text-left text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span className="min-w-0">
+              <span className="block font-medium">视频封面图</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {draft.thumbFile?.name ?? "不上传时自动截取视频第一帧"}
+              </span>
+            </span>
+            <Image className="size-4 shrink-0 text-muted-foreground" />
+          </button>
+        </div>
+        <DialogFooter>
+          <button
+            type="button"
+            disabled={sending}
+            onClick={() => onOpenChange(false)}
+            className="inline-flex items-center justify-center rounded-md border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={!selected || sending || !draft.file}
+            onClick={onSend}
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Send className="size-4" />
+            发送视频
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function LinkSendDialog({
+  open,
+  selected,
+  sending,
+  draft,
+  thumbInputRef,
+  onOpenChange,
+  onDraftChange,
+  onParse,
+  onSend,
+  parsing,
+}: {
+  open: boolean;
+  selected: boolean;
+  sending: boolean;
+  parsing: boolean;
+  draft: LinkDraft;
+  thumbInputRef: RefObject<HTMLInputElement | null>;
+  onOpenChange: (open: boolean) => void;
+  onDraftChange: (draft: LinkDraft | ((current: LinkDraft) => LinkDraft)) => void;
+  onParse: () => void;
+  onSend: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <input
+          ref={thumbInputRef}
+          aria-label="上传链接缩略图"
+          type="file"
+          accept="image/*"
+          className="sr-only"
+          onChange={(event) => {
+            const thumbFile = event.currentTarget.files?.[0] ?? null;
+            onDraftChange((current) => ({ ...current, thumbFile }));
+          }}
+        />
+        <DialogHeader>
+          <DialogTitle>发送链接</DialogTitle>
+          <DialogDescription>链接地址必填，其他内容可自动补齐</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="flex items-end gap-2">
+            <label className="min-w-0 flex-1 text-xs text-muted-foreground">
+              链接地址
+              <input
+                aria-label="链接地址"
+                value={draft.linkUrl}
+                onChange={(event) => onDraftChange((current) => ({ ...current, linkUrl: event.target.value }))}
+                className="mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+                placeholder="https://..."
+              />
+            </label>
+            <button
+              type="button"
+              disabled={!selected || sending || parsing || !draft.linkUrl.trim()}
+              onClick={onParse}
+              className="inline-flex h-10 shrink-0 items-center justify-center rounded-md border px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {parsing ? "解析中" : "解析链接"}
+            </button>
+          </div>
+          <label className="text-xs text-muted-foreground">
+            链接标题
+            <input
+              aria-label="链接标题"
+              value={draft.title}
+              onChange={(event) => onDraftChange((current) => ({ ...current, title: event.target.value }))}
+              className="mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+            />
+          </label>
+          <label className="text-xs text-muted-foreground">
+            链接描述
+            <input
+              aria-label="链接描述"
+              value={draft.desc}
+              onChange={(event) => onDraftChange((current) => ({ ...current, desc: event.target.value }))}
+              className="mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+            />
+          </label>
+          <button
+            type="button"
+            disabled={!selected || sending}
+            onClick={() => thumbInputRef.current?.click()}
+            className="flex w-full items-center justify-between gap-3 rounded-md border px-3 py-3 text-left text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span className="min-w-0">
+              <span className="block font-medium">链接缩略图</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {draft.thumbFile?.name ?? (draft.thumbUrl ? "已解析缩略图" : "不上传时使用默认缩略图")}
+              </span>
+            </span>
+            <Image className="size-4 shrink-0 text-muted-foreground" />
+          </button>
+        </div>
+        <DialogFooter>
+          <button
+            type="button"
+            disabled={sending}
+            onClick={() => onOpenChange(false)}
+            className="inline-flex items-center justify-center rounded-md border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={!selected || sending || !draft.linkUrl.trim()}
+            onClick={onSend}
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Send className="size-4" />
+            发送链接
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

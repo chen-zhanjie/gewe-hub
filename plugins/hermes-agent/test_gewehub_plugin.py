@@ -28,6 +28,7 @@ def test_plugin_manifest_and_required_files():
         "dedupe.py",
         "state.py",
         "README.md",
+        "skill/SKILL.md",
     }
 
     missing = [name for name in sorted(expected) if not (PLUGIN_DIR / name).is_file()]
@@ -41,6 +42,156 @@ def test_plugin_manifest_and_required_files():
         "GEWEHUB_APP_TOKEN",
     }
     assert "GEWEHUB_HOME_CONVERSATION_ID" in {item["name"] for item in manifest["optional_env"]}
+
+
+def test_adapter_instantiates_with_real_hermes_base():
+    hermes_server = Path("/Users/agent/project/hermes-agent-pro/server")
+    if not (hermes_server / "gateway/platforms/base.py").is_file():
+        pytest.skip("Hermes server checkout is not available on this machine")
+    for key in list(sys.modules):
+        if key == "gateway" or key.startswith("gateway."):
+            sys.modules.pop(key)
+    sys.path.insert(0, str(hermes_server))
+    try:
+        package = _load_plugin_package("gewehub_plugin_real_base_test")
+        adapter = package.adapter.GeWeHubAdapter(SimpleNamespace(extra={}))
+        info = _run_async(adapter.get_chat_info("cvs_real"))
+    finally:
+        try:
+            sys.path.remove(str(hermes_server))
+        except ValueError:
+            pass
+
+    assert info == {"name": "cvs_real", "type": "dm", "chat_id": "cvs_real"}
+
+
+def test_register_exposes_hermes_platform_hooks():
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_register_test")
+    ctx = SimpleNamespace(register_platform=lambda **kwargs: kwargs)
+    captured = {}
+
+    def register_platform(**kwargs):
+        captured.update(kwargs)
+
+    ctx.register_platform = register_platform
+
+    package.register(ctx)
+
+    assert captured["name"] == "gewehub"
+    assert captured["adapter_factory"]
+    assert captured["cron_deliver_env_var"] == "GEWEHUB_HOME_CONVERSATION_ID"
+    assert captured["standalone_sender_fn"]
+    assert captured["required_env"] == ["GEWEHUB_BASE_URL", "GEWEHUB_APP_TOKEN"]
+    assert captured["allowed_users_env"] == "GEWEHUB_ALLOWED_USERS"
+    assert captured["allow_all_env"] == "GEWEHUB_ALLOW_ALL_USERS"
+
+
+@pytest.mark.asyncio
+async def test_standalone_sender_uses_config_and_idempotency_key(monkeypatch):
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_standalone_test")
+    sent = []
+
+    class FakeStandaloneClient:
+        def __init__(self, base_url, *, app_token):
+            self.base_url = base_url
+            self.app_token = app_token
+
+        async def send_text(self, conversation_id, text, idempotency_key=None):
+            sent.append(
+                {
+                    "base_url": self.base_url,
+                    "app_token": self.app_token,
+                    "conversation_id": conversation_id,
+                    "text": text,
+                    "idempotency_key": idempotency_key,
+                }
+            )
+            return {"id": "send_1", "messageId": "msg_1"}
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(package.adapter, "GeWeHubClient", FakeStandaloneClient)
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+
+    result = await package.adapter._standalone_send(cfg, "cvs_1", "hello", thread_id="thread_1")
+
+    assert result == {"success": True, "message_id": "msg_1", "raw_response": {"id": "send_1", "messageId": "msg_1"}}
+    assert sent == [
+        {
+            "base_url": "https://hub.example.test",
+            "app_token": "app_token",
+            "conversation_id": "cvs_1",
+            "text": "hello",
+            "idempotency_key": "hermes-gewehub-thread_1-cvs_1-text-8ef6b9c93d0bfed7",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_standalone_sender_sends_media_files(monkeypatch, tmp_path):
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_standalone_media_test")
+    sent = []
+
+    class FakeStandaloneClient:
+        def __init__(self, base_url, *, app_token):
+            self.base_url = base_url
+            self.app_token = app_token
+
+        async def send_media_file(
+            self,
+            conversation_id,
+            *,
+            media_type,
+            path=None,
+            content_base64=None,
+            file_name=None,
+            mime_type=None,
+            duration_ms=None,
+            idempotency_key=None,
+            **_kwargs,
+        ):
+            sent.append(
+                {
+                    "conversation_id": conversation_id,
+                    "media_type": media_type,
+                    "path": path,
+                    "content_base64": content_base64,
+                    "file_name": file_name,
+                    "mime_type": mime_type,
+                    "duration_ms": duration_ms,
+                    "idempotency_key": idempotency_key,
+                }
+            )
+            return {"id": "send_media_1", "messageId": "msg_media_1"}
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(package.adapter, "GeWeHubClient", FakeStandaloneClient)
+    image_path = tmp_path / "result.png"
+    image_path.write_bytes(b"\x89PNG\r\n")
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+
+    result = await package.adapter._standalone_send(cfg, "cvs_1", "", thread_id="thread_1", media_files=[(str(image_path), False)])
+
+    assert result == {"success": True, "message_id": "msg_media_1", "raw_response": {"id": "send_media_1", "messageId": "msg_media_1"}}
+    expected_idempotency_key = package.adapter._generated_idempotency_key("thread_1", "cvs_1", str(image_path), 0, "media")
+    assert sent == [
+        {
+            "conversation_id": "cvs_1",
+            "media_type": "image",
+            "path": str(image_path),
+            "content_base64": None,
+            "file_name": "result.png",
+            "mime_type": "image/png",
+            "duration_ms": None,
+            "idempotency_key": expected_idempotency_key,
+        }
+    ]
 
 
 def test_normalizer_maps_standard_envelope_fields():
@@ -141,6 +292,7 @@ async def test_client_sse_ack_and_send_use_bearer_token(tmp_path):
                 "conversationId": "cvs_1",
                 "type": "text",
                 "text": "hi",
+                "idempotencyKey": "idem_1",
             }
             return httpx.Response(200, json={"id": "send_1", "status": "sent", "messageId": "msg_send"})
         raise AssertionError(f"unexpected path {request.url.path}")
@@ -160,7 +312,7 @@ async def test_client_sse_ack_and_send_use_bearer_token(tmp_path):
         }
     ]
     assert await client.ack_events(["evt_1", "evt_2"]) == {"ok": True, "acked": 2}
-    assert (await client.send_text("cvs_1", "hi"))["messageId"] == "msg_send"
+    assert (await client.send_text("cvs_1", "hi", idempotency_key="idem_1"))["messageId"] == "msg_send"
     await client.aclose()
 
 
@@ -248,6 +400,237 @@ async def test_adapter_flushes_pending_text_before_media_event(tmp_path, monkeyp
     assert adapter._client.acked == [["evt_1"], ["evt_img"]]
 
 
+@pytest.mark.asyncio
+async def test_adapter_ack_failure_does_not_interrupt_dispatch_or_cursor(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package()
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient(ack_error=RuntimeError("network timeout"))
+
+    with caplog.at_level("WARNING"):
+        result = await adapter._handle_sse_event(
+            {"id": "evt_1", "event": "message.created", "data": json.dumps(_delivery_event("evt_1", "msg_1", "hello"))}
+        )
+
+    assert result is True
+    assert [event.text for event in adapter.handled_messages] == ["hello"]
+    assert adapter._client.acked == [["evt_1"]]
+    assert adapter._state_store.load_last_event_id() == "evt_1"
+    assert "ACK failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_adapter_send_uses_metadata_idempotency_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package()
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+
+    result = await adapter.send("cvs_1", "hello", metadata={"request_id": "req_1"})
+
+    assert result.success is True
+    assert adapter._client.sent == [
+        {"conversation_id": "cvs_1", "text": "hello", "idempotency_key": "req_1"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adapter_sends_local_media_files_with_base64_payload(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package()
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+    image_path = tmp_path / "screenshot.png"
+    image_path.write_bytes(b"\x89PNG\r\n")
+
+    result = await adapter.send_image_file("cvs_1", str(image_path), metadata={"idempotency_key": "img_1"})
+
+    assert result.success is True
+    assert adapter._client.media_sent == [
+        {
+            "conversation_id": "cvs_1",
+            "media_type": "image",
+            "content_base64": "iVBORw0K",
+            "file_name": "screenshot.png",
+            "mime_type": "image/png",
+            "duration_ms": None,
+            "idempotency_key": "img_1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adapter_sends_document_file_path_from_hermes_base(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package()
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+    file_path = tmp_path / "report.pdf"
+    file_path.write_bytes(b"%PDF-1.4")
+
+    result = await adapter.send_document("cvs_1", file_path=str(file_path), metadata={"request_id": "doc_1"})
+
+    assert result.success is True
+    assert adapter._client.media_sent == [
+        {
+            "conversation_id": "cvs_1",
+            "media_type": "file",
+            "content_base64": "JVBERi0xLjQ=",
+            "file_name": "report.pdf",
+            "mime_type": "application/pdf",
+            "duration_ms": None,
+            "idempotency_key": "doc_1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adapter_sends_document_url_without_reading_local_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package()
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+
+    result = await adapter.send_document(
+        "cvs_1",
+        file_url="https://cdn.example.test/report.pdf",
+        file_name="report.pdf",
+        metadata={"request_id": "doc_url_1"},
+    )
+
+    assert result.success is True
+    assert adapter._client.media_sent == []
+    assert adapter._client.media_url_sent == [
+        {
+            "conversation_id": "cvs_1",
+            "media_type": "file",
+            "url": "https://cdn.example.test/report.pdf",
+            "file_name": "report.pdf",
+            "idempotency_key": "doc_url_1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adapter_sends_voice_file_with_duration(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package()
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+    voice_path = tmp_path / "reply.webm"
+    voice_path.write_bytes(b"voice")
+
+    result = await adapter.send_voice("cvs_1", str(voice_path), metadata={"duration_ms": 2300, "request_id": "voice_1"})
+
+    assert result.success is True
+    assert adapter._client.media_sent == [
+        {
+            "conversation_id": "cvs_1",
+            "media_type": "voice",
+            "content_base64": "dm9pY2U=",
+            "file_name": "reply.webm",
+            "mime_type": "video/webm",
+            "duration_ms": 2300,
+            "idempotency_key": "voice_1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adapter_sends_video_file_without_thumb_and_duration(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package()
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"video")
+
+    result = await adapter.send_video("cvs_1", str(video_path))
+
+    assert result.success is True
+    assert adapter._client.media_sent == [
+        {
+            "conversation_id": "cvs_1",
+            "media_type": "video",
+            "content_base64": "dmlkZW8=",
+            "file_name": "clip.mp4",
+            "mime_type": "video/mp4",
+            "duration_ms": None,
+            "idempotency_key": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adapter_lets_hub_fill_video_thumb_and_duration(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package()
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+    video_path = tmp_path / "clip.mp4"
+    thumb_path = tmp_path / "cover.jpg"
+    video_path.write_bytes(b"video")
+    thumb_path.write_bytes(b"thumb")
+
+    result = await adapter.send_video(
+        "cvs_1",
+        str(video_path),
+        metadata={"duration_ms": 12_000, "thumb_path": str(thumb_path), "request_id": "vid_2"},
+    )
+
+    assert result.success is True
+    assert adapter._client.media_sent == [
+        {
+            "conversation_id": "cvs_1",
+            "media_type": "video",
+            "content_base64": "dmlkZW8=",
+            "file_name": "clip.mp4",
+            "mime_type": "video/mp4",
+            "duration_ms": None,
+            "idempotency_key": "vid_2",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adapter_sends_video_url_without_thumb_and_duration(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package()
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+
+    result = await adapter.send_video("cvs_1", "https://cdn.example.test/clip.mp4", metadata={"request_id": "vid_1"})
+
+    assert result.success is True
+    assert adapter._client.media_url_sent == [
+        {
+            "conversation_id": "cvs_1",
+            "media_type": "video",
+            "url": "https://cdn.example.test/clip.mp4",
+            "file_name": None,
+            "idempotency_key": "vid_1",
+        }
+    ]
+
+
 def _delivery_event(event_id: str, message_id: str, text: str, *, message_type: str = "text", debounce_ms: int | None = None):
     metadata = {"maxWaitMs": 5000}
     if debounce_ms is not None:
@@ -284,8 +667,7 @@ def _load_module(name: str, path: Path):
     return module
 
 
-def _load_plugin_package():
-    name = "gewehub_plugin_under_test"
+def _load_plugin_package(name: str = "gewehub_plugin_under_test"):
     for key in list(sys.modules):
         if key == name or key.startswith(f"{name}."):
             sys.modules.pop(key)
@@ -377,12 +759,71 @@ def _install_gateway_stubs():
 
 
 class _FakeClient:
-    def __init__(self):
+    def __init__(self, ack_error=None):
         self.acked = []
+        self.ack_error = ack_error
+        self.sent = []
+        self.media_sent = []
+        self.media_url_sent = []
 
     async def ack_events(self, event_ids):
         self.acked.append(list(event_ids))
+        if self.ack_error:
+            raise self.ack_error
         return {"ok": True, "acked": len(event_ids)}
+
+    async def send_text(self, conversation_id, text, idempotency_key=None):
+        self.sent.append({"conversation_id": conversation_id, "text": text, "idempotency_key": idempotency_key})
+        return {"id": "send_text", "status": "pending", "messageId": "msg_text"}
+
+    async def send_media_url(self, conversation_id, *, media_type, url, file_name=None, idempotency_key=None):
+        self.media_url_sent.append(
+            {
+                "conversation_id": conversation_id,
+                "media_type": media_type,
+                "url": url,
+                "file_name": file_name,
+                "idempotency_key": idempotency_key,
+            }
+        )
+        return {"id": "send_media_url", "status": "pending", "messageId": "msg_media_url"}
+
+    async def send_media_file(
+        self,
+        conversation_id,
+        *,
+        media_type,
+        content_base64,
+        file_name=None,
+        mime_type=None,
+        duration_ms=None,
+        thumb_path=None,
+        thumb_content_base64=None,
+        thumb_mime_type=None,
+        thumb_file_name=None,
+        idempotency_key=None,
+    ):
+        payload = {
+            "conversation_id": conversation_id,
+            "media_type": media_type,
+            "content_base64": content_base64,
+            "file_name": file_name,
+            "mime_type": mime_type,
+            "duration_ms": duration_ms,
+            "idempotency_key": idempotency_key,
+        }
+        if thumb_content_base64 is not None:
+            payload["thumb_content_base64"] = thumb_content_base64
+            payload["thumb_mime_type"] = thumb_mime_type
+            payload["thumb_file_name"] = thumb_file_name
+        self.media_sent.append(payload)
+        return {"id": "send_media", "status": "pending", "messageId": "msg_media"}
 
     async def download_media(self, descriptor):
         return None
+
+
+def _run_async(coro):
+    import asyncio
+
+    return asyncio.run(coro)

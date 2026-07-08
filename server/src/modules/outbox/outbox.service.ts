@@ -166,6 +166,12 @@ export class OutboxService implements OnModuleInit {
 
     try {
       const prepared = await this.prepareSendRequestForGewe(sendRequest, mapped);
+      await this.prisma.sendRequest.update({
+        where: { id: sendRequest.id },
+        data: {
+          geweRequest: prepared.mapped as unknown as Prisma.InputJsonValue
+        }
+      });
       const geweResponse = await this.gewe!.sendByMappedRequest(prepared.mapped);
       const result = extractSendResult(geweResponse, sendRequest.id);
       const text = prepared.localContent?.text ?? extractRenderedText(sendRequest.requestPayload, sendRequest.type);
@@ -269,7 +275,7 @@ export class OutboxService implements OnModuleInit {
       return this.prepareOutboundFileSend(sendRequest, mapped, "video");
     }
     if (sendRequest.type === "link" && mapped.path === "/gewe/v2/api/message/postLink") {
-      return this.prepareOutboundLinkSend(mapped);
+      return this.prepareOutboundLinkSend(sendRequest, mapped);
     }
     return { mapped };
   }
@@ -333,6 +339,10 @@ export class OutboxService implements OnModuleInit {
     const prepared = source
       ? await this.prepareOutboundFileSource(sendRequest, source, kind)
       : readDirectOutboundFile(body, kind);
+    const preparedThumbUrl =
+      kind === "video"
+        ? await this.prepareOutboundVideoThumbnailUrl(sendRequest, body, prepared, asString(body?.thumbUrl))
+        : undefined;
 
     const text = kind === "image" ? "[图片]" : kind === "video" ? "[视频]" : prepared.fileName ? `[文件] ${prepared.fileName}` : "[文件]";
     return {
@@ -349,7 +359,7 @@ export class OutboxService implements OnModuleInit {
               appId: asString(body?.appId),
               toWxid: asString(body?.toWxid),
               videoUrl: prepared.url,
-              thumbUrl: asString(body?.thumbUrl),
+              thumbUrl: preparedThumbUrl,
               videoDuration: asNumber(body?.videoDuration) ?? 1,
             }
           : {
@@ -365,7 +375,7 @@ export class OutboxService implements OnModuleInit {
         media: {
           status: "ready",
           url: prepared.url,
-          thumbnailUrl: kind === "video" ? asString(body?.thumbUrl) : undefined,
+          thumbnailUrl: kind === "video" ? preparedThumbUrl : undefined,
           mimeType: prepared.mimeType,
           fileName: prepared.fileName,
           size: prepared.size,
@@ -375,14 +385,35 @@ export class OutboxService implements OnModuleInit {
     };
   }
 
-  private prepareOutboundLinkSend(mapped: { path: string; body: unknown }): { mapped: { path: string; body: unknown }; localContent: MessageNode } {
+  private async prepareOutboundLinkSend(
+    sendRequest: {
+      accountId: string;
+      conversationId: string;
+    },
+    mapped: { path: string; body: unknown }
+  ): Promise<{ mapped: { path: string; body: unknown }; localContent: MessageNode }> {
     const body = asRecord(mapped.body);
-    const title = asString(body?.title) ?? "链接";
-    const desc = asString(body?.desc);
-    const linkUrl = asString(body?.linkUrl);
-    const thumbUrl = asString(body?.thumbUrl);
+    const linkUrl = asString(body?.linkUrl) ?? "";
+    const title = asString(body?.title) || defaultLinkTitle(linkUrl);
+    const desc = asString(body?.desc) || linkUrl || "链接分享";
+    const thumbUrl = await this.prepareOutboundThumbnailUrl(
+      sendRequest,
+      body,
+      asString(body?.thumbUrl),
+      defaultLinkThumbnailSource(),
+    );
     return {
-      mapped,
+      mapped: {
+        path: mapped.path,
+        body: {
+          appId: asString(body?.appId),
+          toWxid: asString(body?.toWxid),
+          title,
+          desc,
+          linkUrl,
+          thumbUrl,
+        }
+      },
       localContent: {
         type: "link",
         text: `[链接] ${title}`,
@@ -396,13 +427,55 @@ export class OutboxService implements OnModuleInit {
     };
   }
 
+  private async prepareOutboundThumbnailUrl(
+    sendRequest: {
+      accountId: string;
+      conversationId: string;
+    },
+    body: Record<string, unknown> | undefined,
+    fallbackThumbUrl?: string,
+    fallbackSource?: Record<string, unknown>,
+  ): Promise<string | undefined> {
+    const source = asRecord(body?.thumbSource);
+    if (source) {
+      const prepared = await this.prepareOutboundFileSource(sendRequest, source, "image", "thumbnail");
+      return prepared.url;
+    }
+    if (fallbackThumbUrl) return fallbackThumbUrl;
+    if (!fallbackSource) return undefined;
+    const prepared = await this.prepareOutboundFileSource(sendRequest, fallbackSource, "image", "thumbnail");
+    return prepared.url;
+  }
+
+  private async prepareOutboundVideoThumbnailUrl(
+    sendRequest: {
+      accountId: string;
+      conversationId: string;
+    },
+    body: Record<string, unknown> | undefined,
+    preparedVideo: { path?: string; fileName?: string; url: string },
+    fallbackThumbUrl?: string,
+  ): Promise<string | undefined> {
+    const explicit = await this.prepareOutboundThumbnailUrl(sendRequest, body, fallbackThumbUrl);
+    if (explicit) return explicit;
+    if (!preparedVideo.path) return undefined;
+    if (!this.media) throw new Error("媒体服务未初始化");
+    const prepared = await this.media.prepareOutboundVideoThumbnail({
+      accountId: sendRequest.accountId,
+      videoPath: preparedVideo.path,
+      fileName: preparedVideo.fileName,
+    });
+    return prepared.url;
+  }
+
   private async prepareOutboundFileSource(
     sendRequest: {
       accountId: string;
       conversationId: string;
     },
     source: Record<string, unknown>,
-    kind: "image" | "file" | "video"
+    kind: "image" | "file" | "video",
+    purpose?: "thumbnail"
   ) {
     if (!this.media) throw new Error("媒体服务未初始化");
     return this.media.prepareOutboundFile({
@@ -414,6 +487,7 @@ export class OutboxService implements OnModuleInit {
       fileUrl: asString(source.fileUrl),
       mimeType: asString(source.mimeType),
       fileName: asString(source.fileName),
+      ...(purpose ? { purpose } : {}),
     });
   }
 
@@ -795,8 +869,25 @@ function parseMappedGeweRequest(value: Prisma.JsonValue | null): { path: string;
   }
   return {
     path,
-    body: record?.body ?? {}
+    body: normalizeMappedGeweBody(path, record?.body ?? {})
   };
+}
+
+function normalizeMappedGeweBody(path: string, body: unknown): unknown {
+  if (path !== "/gewe/v2/api/message/postText") return body;
+  const record = asRecord(body);
+  if (!record) return body;
+  const ats = normalizeTextAts(record.ats);
+  const { ats: _oldAts, ...rest } = record;
+  return ats ? { ...rest, ats } : rest;
+}
+
+function normalizeTextAts(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    const ats = value.map((entry) => asString(entry)?.trim()).filter(Boolean).join(",");
+    return ats || undefined;
+  }
+  return asString(value)?.trim() || undefined;
 }
 
 function readDirectOutboundFile(body: Record<string, unknown> | undefined, kind: "image" | "file" | "video") {
@@ -814,6 +905,28 @@ function readDirectOutboundFile(body: Record<string, unknown> | undefined, kind:
     size: asNumber(body?.size) ?? 0,
   };
 }
+
+function defaultLinkTitle(linkUrl: string): string {
+  try {
+    return new URL(linkUrl).hostname || linkUrl || "链接";
+  } catch {
+    return linkUrl || "链接";
+  }
+}
+
+function defaultLinkThumbnailSource(): Record<string, unknown> {
+  return {
+    contentBase64: DEFAULT_LINK_THUMBNAIL_JPEG_BASE64,
+    mimeType: "image/jpeg",
+    fileName: "link-thumbnail.jpg",
+  };
+}
+
+const DEFAULT_LINK_THUMBNAIL_JPEG_BASE64 =
+  "/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMQD/2wBDAAgKCgsKCw0NDQ0NDRAPEBAQEBAQEBAQEBASEhIVFRUSEhIQEBISFBQVFRcXFxUVFRUXFxkZGR4eHBwjIyQrKzP/xABMAAEBAAAAAAAAAAAAAAAAAAAABwEBAQAAAAAAAAAAAAAAAAAAAAIQAQAAAAAAAAAAAAAAAAAAAAARAQAAAAAAAAAAAAAAAAAAAAD/wAARCAFAAUADASIAAhEAAxEA/9oADAMBAAIRAxEAPwC7gKSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//Z";
+
+const DEFAULT_LINK_THUMBNAIL_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAZAAAAGQCAIAAAAP3aGbAAAACXBIWXMAAAABAAAAAQBPJcTWAAAFN0lEQVR4nO3UMQ0AIQDAwCf5nRER+PeHBTbS5E5Bp4659gdQ8L8OALhlWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZB31HBo9AxX7DAAAAAElFTkSuQmCC";
 
 function extractSendResult(response: unknown, fallbackId: string): { newMsgId: string; msgId: string; createTime: string } {
   const record = asRecord(response);

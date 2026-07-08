@@ -57,6 +57,9 @@ export function useWorkbenchMessagesController({
   const [localSends, setLocalSendsState] = useState<LocalSend[]>([]);
   const localSendsRef = useRef<LocalSend[]>([]);
   const statusPollTimersRef = useRef<number[]>([]);
+  const scrollFrameIdsRef = useRef<number[]>([]);
+  const pendingInitialScrollConversationIdRef = useRef<string | null>(null);
+  const userScrolledAwayConversationIdRef = useRef<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -71,6 +74,15 @@ export function useWorkbenchMessagesController({
   useEffect(() => {
     const nextMessages = (messagesQuery.data ?? []).map(mapMessageItem).reverse();
     const sameConversation = messagesConversationIdRef.current === effectiveConversationId;
+    if (!sameConversation) {
+      pendingInitialScrollConversationIdRef.current =
+        userScrolledAwayConversationIdRef.current === effectiveConversationId ? null : effectiveConversationId;
+    }
+    const pendingInitialScroll = pendingInitialScrollConversationIdRef.current === effectiveConversationId;
+    const shouldAutoScroll =
+      Boolean(effectiveConversationId) &&
+      nextMessages.length > 0 &&
+      (pendingInitialScroll || isMessageListNearBottom(messageListRef.current));
     messagesConversationIdRef.current = effectiveConversationId;
     setMessages((currentMessages) =>
       sameConversation
@@ -80,7 +92,11 @@ export function useWorkbenchMessagesController({
     setHasMoreHistory(nextMessages.length > 0);
     setHistoryError(null);
     if (!sameConversation) setNewMessageCount(0);
-  }, [effectiveConversationId, messagesQuery.data]);
+    if (shouldAutoScroll) {
+      pendingInitialScrollConversationIdRef.current = null;
+      scheduleScrollMessageListToBottom();
+    }
+  }, [effectiveConversationId, messageListRef, messagesQuery.data]);
 
   useEffect(() => {
     function handleRealtimeMessage(event: Event) {
@@ -93,7 +109,7 @@ export function useWorkbenchMessagesController({
       );
       setHasMoreHistory(true);
       if (shouldStickToBottom) {
-        window.requestAnimationFrame(scrollMessageListToBottom);
+        scheduleScrollMessageListToBottom();
       } else {
         setNewMessageCount((count) => count + 1);
       }
@@ -117,6 +133,7 @@ export function useWorkbenchMessagesController({
         window.clearTimeout(timer);
       }
       statusPollTimersRef.current = [];
+      cancelScheduledScrolls();
     };
   }, []);
 
@@ -149,6 +166,7 @@ export function useWorkbenchMessagesController({
 
     const localSend = createLocalTextSend(selectedConversation.id, trimmedText);
     updateLocalSends((currentSends) => [...currentSends, localSend]);
+    scheduleScrollMessageListToBottom();
     void submitLocalSend(localSend);
     return true;
   }
@@ -158,6 +176,7 @@ export function useWorkbenchMessagesController({
 
     const localSend = createLocalMediaSend(selectedConversation.id, payload);
     updateLocalSends((currentSends) => [...currentSends, localSend]);
+    scheduleScrollMessageListToBottom();
     void submitLocalSend(localSend);
     return true;
   }
@@ -167,6 +186,7 @@ export function useWorkbenchMessagesController({
 
     const localSend = createLocalMediaPlaceholder(selectedConversation.id, payload);
     updateLocalSends((currentSends) => [...currentSends, localSend]);
+    scheduleScrollMessageListToBottom();
     return localSend.id;
   }
 
@@ -326,13 +346,40 @@ export function useWorkbenchMessagesController({
     const list = messageListRef.current;
     if (!list) return;
     list.scrollTop = list.scrollHeight;
+    if (userScrolledAwayConversationIdRef.current === effectiveConversationId) {
+      userScrolledAwayConversationIdRef.current = null;
+    }
     setNewMessageCount(0);
+  }
+
+  function scheduleScrollMessageListToBottom() {
+    cancelScheduledScrolls();
+    const firstFrameId = window.requestAnimationFrame(() => {
+      scrollMessageListToBottom();
+      const secondFrameId = window.requestAnimationFrame(scrollMessageListToBottom);
+      scrollFrameIdsRef.current.push(secondFrameId);
+    });
+    scrollFrameIdsRef.current.push(firstFrameId);
+  }
+
+  function cancelScheduledScrolls() {
+    for (const frameId of scrollFrameIdsRef.current) {
+      window.cancelAnimationFrame(frameId);
+    }
+    scrollFrameIdsRef.current = [];
   }
 
   function handleMessageListScroll() {
     if (isMessageListNearBottom(messageListRef.current)) {
+      if (userScrolledAwayConversationIdRef.current === effectiveConversationId) {
+        userScrolledAwayConversationIdRef.current = null;
+      }
       setNewMessageCount(0);
+      return;
     }
+    userScrolledAwayConversationIdRef.current = effectiveConversationId;
+    pendingInitialScrollConversationIdRef.current = null;
+    cancelScheduledScrolls();
   }
 
   return {

@@ -162,11 +162,18 @@ function normalizeFile(rawContent: string): MessageNode {
   const appmsg = parseAppMsg(rawContent);
   const fileName = firstString(appmsg?.title) || "文件";
   const appattach = appmsg?.appattach;
+  const hasDownloadHint = hasAnyString(
+    appattach?.attachid,
+    appattach?.cdnattachurl,
+    appattach?.fileuploadtoken,
+    appattach?.aeskey,
+    appattach?.totallen,
+  );
   return {
     type: "file",
     text: `[文件] ${fileName}`,
     media: {
-      status: "failed",
+      status: hasDownloadHint ? "pending" : "failed",
       url: null,
       fileName,
       size: toNumber(appattach?.totallen),
@@ -443,11 +450,18 @@ function normalizeRecordItem(item: Record<string, unknown>): MessageNode {
     } satisfies MessageNode;
   if (datatype === "8") {
     const fileName = firstString(item.datatitle) || text || "文件";
+    const hasDownloadHint = hasAnyString(
+      item.cdndataurl,
+      item.cdndatakey,
+      item.aeskey,
+      item.datasize,
+      item.length,
+    );
     return {
       type: "file",
       text: `[文件] ${fileName}`,
       media: {
-        status: "failed",
+        status: hasDownloadHint ? "pending" : "failed",
         url: null,
         fileName,
         size: toNumber(item.datasize),
@@ -800,6 +814,10 @@ function firstString(value: unknown): string | undefined {
     return firstString((value as Record<string, unknown>).string);
   }
   return String(value);
+}
+
+function hasAnyString(...values: unknown[]): boolean {
+  return values.some((value) => Boolean(nonBlankString(firstString(value))));
 }
 
 function nonBlankString(value: string | undefined): string | undefined {

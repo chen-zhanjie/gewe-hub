@@ -1,11 +1,19 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ConversationList } from "./ConversationList";
 import { messageFixture, mockFetch, renderWorkbenchPage } from "./WorkbenchPage.test-utils";
+import { render } from "@testing-library/react";
+import type { ConversationSummary } from "@/lib/workspace-data";
 
 describe("WorkbenchPage conversation list", () => {
+  beforeEach(() => {
+    installLocalStorageMock();
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    window.localStorage.clear();
     window.history.replaceState(null, "", "/workbench");
   });
 
@@ -160,6 +168,123 @@ describe("WorkbenchPage conversation list", () => {
     );
   });
 
+  it("没有账号参数时默认使用上次手动选择的账号", async () => {
+    window.localStorage.setItem("gewehub.workbench.selectedAccountId", "acc_2");
+    const fetchMock = mockFetch({
+      "/api/accounts": [
+        {
+          id: "acc_1",
+          wxid: "wxid_alpha_bot",
+          nickname: "客服一号",
+          platformRemark: "销售号",
+          onlineStatus: "online",
+        },
+        {
+          id: "acc_2",
+          wxid: "wxid_beta_bot",
+          nickname: "客服二号",
+          platformRemark: "售后号",
+          onlineStatus: "offline",
+        },
+      ],
+      "/api/conversations": [
+        {
+          id: "conv_alpha",
+          accountId: "acc_1",
+          peerWxid: "wxid_alpha_customer",
+          type: "private",
+          platformRemark: "Alpha 客户",
+          lastMessageText: "Alpha 最近消息",
+          lastMessageAt: "2026-07-06T07:16:37.000Z",
+          status: "active",
+        },
+        {
+          id: "conv_beta",
+          accountId: "acc_2",
+          peerWxid: "wxid_beta_customer",
+          type: "private",
+          platformRemark: "Beta 客户",
+          lastMessageText: "Beta 最近消息",
+          lastMessageAt: "2026-07-06T07:18:37.000Z",
+          status: "active",
+        },
+      ],
+      "/api/conversations/conv_beta/messages?take=50": [
+        messageFixture("row_beta", "msg_beta", "Beta 消息", "2026-07-06T07:18:37.000Z"),
+      ],
+    });
+
+    renderWorkbenchPage();
+
+    const conversationList = screen.getByLabelText("会话列表");
+    expect(await within(conversationList).findByText("售后号")).toBeInTheDocument();
+    expect(within(conversationList).getByText("Beta 客户")).toBeInTheDocument();
+    expect(within(conversationList).queryByText("Alpha 客户")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/conversations/conv_beta/messages?take=50",
+        expect.objectContaining({ credentials: "include" }),
+      ),
+    );
+  });
+
+  it("账号参数被路由清空时继续使用上次选择的账号", async () => {
+    window.localStorage.setItem("gewehub.workbench.selectedAccountId", "acc_2");
+    mockFetch({
+      "/api/accounts": [
+        {
+          id: "acc_1",
+          wxid: "wxid_alpha_bot",
+          nickname: "客服一号",
+          platformRemark: "销售号",
+          onlineStatus: "online",
+        },
+        {
+          id: "acc_2",
+          wxid: "wxid_beta_bot",
+          nickname: "客服二号",
+          platformRemark: "售后号",
+          onlineStatus: "offline",
+        },
+      ],
+      "/api/conversations": [
+        {
+          id: "conv_alpha",
+          accountId: "acc_1",
+          peerWxid: "wxid_alpha_customer",
+          type: "private",
+          platformRemark: "Alpha 客户",
+          lastMessageText: "Alpha 最近消息",
+          lastMessageAt: "2026-07-06T07:16:37.000Z",
+          status: "active",
+        },
+        {
+          id: "conv_beta",
+          accountId: "acc_2",
+          peerWxid: "wxid_beta_customer",
+          type: "private",
+          platformRemark: "Beta 客户",
+          lastMessageText: "Beta 最近消息",
+          lastMessageAt: "2026-07-06T07:18:37.000Z",
+          status: "active",
+        },
+      ],
+      "/api/conversations/conv_beta/messages?take=50": [
+        messageFixture("row_beta", "msg_beta", "Beta 消息", "2026-07-06T07:18:37.000Z"),
+      ],
+    });
+
+    const { rerenderWorkbenchPage } = renderWorkbenchPage({ initialAccountId: "acc_2" });
+    const conversationList = screen.getByLabelText("会话列表");
+    expect(await within(conversationList).findByText("Beta 客户")).toBeInTheDocument();
+
+    rerenderWorkbenchPage();
+
+    expect(await within(conversationList).findByText("售后号")).toBeInTheDocument();
+    expect(within(conversationList).getByText("Beta 客户")).toBeInTheDocument();
+    expect(within(conversationList).queryByText("Alpha 客户")).not.toBeInTheDocument();
+  });
+
   it("会话列表按置顶和普通分区展示，隐藏会话不显示且不展示应用徽标", async () => {
     mockFetch({
       "/api/accounts": [
@@ -224,6 +349,47 @@ describe("WorkbenchPage conversation list", () => {
 
     const pinnedButton = within(conversationList).getByRole("button", { name: "打开会话 置顶客户" });
     expect(pinnedButton).toHaveClass("bg-muted/60");
+  });
+
+  it("会话列表保持后端最后聊天时间顺序，不按 lastOpenedAt 将点击过的会话提前", () => {
+    const conversations = [
+      conversationSummary({
+        id: "conv_older",
+        name: "旧消息但刚打开",
+        lastMessageAt: "2026-07-06T07:16:37.000Z",
+        lastOpenedAt: "2026-07-06T08:30:00.000Z",
+      }),
+      conversationSummary({
+        id: "conv_newer",
+        name: "新消息会话",
+        lastMessageAt: "2026-07-06T07:18:37.000Z",
+      }),
+    ];
+
+    render(
+      <ConversationList
+        accounts={[]}
+        selectedAccountId={null}
+        conversations={conversations}
+        selectedConversationId={null}
+        loading={false}
+        error={null}
+        onSelectConversation={vi.fn()}
+        onSelectAccount={vi.fn()}
+        onTogglePinned={vi.fn()}
+        onHideConversation={vi.fn()}
+        onMarkRead={vi.fn()}
+        onEditRemark={vi.fn()}
+        onOpenManagement={vi.fn()}
+      />,
+    );
+
+    const conversationList = screen.getByLabelText("会话列表");
+    const rows = within(conversationList).getAllByRole("button", { name: /^打开会话/ });
+    expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual([
+      "打开会话 旧消息但刚打开",
+      "打开会话 新消息会话",
+    ]);
   });
 
   it("会话右键菜单展示置顶、隐藏、已读、编辑备注和会话管理五项", async () => {
@@ -475,6 +641,19 @@ describe("WorkbenchPage conversation list", () => {
   });
 });
 
+function installLocalStorageMock() {
+  const storage = new Map<string, string>();
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: vi.fn((key: string) => storage.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => storage.set(key, value)),
+      removeItem: vi.fn((key: string) => storage.delete(key)),
+      clear: vi.fn(() => storage.clear()),
+    },
+  });
+}
+
 function conversationActionRoutes() {
   return {
     "/api/accounts": [
@@ -502,5 +681,35 @@ function conversationActionRoutes() {
     "/api/conversations/conv_1/messages?take=50": [
       messageFixture("row_1", "msg_1", "待处理消息", "2026-07-06T07:16:37.000Z"),
     ],
+  };
+}
+
+function conversationSummary(input: {
+  id: string;
+  name: string;
+  lastMessageAt: string;
+  lastOpenedAt?: string;
+}): ConversationSummary {
+  return {
+    id: input.id,
+    name: input.name,
+    originalName: input.name,
+    type: "private",
+    lastMessage: "最近消息",
+    lastAt: "15:16",
+    unread: 0,
+    avatarText: input.name.slice(0, 1),
+    status: "active",
+    raw: {
+      id: input.id,
+      accountId: "acc_1",
+      peerWxid: `${input.id}_wxid`,
+      type: "private",
+      platformRemark: input.name,
+      lastMessageText: "最近消息",
+      lastMessageAt: input.lastMessageAt,
+      lastOpenedAt: input.lastOpenedAt,
+      status: "active",
+    },
   };
 }

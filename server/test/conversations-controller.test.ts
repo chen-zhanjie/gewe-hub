@@ -35,6 +35,24 @@ describe("ConversationsController", () => {
     expect(rows.map((row) => row.id)).toEqual(["conv_recent_open", "conv_recent_message"]);
   });
 
+  it("会话列表排序只按最后聊天时间，不因点击打开更新 lastOpenedAt 而跳到顶部", async () => {
+    const prisma = {
+      $queryRaw: vi.fn(async () => []),
+      conversation: {
+        findMany: vi.fn(async () => [])
+      }
+    };
+    const controller = new ConversationsController(prisma as never);
+
+    await controller.list("acc_1");
+
+    const [rawSql] = prisma.$queryRaw.mock.calls[0] as unknown as [{ sql?: string; text?: string }];
+    const sql = rawSql.sql ?? rawSql.text ?? "";
+    expect(sql).toContain("c.last_message_at");
+    expect(sql).not.toContain("c.last_opened_at");
+    expect(sql).not.toContain("GREATEST");
+  });
+
   it("会话列表使用联系人和群聊资料补齐名称与头像", async () => {
     const prisma = {
       $queryRaw: vi.fn(async () => [{ id: "conv_private" }, { id: "conv_group" }]),
@@ -120,7 +138,7 @@ describe("ConversationsController", () => {
     expect(prisma.conversation.findMany).not.toHaveBeenCalled();
   });
 
-  it("打开私聊时从联系人资料 upsert 会话并返回展示字段", async () => {
+  it("打开私聊时从联系人资料 upsert 会话并优先使用微信备注作为展示名", async () => {
     const prisma = {
       wechatAccount: {
         findUnique: vi.fn(async () => ({ id: "acc_1" })),
@@ -142,7 +160,7 @@ describe("ConversationsController", () => {
           accountId: "acc_1",
           peerWxid: "wxid_friend",
           type: "private",
-          name: "陈可乐",
+          name: "可乐备注",
           avatarUrl: "https://avatar.example/friend.jpg",
           platformRemark: "可乐备注",
           isHidden: false,
@@ -175,13 +193,13 @@ describe("ConversationsController", () => {
         accountId: "acc_1",
         peerWxid: "wxid_friend",
         type: "private",
-        name: "陈可乐",
+        name: "可乐备注",
         avatarUrl: "https://avatar.example/friend.jpg",
         platformRemark: "可乐备注",
       }),
       update: expect.objectContaining({
         type: "private",
-        name: "陈可乐",
+        name: "可乐备注",
         avatarUrl: "https://avatar.example/friend.jpg",
         platformRemark: "可乐备注",
         isHidden: false,
@@ -193,13 +211,13 @@ describe("ConversationsController", () => {
       accountId: "acc_1",
       peerWxid: "wxid_friend",
       type: "private",
-      name: "陈可乐",
+      name: "可乐备注",
       avatarUrl: "https://avatar.example/friend.jpg",
       platformRemark: "可乐备注",
     });
   });
 
-  it("打开群聊时从群资料 upsert 会话并保留成员数", async () => {
+  it("打开群聊时从群资料 upsert 会话并优先使用备注且保留成员数", async () => {
     const prisma = {
       wechatAccount: {
         findUnique: vi.fn(async () => ({ id: "acc_1" })),
@@ -222,7 +240,7 @@ describe("ConversationsController", () => {
           accountId: "acc_1",
           peerWxid: "room@chatroom",
           type: "group",
-          name: "产品群",
+          name: "核心客户群",
           avatarUrl: "https://avatar.example/group.jpg",
           platformRemark: "核心客户群",
         })),
@@ -245,7 +263,7 @@ describe("ConversationsController", () => {
           accountId: "acc_1",
           peerWxid: "room@chatroom",
           type: "group",
-          name: "产品群",
+          name: "核心客户群",
           avatarUrl: "https://avatar.example/group.jpg",
           platformRemark: "核心客户群",
         }),
@@ -256,7 +274,7 @@ describe("ConversationsController", () => {
       accountId: "acc_1",
       peerWxid: "room@chatroom",
       type: "group",
-      name: "产品群",
+      name: "核心客户群",
       avatarUrl: "https://avatar.example/group.jpg",
       platformRemark: "核心客户群",
       memberCount: 12,

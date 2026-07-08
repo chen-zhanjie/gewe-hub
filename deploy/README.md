@@ -74,31 +74,47 @@ REDIS_URL="redis://redis:6379/0" \
 
 使用 `infra` profile 时，server/migrate 在 compose 网络内通过服务名 `mysql`、`redis` 访问基础服务；宿主机调试可连 `127.0.0.1:3307` 和 `127.0.0.1:6380`。
 
-## 生产 profile
+## 服务器生产部署
 
-`production` profile 会同时启动 MySQL、Redis、server、web 和 Caddy。Caddy 是唯一公网入口，负责 TLS 证书和反向代理：`/api/*`、`/webhook/*`、`/files/*` 转发到 server，其余路径转发到 web。
+服务器生产部署使用 `deploy/docker-compose.prod.yml`，只启动一个 `gewehub` 应用容器。这个容器内包含前端静态入口、后端 API、`/webhook/*`、`/files/*` 代理和 Prisma 迁移；MySQL、Redis 复用同服务器现有 1Panel 容器，公网 TLS 和域名反代由服务器现有 OpenResty/1Panel 负责。
 
-启动前至少设置：
+当前服务器入口约定：
 
-- `GEWEHUB_DOMAIN`：公网域名，例如 `hub.example.com`。
-- `ACME_EMAIL`：证书通知邮箱。
-- `PUBLIC_BASE_URL`：建议在 `server/.env` 中设为 `https://${GEWEHUB_DOMAIN}`，用于生成回调与文件 URL。
-- `WEB_ORIGIN`：建议设为 `https://${GEWEHUB_DOMAIN}`。
+- 公网域名：`https://gewehub.yunzxu.com`
+- 服务器本机端口：`127.0.0.1:1870`
+- 远端目录：`/opt/gewehub`
+- Docker 网络：`1panel-network`
+- 媒体文件挂载：`/opt/gewehub/runtime/files`
+- 原始回调审计日志挂载：`/opt/gewehub/runtime/logs`
+
+一键部署从本机构建 `linux/amd64` 镜像，上传到服务器后 `docker load` 并启动：
 
 ```bash
-PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH" \
-GEWEHUB_DOMAIN="hub.example.com" \
-ACME_EMAIL="ops@example.com" \
-DATABASE_URL="mysql://gewehub:gewehub@mysql:3306/gewehub" \
-REDIS_URL="redis://redis:6379/0" \
-/Applications/Docker.app/Contents/Resources/bin/docker compose \
-  -f deploy/docker-compose.yml --profile production up --build
+GEWEHUB_DATABASE_PASSWORD="<服务器 gewehub MySQL 密码>" \
+scripts/deploy-gewehub.sh
 ```
+
+脚本会从本地 `server/.env` 读取 GeWe token、webhook secret、管理员 hash、session secret 等当前开发环境配置，并在生成服务器 `/opt/gewehub/.env.production` 时覆盖：
+
+- `DATABASE_URL`：连接服务器现有 MySQL 容器。
+- `REDIS_URL`：连接服务器现有 Redis 容器。
+- `PUBLIC_BASE_URL=https://gewehub.yunzxu.com`
+- `WEB_ORIGIN=https://gewehub.yunzxu.com`
+- `FILE_STORAGE_DIR=/app/server/storage/files`
+
+脚本不会把真实密钥写入仓库。生产容器启动时会先执行 `prisma migrate deploy`，再启动后端和 nginx。
 
 GeWe 后台回调地址使用：
 
 ```text
-https://<GEWEHUB_DOMAIN>/webhook/gewe/<WEBHOOK_SECRET>
+https://gewehub.yunzxu.com/webhook/gewe/<WEBHOOK_SECRET>
+```
+
+部署后验证：
+
+```bash
+curl -fsS https://gewehub.yunzxu.com/api/health
+ssh root@1panel.yunzxu.com 'cd /opt/gewehub && docker compose -f docker-compose.prod.yml --env-file .env.production ps'
 ```
 
 ## 本地冒烟
@@ -127,5 +143,6 @@ pnpm --filter @gewehub/web dev -- --port 5173
 
 - 默认模式下 MySQL/Redis 数据由本机服务管理。
 - `infra` / `production` profile 模式下 MySQL 数据保存在 compose volume `mysql-data`，Redis 数据保存在 `redis-data`。
-- 媒体文件保存在 compose volume `file-storage`。
+- 媒体文件挂载到项目目录 `runtime/files/`，容器内路径为 `/app/server/storage/files`。
+- GeWe 原始回调审计日志挂载到项目目录 `runtime/logs/`，文件名为 `webhook-raw-YYYYMMDD.log`。
 - Caddy 证书和运行状态保存在 `caddy-data`，配置缓存保存在 `caddy-config`。

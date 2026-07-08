@@ -44,7 +44,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-mysql://gewehub:gewehub@host.docker.internal:3306/gewehub}
       REDIS_URL: ${REDIS_URL:-redis://host.docker.internal:6379/0}
-      PUBLIC_BASE_URL: http://3i2956l679.51vip.biz
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://3i2956l679.51vip.biz}
       WEB_ORIGIN: http://localhost:8080
       JSON_BODY_LIMIT_BYTES: 16777216
       GEWE_SEND_TIMEOUT_MS: 120000
@@ -58,7 +58,8 @@ services:
       - "3000:3000"
       - "8090:3000"
     volumes:
-      - file-storage:/app/server/storage/files
+      - ../runtime/files:/app/server/storage/files
+      - ../runtime/logs:/app/server/storage/logs
 
   migrate:
     image: gewehub-server:local
@@ -103,7 +104,6 @@ services:
       - caddy-config:/config
 
 volumes:
-  file-storage:
   mysql-data:
   redis-data:
   caddy-data:

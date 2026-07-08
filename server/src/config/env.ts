@@ -13,6 +13,8 @@ export const envSchema = z.object({
   PUBLIC_BASE_URL: z.string().url(),
   WEB_ORIGIN: z.string().url().default("http://localhost:5173"),
   JSON_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(16 * 1024 * 1024),
+  WEBHOOK_GATEWAY_RAW_LOG_ENABLED: z.coerce.boolean().default(false),
+  WEBHOOK_GATEWAY_RAW_LOG_SAMPLE_BYTES: z.coerce.number().int().positive().default(4096),
   GEWE_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
   GEWE_SEND_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
   PORT: z.coerce.number().int().positive().default(3000)

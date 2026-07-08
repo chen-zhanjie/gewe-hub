@@ -68,6 +68,9 @@ export interface LocalSendPayload {
   mimeType?: string;
   fileName?: string;
   thumbUrl?: string;
+  thumbContentBase64?: string;
+  thumbMimeType?: string;
+  thumbFileName?: string;
   durationMs?: number;
   title?: string;
   desc?: string;

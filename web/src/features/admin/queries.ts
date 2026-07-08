@@ -38,6 +38,8 @@ export interface BackendAccount {
   avatarUrl?: string | null;
   platformRemark?: string | null;
   onlineStatus?: "online" | "offline" | "unknown";
+  status?: "active" | "disabled";
+  statusChangedAt?: string | Date | null;
   source?: "auto" | "manual";
   lastSyncedAt?: string | Date | null;
 }
@@ -141,6 +143,21 @@ export function useSaveAccountMutation() {
       }),
     onSuccess: async () => {
       // Invalidate account list after account create or update.
+      await queryClient.invalidateQueries({ queryKey: accountsQueryKeys.list });
+    },
+  });
+}
+
+export function useDeleteAccountMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (accountId: string) =>
+      apiFetch(`/api/accounts/${accountId}`, {
+        method: "DELETE",
+      }),
+    onSuccess: async () => {
+      // Invalidate account list after deleting a local WeChat account record.
       await queryClient.invalidateQueries({ queryKey: accountsQueryKeys.list });
     },
   });

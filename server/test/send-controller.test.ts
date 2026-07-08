@@ -1,8 +1,23 @@
 import { UnauthorizedException } from "@nestjs/common";
-import { describe, expect, it, vi } from "vitest";
+import type { LookupAddress } from "node:dns";
+import { lookup } from "node:dns/promises";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SendController } from "../src/modules/send/send.controller.js";
 
+vi.mock("node:dns/promises", () => ({
+  lookup: vi.fn()
+}));
+
+function mockLookupAll(addresses: LookupAddress[]) {
+  vi.mocked(lookup).mockResolvedValue(addresses as never);
+}
+
 describe("SendController", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
   it("带无效应用 Bearer token 的发送请求必须拒绝", async () => {
     const prisma = {
       hubApp: {
@@ -78,8 +93,7 @@ describe("SendController", () => {
           body: {
             appId: "wx_app",
             toWxid: "wxid_target",
-            content: "hello",
-            ats: []
+            content: "hello"
           }
         }
       })
@@ -92,6 +106,107 @@ describe("SendController", () => {
         status: "pending",
         priority: 40
       }
+    });
+  });
+
+  it("应用发送请求携带幂等键时复用已有发送记录，不重复排入 outbox", async () => {
+    const prisma = {
+      hubApp: {
+        findUnique: vi.fn(async () => ({ id: "app_1", status: "active" }))
+      },
+      conversation: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "conversation_1",
+          accountId: "account_1",
+          peerWxid: "wxid_target",
+          account: {
+            appId: "wx_app",
+            wxid: "wxid_bot"
+          }
+        }))
+      },
+      sendRequest: {
+        findFirst: vi.fn(async () => ({
+          id: "send_existing",
+          status: "pending"
+        })),
+        create: vi.fn()
+      },
+      outboxTask: {
+        create: vi.fn()
+      }
+    };
+    const controller = new SendController(prisma as never, {} as never);
+
+    const result = await controller.send("Bearer app_token", {
+      conversationId: "conversation_1",
+      type: "text",
+      text: "hello",
+      idempotencyKey: "idem_1"
+    });
+
+    expect(result).toEqual({ id: "send_existing", status: "pending" });
+    expect(prisma.sendRequest.findFirst).toHaveBeenCalledWith({
+      where: {
+        appId: "app_1",
+        conversationId: "conversation_1",
+        idempotencyKey: "idem_1"
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    expect(prisma.sendRequest.create).not.toHaveBeenCalled();
+    expect(prisma.outboxTask.create).not.toHaveBeenCalled();
+  });
+
+  it("应用发送请求携带新幂等键时写入普通列供唯一约束保护", async () => {
+    const prisma = {
+      hubApp: {
+        findUnique: vi.fn(async () => ({ id: "app_1", status: "active" }))
+      },
+      conversation: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "conversation_1",
+          accountId: "account_1",
+          peerWxid: "wxid_target",
+          account: {
+            appId: "wx_app",
+            wxid: "wxid_bot"
+          }
+        }))
+      },
+      sendRequest: {
+        findFirst: vi.fn(async () => null),
+        create: vi.fn(async () => ({ id: "send_new", status: "pending" }))
+      },
+      outboxTask: {
+        create: vi.fn(async () => ({ id: "task_send_new" }))
+      }
+    };
+    const controller = new SendController(prisma as never, {} as never);
+
+    await controller.send("Bearer app_token", {
+      conversationId: "conversation_1",
+      type: "text",
+      text: "hello",
+      requestId: "req_1"
+    });
+
+    expect(prisma.sendRequest.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        appId: "app_1",
+        conversationId: "conversation_1",
+        idempotencyKey: "req_1",
+        requestPayload: expect.objectContaining({
+          requestId: "req_1",
+          idempotencyKey: "req_1"
+        })
+      })
+    });
+    expect(prisma.outboxTask.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        taskType: "send",
+        refId: "send_new"
+      })
     });
   });
 
@@ -211,6 +326,77 @@ describe("SendController", () => {
               contentBase64: "iVBORw0KGgo=",
               mimeType: "image/png",
               fileName: "screenshot.png"
+            }
+          }
+        }
+      })
+    });
+  });
+
+  it("创建视频发送请求时保留上传视频和封面字段，供 outbox 发布为 GeWe 可访问 URL", async () => {
+    const prisma = {
+      hubApp: {
+        findUnique: vi.fn()
+      },
+      conversation: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "conversation_1",
+          accountId: "account_1",
+          peerWxid: "wxid_target",
+          account: {
+            appId: "wx_app",
+            wxid: "wxid_bot"
+          }
+        }))
+      },
+      sendRequest: {
+        create: vi.fn(async () => ({
+          id: "send_video",
+          status: "pending"
+        }))
+      },
+      outboxTask: {
+        create: vi.fn(async () => ({ id: "task_video" }))
+      }
+    };
+    const controller = new SendController(prisma as never, {} as never);
+
+    await controller.send(undefined, {
+      conversationId: "conversation_1",
+      type: "video",
+      contentBase64: "AAAAIGZ0eXA=",
+      mimeType: "video/mp4",
+      fileName: "clip.mp4",
+      thumbContentBase64: "iVBORw0KGgo=",
+      thumbMimeType: "image/png",
+      thumbFileName: "cover.png",
+      durationMs: 10_000
+    });
+
+    expect(prisma.sendRequest.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: "video",
+        requestPayload: expect.objectContaining({
+          contentBase64: "AAAAIGZ0eXA=",
+          thumbContentBase64: "iVBORw0KGgo=",
+          thumbMimeType: "image/png",
+          thumbFileName: "cover.png"
+        }),
+        geweRequest: {
+          path: "/gewe/v2/api/message/postVideo",
+          body: {
+            appId: "wx_app",
+            toWxid: "wxid_target",
+            thumbSource: {
+              contentBase64: "iVBORw0KGgo=",
+              mimeType: "image/png",
+              fileName: "cover.png"
+            },
+            videoDuration: 10,
+            source: {
+              contentBase64: "AAAAIGZ0eXA=",
+              mimeType: "video/mp4",
+              fileName: "clip.mp4"
             }
           }
         }
@@ -389,6 +575,76 @@ describe("SendController", () => {
         app: true
       }
     });
+  });
+
+  it("解析链接时读取网页标题描述和 og:image", async () => {
+    mockLookupAll([{ address: "93.184.216.34", family: 4 }]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          `
+          <html>
+            <head>
+              <title>页面标题</title>
+              <meta name="description" content="页面摘要">
+              <meta property="og:image" content="/cover.jpg">
+            </head>
+          </html>
+          `,
+          {
+            status: 200,
+            headers: { "Content-Type": "text/html" }
+          }
+        )
+      )
+    );
+    const controller = new SendController({} as never, {} as never);
+
+    await expect(controller.linkPreview("https://example.com/article")).resolves.toEqual({
+      linkUrl: "https://example.com/article",
+      title: "页面标题",
+      desc: "页面摘要",
+      thumbUrl: "https://example.com/cover.jpg"
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      "https://example.com/article",
+      expect.objectContaining({
+        headers: {
+          "User-Agent": "GeWeHub/0.1 link-preview"
+        }
+      })
+    );
+  });
+
+  it("解析链接时拒绝 localhost 和内网地址，避免服务端请求伪造", async () => {
+    mockLookupAll([{ address: "127.0.0.1", family: 4 }]);
+    vi.stubGlobal("fetch", vi.fn());
+    const controller = new SendController({} as never, {} as never);
+
+    await expect(controller.linkPreview("https://localhost/admin")).rejects.toThrow("不允许解析内网或本机链接");
+    await expect(controller.linkPreview("https://example.com/private")).rejects.toThrow("不允许解析内网或本机链接");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("解析链接只接受 HTML 且限制读取大小", async () => {
+    mockLookupAll([{ address: "93.184.216.34", family: 4 }]);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }))
+        .mockResolvedValueOnce(
+          new Response("<html><head><title>oversized</title></head></html>", {
+            status: 200,
+            headers: { "Content-Type": "text/html", "Content-Length": String(2 * 1024 * 1024) }
+          })
+        )
+    );
+    const controller = new SendController({} as never, {} as never);
+
+    await expect(controller.linkPreview("https://example.com/api")).rejects.toThrow("链接解析仅支持 HTML 页面");
+    await expect(controller.linkPreview("https://example.com/big")).rejects.toThrow("链接页面过大");
   });
 
   it("取消发送请求时终止关联 send outbox，避免继续自动重试", async () => {

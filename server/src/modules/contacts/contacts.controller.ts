@@ -183,6 +183,11 @@ export class ContactsController {
   @Post("/api/contacts/sync")
   async syncContacts(@Body() rawBody: unknown) {
     const body = syncContactsSchema.parse(rawBody);
+    const account = await this.prisma.wechatAccount.findUnique({
+      where: { id: body.accountId },
+      select: { id: true, status: true }
+    });
+    assertActiveAccount(account?.status);
     return this.prisma.outboxTask.create({
       data: {
         taskType: "sync_contacts",
@@ -195,11 +200,21 @@ export class ContactsController {
 
   @Post("/api/groups/:id/sync-members")
   async syncGroupMembers(@Param("id") groupId: string) {
+    const group = await this.prisma.group.findUnique({
+      where: { id: groupId },
+      select: {
+        id: true,
+        accountId: true,
+        account: { select: { status: true } }
+      }
+    });
+    if (!group) throw new BadRequestException("群不存在");
+    assertActiveAccount(group.account.status);
     return this.prisma.outboxTask.create({
       data: {
         taskType: "sync_group_members",
         refId: groupId,
-        payload: { groupId },
+        payload: { groupId, accountId: group.accountId },
         status: "pending"
       }
     });
@@ -209,6 +224,11 @@ export class ContactsController {
 function optionalEnum<T extends z.ZodEnum<[string, ...string[]]>>(schema: T, value: string | undefined): z.infer<T> | undefined {
   if (!value) return undefined;
   return schema.parse(value);
+}
+
+function assertActiveAccount(status: string | undefined): void {
+  if (!status) throw new BadRequestException("账号不存在");
+  if (status !== "active") throw new BadRequestException("账号已停用");
 }
 
 function withStatusChangedAt<T extends { status?: string }>(body: T): T & { statusChangedAt?: Date } {

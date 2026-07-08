@@ -381,7 +381,7 @@ describe("WorkbenchPage message area", () => {
     expect(within(dialog).getByRole("button", { name: "打开私聊会话 负责人" })).toBeInTheDocument();
   });
 
-  it("撤回消息保留原始气泡渲染并在 meta 行常显已撤回标签", async () => {
+  it("撤回消息保留原始气泡渲染，状态信息仍按普通消息浮动展示", async () => {
     mockFetch({
       "/api/accounts": [
         {
@@ -424,13 +424,15 @@ describe("WorkbenchPage message area", () => {
       ],
     });
 
-    const { container } = renderWorkbenchPage();
+    renderWorkbenchPage();
 
     const messageRegion = screen.getByLabelText("消息区");
     expect(await within(messageRegion).findByText("已撤回的原始内容")).toBeInTheDocument();
-    expect(within(messageRegion).getByText("已撤回")).toBeInTheDocument();
+    const revokedMessage = messageRegion.querySelector('[data-message-status="revoked"]');
+    expect(revokedMessage).toHaveClass("bg-destructive/5");
+    expect(revokedMessage?.querySelector('[data-message-meta="hover-overlay"]')).toHaveTextContent("已撤回");
+    expect(revokedMessage?.querySelector('[data-message-meta="inline"]')).not.toBeInTheDocument();
     expect(within(messageRegion).queryByText("[已撤回]")).not.toBeInTheDocument();
-    expect(container.querySelector('[data-message-status="revoked"]')).toHaveClass("bg-destructive/5");
   });
 
   it("长消息不会把头像拉到消息中部，头像保持与消息框左上对齐", async () => {

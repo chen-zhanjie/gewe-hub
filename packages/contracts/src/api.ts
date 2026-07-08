@@ -24,11 +24,16 @@ export const sendRequestSchema = z
     contentBase64: z.string().optional(),
     mimeType: z.string().optional(),
     thumbUrl: z.string().url().optional(),
+    thumbContentBase64: z.string().optional(),
+    thumbMimeType: z.string().optional(),
+    thumbFileName: z.string().optional(),
     title: z.string().optional(),
     desc: z.string().optional(),
     linkUrl: z.string().url().optional(),
     durationMs: z.number().int().positive().optional(),
-    mentions: z.array(z.string()).optional()
+    mentions: z.array(z.string()).optional(),
+    requestId: z.string().optional(),
+    idempotencyKey: z.string().optional()
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -46,31 +51,26 @@ export const sendRequestSchema = z
         message: "媒体消息必须提供 contentBase64 或可下载 URL"
       });
     }
-    if (value.type === "video") {
-      if (!value.thumbUrl) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["thumbUrl"],
-          message: "视频消息必须提供 thumbUrl"
-        });
-      }
-      if (!value.durationMs) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["durationMs"],
-          message: "视频消息必须提供 durationMs"
-        });
-      }
+    if (
+      value.type === "video" &&
+      !value.contentBase64 &&
+      (value.mediaUrl || value.fileUrl) &&
+      !value.thumbUrl &&
+      !value.thumbContentBase64
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["thumbUrl"],
+        message: "远程视频消息必须提供缩略图"
+      });
     }
     if (value.type === "link") {
-      for (const field of ["title", "desc", "linkUrl", "thumbUrl"] as const) {
-        if (!value[field]?.trim()) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: [field],
-            message: "链接消息必须提供 title、desc、linkUrl、thumbUrl"
-          });
-        }
+      if (!value.linkUrl?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["linkUrl"],
+          message: "链接消息必须提供 linkUrl"
+        });
       }
     }
   });

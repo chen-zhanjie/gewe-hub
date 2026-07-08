@@ -12,6 +12,13 @@ describe("deploy docker-compose", () => {
     expect(source).toContain("REDIS_URL: ${REDIS_URL:-redis://host.docker.internal:6379/0}");
   });
 
+  it("开发环境对外 URL 从 PUBLIC_BASE_URL 环境变量读取，并默认使用本地回调域名", () => {
+    const source = composeSource();
+
+    expect(source).toContain("PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://3i2956l679.51vip.biz}");
+    expect(source).toContain("VITE_CALLBACK_BASE_URL: ${VITE_CALLBACK_BASE_URL:-http://3i2956l679.51vip.biz}");
+  });
+
   it("提供可选 infra profile，满足一键启动 mysql/redis 的交付形态", () => {
     const source = composeSource();
 
@@ -19,6 +26,15 @@ describe("deploy docker-compose", () => {
     expect(source).toMatch(/redis:\n[\s\S]*?profiles:\n\s+- infra/);
     expect(source).toContain("mysql-data:");
     expect(source).toContain("redis-data:");
+  });
+
+  it("持久化媒体文件和 GeWe 原始回调审计日志", () => {
+    const source = composeSource();
+
+    expect(source).toContain("../runtime/files:/app/server/storage/files");
+    expect(source).toContain("../runtime/logs:/app/server/storage/logs");
+    expect(source).not.toContain("file-storage:");
+    expect(source).not.toContain("webhook-logs:");
   });
 
   it("提供 production profile，包含 mysql/redis 与 Caddy TLS 反向代理", () => {

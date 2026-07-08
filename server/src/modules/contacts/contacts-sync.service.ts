@@ -80,6 +80,7 @@ export class ContactsSyncService implements OnModuleInit {
           accountId: input.accountId,
           wxid,
           nickname: info?.nickname,
+          platformRemark: info?.platformRemark,
           avatarUrl: info?.avatarUrl,
           status: "active",
           statusChangedAt: now,
@@ -87,6 +88,7 @@ export class ContactsSyncService implements OnModuleInit {
         },
         update: {
           nickname: info?.nickname,
+          platformRemark: info?.platformRemark,
           avatarUrl: info?.avatarUrl,
           status: "active",
           statusChangedAt: now,
@@ -108,6 +110,7 @@ export class ContactsSyncService implements OnModuleInit {
           accountId: input.accountId,
           wxid,
           name: info?.nickname,
+          platformRemark: info?.platformRemark,
           avatarUrl: info?.avatarUrl,
           status: "active",
           statusChangedAt: now,
@@ -115,6 +118,7 @@ export class ContactsSyncService implements OnModuleInit {
         },
         update: {
           name: info?.nickname,
+          platformRemark: info?.platformRemark,
           avatarUrl: info?.avatarUrl,
           status: "active",
           statusChangedAt: now,
@@ -172,6 +176,7 @@ export class ContactsSyncService implements OnModuleInit {
       return {
         ...member,
         nickname: detail?.nickname ?? member.nickname,
+        platformRemark: detail?.platformRemark ?? member.platformRemark,
         avatarUrl: detail?.avatarUrl ?? member.avatarUrl
       };
     });
@@ -190,6 +195,7 @@ export class ContactsSyncService implements OnModuleInit {
           wxid: member.wxid,
           nickname: member.nickname,
           displayName: member.displayName,
+          platformRemark: member.platformRemark,
           avatarUrl: member.avatarUrl,
           status: "active",
           statusChangedAt: now,
@@ -198,6 +204,7 @@ export class ContactsSyncService implements OnModuleInit {
         update: {
           nickname: member.nickname,
           displayName: member.displayName,
+          platformRemark: member.platformRemark,
           avatarUrl: member.avatarUrl,
           status: "active",
           statusChangedAt: now,
@@ -274,6 +281,7 @@ export class ContactsSyncService implements OnModuleInit {
           accountId: input.accountId,
           wxid: input.wxid,
           name: info?.nickname,
+          platformRemark: info?.platformRemark,
           avatarUrl: info?.avatarUrl,
           status: "active",
           statusChangedAt: now,
@@ -281,6 +289,7 @@ export class ContactsSyncService implements OnModuleInit {
         },
         update: {
           name: info?.nickname,
+          platformRemark: info?.platformRemark,
           avatarUrl: info?.avatarUrl,
           status: "active",
           statusChangedAt: now,
@@ -301,6 +310,7 @@ export class ContactsSyncService implements OnModuleInit {
         accountId: input.accountId,
         wxid: input.wxid,
         nickname: info?.nickname,
+        platformRemark: info?.platformRemark,
         avatarUrl: info?.avatarUrl,
         status: "active",
         statusChangedAt: now,
@@ -308,6 +318,7 @@ export class ContactsSyncService implements OnModuleInit {
       },
       update: {
         nickname: info?.nickname,
+        platformRemark: info?.platformRemark,
         avatarUrl: info?.avatarUrl,
         status: "active",
         statusChangedAt: now,
@@ -319,7 +330,10 @@ export class ContactsSyncService implements OnModuleInit {
 
   async enqueueScheduledContactsSync() {
     const accounts = await this.prisma.wechatAccount.findMany({
-      where: { source: { in: ["auto", "manual"] } },
+      where: {
+        source: { in: ["auto", "manual"] },
+        status: "active"
+      },
       select: { id: true }
     });
     for (const account of accounts) {
@@ -361,7 +375,7 @@ function toStringArray(value: unknown): string[] {
   return value.map((item) => asString(item)).filter((item): item is string => Boolean(item));
 }
 
-function toBriefInfo(value: unknown): Array<{ wxid: string; nickname?: string; avatarUrl?: string }> {
+function toBriefInfo(value: unknown): Array<{ wxid: string; nickname: string | null; platformRemark: string | null; avatarUrl: string | null }> {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     const record = asRecord(item);
@@ -369,13 +383,14 @@ function toBriefInfo(value: unknown): Array<{ wxid: string; nickname?: string; a
     if (!wxid) return [];
     return [{
       wxid,
-      nickname: asString(record?.nickName ?? record?.nickname),
-      avatarUrl: asString(record?.smallHeadImgUrl ?? record?.bigHeadImgUrl ?? record?.avatarUrl)
+      nickname: asNullableString(record?.nickName ?? record?.nickname),
+      platformRemark: asNullableString(record?.remark),
+      avatarUrl: asNullableString(record?.smallHeadImgUrl ?? record?.bigHeadImgUrl ?? record?.avatarUrl)
     }];
   });
 }
 
-function toMemberInfo(value: unknown): Array<{ wxid: string; nickname?: string; displayName?: string; avatarUrl?: string }> {
+function toMemberInfo(value: unknown): Array<{ wxid: string; nickname: string | null; displayName: string | null; platformRemark: string | null; avatarUrl: string | null }> {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     const record = asRecord(item);
@@ -383,9 +398,10 @@ function toMemberInfo(value: unknown): Array<{ wxid: string; nickname?: string; 
     if (!wxid) return [];
     return [{
       wxid,
-      nickname: asString(record?.nickName ?? record?.nickname),
-      displayName: asString(record?.displayName),
-      avatarUrl: asString(record?.smallHeadImgUrl ?? record?.bigHeadImgUrl ?? record?.avatarUrl)
+      nickname: asNullableString(record?.nickName ?? record?.nickname),
+      displayName: asNullableString(record?.displayName),
+      platformRemark: asNullableString(record?.remark),
+      avatarUrl: asNullableString(record?.smallHeadImgUrl ?? record?.bigHeadImgUrl ?? record?.avatarUrl)
     }];
   });
 }
@@ -404,6 +420,11 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function asString(value: unknown): string | undefined {
-  if (value === undefined || value === null || value === "") return undefined;
-  return String(value);
+  if (value === undefined || value === null) return undefined;
+  const normalized = String(value).trim();
+  return normalized ? normalized : undefined;
+}
+
+function asNullableString(value: unknown): string | null {
+  return asString(value) ?? null;
 }

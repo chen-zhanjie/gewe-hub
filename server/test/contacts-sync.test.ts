@@ -80,6 +80,59 @@ describe("ContactsSyncService", () => {
     });
   });
 
+  it("同步通讯录时保存 GeWe 备注并忽略全角空白昵称", async () => {
+    const prisma = {
+      wechatAccount: {
+        findUniqueOrThrow: vi.fn(async () => ({ id: "acc_1", appId: "wx_app" })),
+        update: vi.fn(async () => ({}))
+      },
+      contact: {
+        upsert: vi.fn(async () => ({})),
+        updateMany: vi.fn(async () => ({ count: 0 }))
+      },
+      group: {
+        upsert: vi.fn(async () => ({}))
+      }
+    };
+    const gewe = {
+      fetchContactsList: vi.fn(async () => ({
+        data: {
+          friends: ["wxid_rpxrrcnzn06922"],
+          chatrooms: []
+        }
+      })),
+      getBriefInfo: vi.fn(async () => ({
+        data: [
+          {
+            userName: "wxid_rpxrrcnzn06922",
+            nickName: "　",
+            remark: "王磊",
+            smallHeadImgUrl: "https://avatar/wanglei.jpg"
+          }
+        ]
+      }))
+    };
+    const service = new ContactsSyncService(prisma as never, gewe as never);
+
+    await service.syncContacts({ accountId: "acc_1", mode: "full" });
+
+    expect(prisma.contact.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          wxid: "wxid_rpxrrcnzn06922",
+          nickname: null,
+          platformRemark: "王磊",
+          avatarUrl: "https://avatar/wanglei.jpg"
+        }),
+        update: expect.objectContaining({
+          nickname: null,
+          platformRemark: "王磊",
+          avatarUrl: "https://avatar/wanglei.jpg"
+        })
+      })
+    );
+  });
+
   it("同步群成员时拉取成员详情补齐资料，并软标记缺失成员为 left", async () => {
     const prisma = {
       group: {
@@ -201,6 +254,51 @@ describe("ContactsSyncService", () => {
       })
     );
     expect(prisma.group.upsert).not.toHaveBeenCalled();
+  });
+
+  it("联系人变更单点同步时保存 GeWe 备注", async () => {
+    const prisma = {
+      contact: {
+        upsert: vi.fn(async () => ({}))
+      },
+      group: {
+        upsert: vi.fn(async () => ({}))
+      }
+    };
+    const gewe = {
+      getBriefInfo: vi.fn(async () => ({
+        data: [
+          {
+            userName: "wxid_rpxrrcnzn06922",
+            nickName: "　",
+            remark: "王磊",
+            smallHeadImgUrl: "https://avatar/wanglei.jpg"
+          }
+        ]
+      }))
+    };
+    const service = new ContactsSyncService(prisma as never, gewe as never);
+
+    await service.syncContact({
+      accountId: "acc_1",
+      appId: "wx_app",
+      wxid: "wxid_rpxrrcnzn06922",
+      deleted: false
+    });
+
+    expect(prisma.contact.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          wxid: "wxid_rpxrrcnzn06922",
+          nickname: null,
+          platformRemark: "王磊"
+        }),
+        update: expect.objectContaining({
+          nickname: null,
+          platformRemark: "王磊"
+        })
+      })
+    );
   });
 
   it("联系人删除回调只做软删除", async () => {

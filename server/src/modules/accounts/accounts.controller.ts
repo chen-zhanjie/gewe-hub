@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Patch, Post } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
 import { z } from "zod";
 import { GeweClientService } from "../gewe/gewe-client.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -65,6 +65,42 @@ export class AccountsController {
         ...body,
         ...(onlineStatus ? { onlineStatus } : {})
       }
+    });
+  }
+
+  @Delete(":id")
+  async remove(@Param("id") id: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const groups = await tx.group.findMany({
+        where: { accountId: id },
+        select: { id: true }
+      });
+      await tx.outboxTask.updateMany({
+        where: {
+          status: { in: ["pending", "running", "failed"] },
+          OR: [
+            { taskType: "sync_contacts", refId: id },
+            {
+              taskType: "sync_group_members",
+              refId: { in: groups.map((group) => group.id) }
+            }
+          ]
+        },
+        data: {
+          status: "dead",
+          nextRetryAt: null,
+          leaseUntil: null,
+          lastError: "微信账号已停用"
+        }
+      });
+
+      return tx.wechatAccount.update({
+        where: { id },
+        data: {
+          status: "disabled",
+          statusChangedAt: new Date()
+        }
+      });
     });
   }
 

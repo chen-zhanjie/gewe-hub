@@ -165,6 +165,81 @@ describe("WorkbenchPage", () => {
     expect(screen.queryByLabelText("Beta 客户 4 条未读消息")).not.toBeInTheDocument();
   });
 
+  it("从联系人列表跳转到新建会话时刷新工作台数据并选中目标会话", async () => {
+    let conversationsFetchCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input).replace("http://localhost", "");
+      if (path === "/api/accounts") {
+        return jsonResponse([
+          {
+            id: "acc_1",
+            wxid: "wxid_bot",
+            nickname: "客服主号",
+            onlineStatus: "online",
+          },
+        ]);
+      }
+      if (path === "/api/conversations") {
+        conversationsFetchCount += 1;
+        return jsonResponse(
+          conversationsFetchCount === 1
+            ? [
+                {
+                  id: "conv_old",
+                  accountId: "acc_1",
+                  peerWxid: "wxid_old",
+                  type: "private",
+                  platformRemark: "旧会话",
+                  lastMessageText: "旧消息",
+                  lastMessageAt: "2026-07-06T07:16:37.000Z",
+                  status: "active",
+                },
+              ]
+            : [
+                {
+                  id: "conv_new",
+                  accountId: "acc_1",
+                  peerWxid: "wxid_new",
+                  type: "private",
+                  platformRemark: "新建联系人",
+                  lastMessageText: null,
+                  lastMessageAt: null,
+                  status: "active",
+                },
+                {
+                  id: "conv_old",
+                  accountId: "acc_1",
+                  peerWxid: "wxid_old",
+                  type: "private",
+                  platformRemark: "旧会话",
+                  lastMessageText: "旧消息",
+                  lastMessageAt: "2026-07-06T07:16:37.000Z",
+                  status: "active",
+                },
+              ],
+        );
+      }
+      if (path === "/api/apps") return jsonResponse([]);
+      if (path === "/api/conversations/conv_old/messages?take=50") return jsonResponse([]);
+      if (path === "/api/conversations/conv_new/messages?take=50") return jsonResponse([]);
+      return jsonResponse({ error: { message: "not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rerenderWorkbenchPage } = renderWorkbenchPage();
+
+    expect(await screen.findByRole("heading", { name: "旧会话" })).toBeInTheDocument();
+
+    rerenderWorkbenchPage({
+      initialAccountId: "acc_1",
+      initialConversationId: "conv_new",
+    });
+
+    await waitFor(() => expect(conversationsFetchCount).toBeGreaterThanOrEqual(2));
+    expect(await screen.findByRole("heading", { name: "新建联系人" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开会话 新建联系人" })).toHaveClass("bg-muted");
+  });
+
   it("工作台支持用上下方向键切换当前筛选会话，输入框聚焦时不抢键盘", async () => {
     const fetchMock = mockFetch({
       "/api/accounts": [

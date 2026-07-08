@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import { z } from "zod";
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -89,6 +89,18 @@ export class AppsController {
     return this.prisma.hubApp.update({
       where: { id },
       data: { token: generateToken() }
+    });
+  }
+
+  @Delete(":id")
+  async remove(@Param("id") id: string) {
+    return this.prisma.$transaction(async (tx) => {
+      return tx.hubApp.update({
+        where: { id },
+        data: {
+          status: "disabled"
+        }
+      });
     });
   }
 

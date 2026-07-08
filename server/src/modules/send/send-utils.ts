@@ -11,6 +11,9 @@ export interface SendMappingInput {
   contentBase64?: string;
   mimeType?: string;
   thumbUrl?: string;
+  thumbContentBase64?: string;
+  thumbMimeType?: string;
+  thumbFileName?: string;
   title?: string;
   desc?: string;
   linkUrl?: string;
@@ -22,12 +25,12 @@ export function mapSendRequestToGewe(input: SendMappingInput) {
   if (input.type === "text") {
     return {
       path: "/gewe/v2/api/message/postText",
-      body: {
+      body: compactRecord({
         appId: input.appId,
         toWxid: input.peerWxid,
         content: input.text ?? "",
-        ats: input.mentions ?? []
-      }
+        ats: formatTextMentions(input.mentions)
+      })
     };
   }
   const source = buildMediaSource(input);
@@ -65,36 +68,40 @@ export function mapSendRequestToGewe(input: SendMappingInput) {
     };
   }
   if (input.type === "video") {
+    const thumbSource = buildThumbnailSource(input);
     return {
       path: "/gewe/v2/api/message/postVideo",
       body: source
-        ? {
+        ? compactRecord({
             appId: input.appId,
             toWxid: input.peerWxid,
             thumbUrl: input.thumbUrl,
+            thumbSource,
             videoDuration: durationMsToSeconds(input.durationMs),
             source
-          }
-        : {
+          })
+        : compactRecord({
             appId: input.appId,
             toWxid: input.peerWxid,
             videoUrl: input.mediaUrl ?? input.fileUrl,
             thumbUrl: input.thumbUrl,
+            thumbSource,
             videoDuration: durationMsToSeconds(input.durationMs)
-          }
+          })
     };
   }
   if (input.type === "link") {
     return {
       path: "/gewe/v2/api/message/postLink",
-      body: {
+      body: compactRecord({
         appId: input.appId,
         toWxid: input.peerWxid,
         title: input.title,
         desc: input.desc,
         linkUrl: input.linkUrl,
-        thumbUrl: input.thumbUrl
-      }
+        thumbUrl: input.thumbUrl,
+        thumbSource: buildThumbnailSource(input)
+      })
     };
   }
   return {
@@ -119,6 +126,11 @@ function durationMsToSeconds(durationMs: number | undefined): number {
   return Math.max(1, Math.round(durationMs / 1000));
 }
 
+function formatTextMentions(mentions: string[] | undefined): string | undefined {
+  const ats = mentions?.map((mention) => mention.trim()).filter(Boolean).join(",");
+  return ats || undefined;
+}
+
 export interface LocalHubSendInput {
   accountWxid: string;
   conversationId: string;
@@ -131,7 +143,7 @@ export interface LocalHubSendInput {
 }
 
 export function buildLocalHubSendMessage(input: LocalHubSendInput) {
-  const sentAt = new Date(Number(input.createTime)).toISOString();
+  const sentAt = new Date(normalizeGeweCreateTimeMs(input.createTime)).toISOString();
   const content = input.content ?? {
     type: "text" as const,
     text: input.text
@@ -179,6 +191,13 @@ export function buildLocalHubSendMessage(input: LocalHubSendInput) {
   };
 }
 
+function normalizeGeweCreateTimeMs(createTime: string): number {
+  const timestamp = Number(createTime);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return Date.now();
+  if (timestamp < 10_000_000_000) return timestamp * 1000;
+  return timestamp;
+}
+
 function compactRecord(value: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined && entry !== null && entry !== ""));
 }
@@ -191,5 +210,14 @@ function buildMediaSource(input: SendMappingInput): Record<string, unknown> | un
     fileUrl: input.fileUrl,
     mimeType: input.mimeType,
     fileName: input.fileName,
+  });
+}
+
+function buildThumbnailSource(input: SendMappingInput): Record<string, unknown> | undefined {
+  if (!input.thumbContentBase64) return undefined;
+  return compactRecord({
+    contentBase64: input.thumbContentBase64,
+    mimeType: input.thumbMimeType,
+    fileName: input.thumbFileName,
   });
 }

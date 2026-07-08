@@ -2,14 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ContactProfileDialog } from "@/features/workbench/ContactProfileDialog";
 import { ConversationList } from "@/features/workbench/ConversationList";
 import { GroupMembersPanel } from "@/features/workbench/GroupMembersPanel";
-import { MessageComposer } from "@/features/workbench/MessageComposer";
 import { MessageDebugDialog } from "@/features/workbench/MessageDebugDialog";
 import { MessagePanel } from "@/features/workbench/MessagePanel";
 import { MessageRevokeConfirmDialog } from "@/features/workbench/MessageRevokeConfirmDialog";
+import { WorkbenchComposerOutlet } from "@/features/workbench/WorkbenchComposerOutlet";
 import { WorkbenchConversationOverlays } from "@/features/workbench/WorkbenchConversationOverlays";
 import {
   adminEventSourceStatusEvent,
   fetchWorkbenchSendRequest,
+  parseWorkbenchLinkPreview,
   sendWorkbenchPayload,
   sendWorkbenchText,
   type AdminEventSourceStatusDetail,
@@ -25,6 +26,7 @@ import { useWorkbenchComposerController } from "@/features/workbench/useWorkbenc
 import { useWorkbenchConversationSurfaceController } from "@/features/workbench/useWorkbenchConversationSurfaceController";
 import { useWorkbenchMessageRevokeController } from "@/features/workbench/useWorkbenchMessageRevokeController";
 import { useWorkbenchMessagesController } from "@/features/workbench/useWorkbenchMessagesController";
+import { readStoredSelectedAccountId, storeSelectedAccountId } from "@/features/workbench/workbench-selection-storage";
 import { readQueryError } from "@/features/workbench/workbench-helpers";
 import {
   mapAccountSummary,
@@ -49,7 +51,10 @@ export function WorkbenchPage({
 }: WorkbenchPageProps = {}) {
   const initialConversationIdRef = useRef(initialConversationId);
   const initialAccountIdRef = useRef(initialAccountId);
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(initialAccountId ?? null);
+  const routeRefreshTargetRef = useRef<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(
+    initialAccountId ?? readStoredSelectedAccountId(),
+  );
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(initialConversationId ?? null);
   const [debugMessageId, setDebugMessageId] = useState<string | null>(null);
   const [managementConversationId, setManagementConversationId] = useState<string | null>(null);
@@ -97,7 +102,10 @@ export function WorkbenchPage({
   const apps = useMemo<HubAppSummary[]>(() => workspaceQuery.data?.apps ?? [], [workspaceQuery.data?.apps]);
   const messagesQuery = useWorkbenchMessagesQuery(effectiveConversationId);
   const selectedConversation = useMemo(
-    () => visibleManagedConversations.find((conversation) => conversation.id === effectiveConversationId) ?? visibleManagedConversations[0],
+    () => {
+      if (!effectiveConversationId) return undefined;
+      return visibleManagedConversations.find((conversation) => conversation.id === effectiveConversationId);
+    },
     [visibleManagedConversations, effectiveConversationId],
   );
   const managementConversation = useMemo(
@@ -110,12 +118,14 @@ export function WorkbenchPage({
   useEffect(() => {
     if (!accounts.length) return;
     if (selectedAccountId && accounts.some((account) => account.id === selectedAccountId)) return;
-    setSelectedAccountId(accounts[0]?.id ?? null);
+    const fallbackAccountId = accounts[0]?.id ?? null;
+    setSelectedAccountId(fallbackAccountId);
+    storeSelectedAccountId(fallbackAccountId);
   }, [accounts, selectedAccountId]);
 
   useEffect(() => {
     if (!visibleManagedConversations.length) {
-      setSelectedConversationId(null);
+      if (!initialConversationId) setSelectedConversationId(null);
       return;
     }
 
@@ -130,6 +140,9 @@ export function WorkbenchPage({
     if (selectedConversationId && visibleManagedConversations.some((conversation) => conversation.id === selectedConversationId)) {
       return;
     }
+    if (selectedConversationId && selectedConversationId === initialConversationId) {
+      return;
+    }
 
     const fallbackConversationId =
       initialConversationId && visibleManagedConversations.some((conversation) => conversation.id === initialConversationId)
@@ -139,6 +152,25 @@ export function WorkbenchPage({
       setSelectedConversationId(fallbackConversationId);
     }
   }, [initialConversationId, selectedConversationId, visibleManagedConversations]);
+
+  useEffect(() => {
+    if (!initialConversationId) {
+      routeRefreshTargetRef.current = null;
+      return;
+    }
+    if (!workspaceQuery.data) return;
+
+    const refreshKey = `${initialAccountId ?? ""}:${initialConversationId}`;
+    const targetExists = conversations.some((conversation) => conversation.id === initialConversationId);
+    if (targetExists) {
+      if (routeRefreshTargetRef.current === refreshKey) routeRefreshTargetRef.current = null;
+      return;
+    }
+    if (routeRefreshTargetRef.current === refreshKey) return;
+
+    routeRefreshTargetRef.current = refreshKey;
+    void refreshWorkspace();
+  }, [conversations, initialAccountId, initialConversationId, refreshWorkspace, workspaceQuery.data]);
 
   useEffect(() => {
     function handleEventSourceStatus(event: Event) {
@@ -171,14 +203,17 @@ export function WorkbenchPage({
   useEffect(() => {
     if (initialAccountId === initialAccountIdRef.current) return;
     initialAccountIdRef.current = initialAccountId;
-    setSelectedAccountId(initialAccountId ?? null);
-    setSelectedConversationId(null);
-  }, [initialAccountId]);
+    const nextAccountId = initialAccountId ?? readStoredSelectedAccountId();
+    setSelectedAccountId(nextAccountId);
+    if (initialAccountId) storeSelectedAccountId(initialAccountId);
+    setSelectedConversationId(initialConversationId ?? null);
+  }, [initialAccountId, initialConversationId]);
 
   const composer = useWorkbenchComposerController({
     selectedConversation,
     onSendText: messageState.handleSendText,
     onSendPayload: messageState.handleSendPayload,
+    parseLinkPreview: parseWorkbenchLinkPreview,
     createLocalSendPlaceholder: messageState.createLocalSendPlaceholder,
     submitLocalSendPayload: messageState.submitLocalSendPayload,
     failLocalSend: messageState.failLocalSend,
@@ -211,6 +246,7 @@ export function WorkbenchPage({
   function selectAccount(accountId: string) {
     if (accountId === selectedAccount?.id) return;
     setSelectedAccountId(accountId);
+    storeSelectedAccountId(accountId);
     const nextConversationId = filterConversationsForAccount(managedConversations, accountId)[0]?.id ?? null;
     setSelectedConversationId(nextConversationId);
     onAccountChange?.(accountId);
@@ -282,40 +318,7 @@ export function WorkbenchPage({
           onDeleteLocalSend={messageState.deleteLocalSend}
           onRequestRevoke={messageRevoke.requestRevokeMessage}
         >
-          <MessageComposer
-            selected={Boolean(selectedConversation)}
-            sending={composer.sending}
-            voiceRecording={composer.voiceRecording}
-            messageText={composer.messageText}
-            videoThumbUrl={composer.videoThumbUrl}
-            showLinkForm={composer.showLinkForm}
-            linkDraft={composer.linkDraft}
-            pendingAttachments={composer.pendingAttachments}
-            sendError={composer.sendError}
-            voiceInputRef={composer.voiceInputRef}
-            imageInputRef={composer.imageInputRef}
-            videoInputRef={composer.videoInputRef}
-            fileInputRef={composer.fileInputRef}
-            onMessageTextChange={composer.setMessageText}
-            onVideoThumbUrlChange={composer.setVideoThumbUrl}
-            onShowLinkFormChange={composer.setShowLinkForm}
-            onLinkDraftChange={composer.setLinkDraft}
-            onSendMedia={(file, type) => {
-              void composer.handleSendMedia(file, type);
-            }}
-            onVoiceRecord={composer.handleVoiceRecord}
-            onSendLink={() => {
-              void composer.handleSendLink();
-            }}
-            onRemovePendingAttachment={composer.removePendingAttachment}
-            onSendPendingAttachments={() => {
-              void composer.handleSendPendingAttachments();
-            }}
-            onPaste={composer.handleAttachmentPaste}
-            onSendText={() => {
-              void composer.handleSendText();
-            }}
-          />
+          <WorkbenchComposerOutlet selected={Boolean(selectedConversation)} composer={composer} />
         </MessagePanel>
 
         <GroupMembersPanel

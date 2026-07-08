@@ -1,3 +1,5 @@
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { BadRequestException, Body, Controller, Get, Headers, Param, Post, Query, UnauthorizedException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { sendRequestSchema } from "@gewehub/contracts";
@@ -10,6 +12,8 @@ import { mapSendRequestToGewe } from "./send-utils.js";
 const sendRequestStatusSchema = z.enum(["success", "failed", "in_progress", "pending", "sent", "unknown"]);
 const DEFAULT_TAKE = 100;
 const MAX_TAKE = 200;
+const LINK_PREVIEW_MAX_HTML_BYTES = 512 * 1024;
+const LINK_PREVIEW_MAX_REDIRECTS = 2;
 
 @Controller()
 export class SendController {
@@ -31,6 +35,19 @@ export class SendController {
       where: { id: body.conversationId },
       include: { account: true }
     });
+    const idempotencyKey = normalizeIdempotencyKey(body.idempotencyKey ?? body.requestId);
+    const requestPayload = idempotencyKey ? { ...body, idempotencyKey } : body;
+    if (app?.id && idempotencyKey) {
+      const existing = await this.prisma.sendRequest.findFirst({
+        where: {
+          appId: app.id,
+          conversationId: conversation.id,
+          idempotencyKey
+        },
+        orderBy: { createdAt: "desc" }
+      });
+      if (existing) return existing;
+    }
     const mapped = mapSendRequestToGewe({
       appId: conversation.account.appId,
       peerWxid: conversation.peerWxid,
@@ -42,6 +59,9 @@ export class SendController {
       contentBase64: body.contentBase64,
       mimeType: body.mimeType,
       thumbUrl: body.thumbUrl,
+      thumbContentBase64: body.thumbContentBase64,
+      thumbMimeType: body.thumbMimeType,
+      thumbFileName: body.thumbFileName,
       title: body.title,
       desc: body.desc,
       linkUrl: body.linkUrl,
@@ -54,8 +74,9 @@ export class SendController {
         appId: app?.id ?? null,
         accountId: conversation.accountId,
         conversationId: conversation.id,
+        idempotencyKey: idempotencyKey ?? null,
         type: body.type,
-        requestPayload: body as unknown as Prisma.InputJsonValue,
+        requestPayload: requestPayload as unknown as Prisma.InputJsonValue,
         geweRequest: mapped as unknown as Prisma.InputJsonValue,
         status: "pending"
       }
@@ -172,6 +193,22 @@ export class SendController {
       include: { conversation: true, app: true }
     });
   }
+
+  @Get("/api/link-preview")
+  async linkPreview(@Query("url") rawUrl: string | undefined) {
+    const linkUrl = parsePreviewUrl(rawUrl);
+    const page = await fetchPreviewHtml(linkUrl);
+    const preview = parseHtmlPreview(page.html, page.linkUrl);
+    return {
+      linkUrl: page.linkUrl,
+      ...preview
+    };
+  }
+}
+
+function normalizeIdempotencyKey(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized || undefined;
 }
 
 function mapSendRequestStatus(status: string): NonNullable<Prisma.SendRequestWhereInput["status"]> {
@@ -208,4 +245,229 @@ function mergeRevokeResponse(previous: Prisma.JsonValue, revokeResponse: unknown
     } as Prisma.InputJsonValue;
   }
   return { revoke: revokeResponse } as Prisma.InputJsonValue;
+}
+
+function parsePreviewUrl(rawUrl: string | undefined): string {
+  if (!rawUrl?.trim()) throw new BadRequestException("链接地址不能为空");
+  let url: URL;
+  try {
+    url = new URL(rawUrl.trim());
+  } catch {
+    throw new BadRequestException("链接地址格式不正确");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new BadRequestException("仅支持 http/https 链接");
+  }
+  if (url.username || url.password) {
+    throw new BadRequestException("链接地址不能包含用户名或密码");
+  }
+  return url.toString();
+}
+
+async function fetchPreviewHtml(linkUrl: string, redirectsLeft = LINK_PREVIEW_MAX_REDIRECTS): Promise<{ linkUrl: string; html: string }> {
+  await assertPublicPreviewUrl(linkUrl);
+  const response = await fetch(linkUrl, {
+    headers: {
+      "User-Agent": "GeWeHub/0.1 link-preview"
+    },
+    redirect: "manual",
+    signal: AbortSignal.timeout(8000)
+  });
+
+  if (isRedirectResponse(response)) {
+    const location = response.headers.get("location");
+    if (!location) throw new BadRequestException("链接解析重定向缺少 Location");
+    if (redirectsLeft <= 0) throw new BadRequestException("链接解析重定向次数过多");
+    const redirectedUrl = parsePreviewUrl(new URL(location, linkUrl).toString());
+    return fetchPreviewHtml(redirectedUrl, redirectsLeft - 1);
+  }
+
+  if (!response.ok) {
+    throw new BadRequestException(`链接解析失败: HTTP ${response.status}`);
+  }
+  assertHtmlPreviewResponse(response);
+  return {
+    linkUrl,
+    html: await readLimitedPreviewHtml(response)
+  };
+}
+
+async function assertPublicPreviewUrl(linkUrl: string): Promise<void> {
+  const url = new URL(linkUrl);
+  const hostname = normalizeUrlHostname(url.hostname);
+  if (isBlockedPreviewHostname(hostname)) {
+    throw new BadRequestException("不允许解析内网或本机链接");
+  }
+  if (isIP(hostname)) {
+    if (isBlockedPreviewAddress(hostname)) throw new BadRequestException("不允许解析内网或本机链接");
+    return;
+  }
+
+  let addresses: Array<{ address: string }> = [];
+  try {
+    addresses = await lookup(hostname, { all: true, verbatim: true });
+  } catch {
+    throw new BadRequestException("链接域名无法解析");
+  }
+  if (addresses.length === 0 || addresses.some((item) => isBlockedPreviewAddress(item.address))) {
+    throw new BadRequestException("不允许解析内网或本机链接");
+  }
+}
+
+function normalizeUrlHostname(hostname: string): string {
+  return hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+}
+
+function isBlockedPreviewHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "metadata.google.internal";
+}
+
+function isBlockedPreviewAddress(address: string): boolean {
+  const normalized = normalizeUrlHostname(address);
+  const ipv4 = readIpv4Address(normalized);
+  if (ipv4) {
+    const [first = 0, second = 0] = ipv4;
+    return (
+      first === 0 ||
+      first === 10 ||
+      first === 127 ||
+      first >= 224 ||
+      (first === 100 && second >= 64 && second <= 127) ||
+      (first === 169 && second === 254) ||
+      (first === 172 && second >= 16 && second <= 31) ||
+      (first === 192 && second === 168) ||
+      (first === 198 && (second === 18 || second === 19))
+    );
+  }
+  const compact = normalized.toLowerCase();
+  return (
+    compact === "::" ||
+    compact === "::1" ||
+    compact.startsWith("fc") ||
+    compact.startsWith("fd") ||
+    compact.startsWith("fe80") ||
+    compact.startsWith("ff")
+  );
+}
+
+function readIpv4Address(address: string): number[] | undefined {
+  const match = address.match(/(?:^|:)(\d{1,3}(?:\.\d{1,3}){3})$/);
+  const value = match?.[1] ?? (isIP(address) === 4 ? address : undefined);
+  if (!value) return undefined;
+  const parts = value.split(".").map((part) => Number.parseInt(part, 10));
+  return parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
+    ? parts
+    : undefined;
+}
+
+function isRedirectResponse(response: Response): boolean {
+  return response.status >= 300 && response.status < 400;
+}
+
+function assertHtmlPreviewResponse(response: Response): void {
+  const contentType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+  if (contentType !== "text/html" && contentType !== "application/xhtml+xml") {
+    throw new BadRequestException("链接解析仅支持 HTML 页面");
+  }
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && Number.parseInt(contentLength, 10) > LINK_PREVIEW_MAX_HTML_BYTES) {
+    throw new BadRequestException("链接页面过大");
+  }
+}
+
+async function readLimitedPreviewHtml(response: Response): Promise<string> {
+  if (!response.body) {
+    const text = await response.text();
+    if (Buffer.byteLength(text, "utf8") > LINK_PREVIEW_MAX_HTML_BYTES) throw new BadRequestException("链接页面过大");
+    return text;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    totalBytes += value.byteLength;
+    if (totalBytes > LINK_PREVIEW_MAX_HTML_BYTES) {
+      await reader.cancel();
+      throw new BadRequestException("链接页面过大");
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function parseHtmlPreview(html: string, baseUrl: string): { title?: string; desc?: string; thumbUrl?: string } {
+  const title =
+    readMetaContent(html, "property", "og:title") ??
+    readMetaContent(html, "name", "twitter:title") ??
+    readTitle(html);
+  const desc =
+    readMetaContent(html, "property", "og:description") ??
+    readMetaContent(html, "name", "description") ??
+    readMetaContent(html, "name", "twitter:description");
+  const rawThumbUrl =
+    readMetaContent(html, "property", "og:image") ??
+    readMetaContent(html, "name", "twitter:image");
+  const thumbUrl = rawThumbUrl ? resolvePreviewUrl(rawThumbUrl, baseUrl) : undefined;
+  return compactPreview({
+    title: normalizePreviewText(title),
+    desc: normalizePreviewText(desc),
+    thumbUrl,
+  });
+}
+
+function readMetaContent(html: string, key: "name" | "property", value: string): string | undefined {
+  const tagPattern = /<meta\b[^>]*>/gi;
+  for (const match of html.matchAll(tagPattern)) {
+    const tag = match[0] ?? "";
+    if (readHtmlAttribute(tag, key)?.toLowerCase() !== value.toLowerCase()) continue;
+    const content = readHtmlAttribute(tag, "content");
+    if (content) return decodeHtmlEntities(content);
+  }
+  return undefined;
+}
+
+function readTitle(html: string): string | undefined {
+  const match = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+  const title = match?.[1]?.replace(/<[^>]+>/g, "");
+  return title ? decodeHtmlEntities(title) : undefined;
+}
+
+function readHtmlAttribute(tag: string, attribute: string): string | undefined {
+  const pattern = new RegExp(`${attribute}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s"'>]+))`, "i");
+  const match = tag.match(pattern);
+  return match?.[2] ?? match?.[3] ?? match?.[4];
+}
+
+function resolvePreviewUrl(value: string, baseUrl: string): string | undefined {
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizePreviewText(value: string | undefined): string | undefined {
+  const normalized = value?.replace(/\s+/g, " ").trim();
+  return normalized || undefined;
+}
+
+function compactPreview(input: { title?: string; desc?: string; thumbUrl?: string }) {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => Boolean(value))) as {
+    title?: string;
+    desc?: string;
+    thumbUrl?: string;
+  };
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
 }

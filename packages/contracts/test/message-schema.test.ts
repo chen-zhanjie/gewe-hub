@@ -86,6 +86,15 @@ describe("标准消息契约", () => {
     expect(
       sendRequestSchema.parse({
         conversationId: "cvs_1",
+        type: "text",
+        text: "你好",
+        idempotencyKey: "idem_1",
+        requestId: "req_1"
+      }).idempotencyKey
+    ).toBe("idem_1");
+    expect(
+      sendRequestSchema.parse({
+        conversationId: "cvs_1",
         type: "image",
         contentBase64: "iVBORw0KGgo=",
         mimeType: "image/png",
@@ -116,24 +125,35 @@ describe("标准消息契约", () => {
         conversationId: "cvs_1",
         type: "video",
         mediaUrl: "https://cdn.example/video.mp4",
-        thumbUrl: "https://cdn.example/thumb.jpg",
-        durationMs: 10_000
+        thumbUrl: "https://cdn.example/video-cover.jpg"
+      }).type
+    ).toBe("video");
+    expect(
+      sendRequestSchema.parse({
+        conversationId: "cvs_1",
+        type: "video",
+        contentBase64: "AAAA",
+        mimeType: "video/mp4"
       }).type
     ).toBe("video");
     expect(
       sendRequestSchema.parse({
         conversationId: "cvs_1",
         type: "link",
-        title: "链接标题",
-        desc: "链接描述",
-        linkUrl: "https://example.com/article",
-        thumbUrl: "https://example.com/thumb.jpg"
+        linkUrl: "https://example.com/article"
       }).type
     ).toBe("link");
     expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "image" })).toThrow();
     expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "file" })).toThrow();
-    expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "video", mediaUrl: "https://cdn.example/video.mp4" })).toThrow();
-    expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "link", linkUrl: "https://example.com/article" })).toThrow();
+    expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "video" })).toThrow();
+    expect(() =>
+      sendRequestSchema.parse({
+        conversationId: "cvs_1",
+        type: "video",
+        mediaUrl: "https://cdn.example/video.mp4"
+      })
+    ).toThrow("远程视频消息必须提供缩略图");
+    expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "link" })).toThrow();
     expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "sticker" })).toThrow();
   });
 

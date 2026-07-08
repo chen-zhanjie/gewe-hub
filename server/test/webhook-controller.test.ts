@@ -21,11 +21,63 @@ describe("WebhookController", () => {
     expect(statusCode).toBe(200);
   });
 
+  it("GeWe 回调在入库前先写审计日志", async () => {
+    const calls: string[] = [];
+    const payload = { Appid: "wx_app", Data: { NewMsgId: "123" } };
+    const auditLogger = {
+      logReceived: vi.fn(async () => {
+        calls.push("audit");
+      }),
+    };
+    const webhook = {
+      store: vi.fn(async () => {
+        calls.push("store");
+        return { duplicated: false };
+      }),
+    };
+    const controller = new WebhookController(
+      webhook as never,
+      { setCallback: vi.fn() } as never,
+      auditLogger as never,
+    );
+
+    await controller.receive("replace-with-random-secret", payload);
+
+    expect(auditLogger.logReceived).toHaveBeenCalledWith(payload);
+    expect(calls).toEqual(["audit", "store"]);
+  });
+
+  it("GeWe 回调审计日志写入失败时仍继续入库", async () => {
+    const payload = { Appid: "wx_app", Data: { NewMsgId: "123" } };
+    const auditLogger = {
+      logReceived: vi.fn(async () => {
+        throw new Error("disk full");
+      }),
+    };
+    const webhook = {
+      store: vi.fn(async () => ({ duplicated: false })),
+    };
+    const controller = new WebhookController(
+      webhook as never,
+      { setCallback: vi.fn() } as never,
+      auditLogger as never,
+    );
+
+    const result = await controller.receive("replace-with-random-secret", payload);
+
+    expect(result).toEqual({ ok: true, duplicated: false });
+    expect(webhook.store).toHaveBeenCalledWith(payload);
+  });
+
   it("设置回调时允许用请求体覆盖回调 URL 前缀", async () => {
     const geweClient = {
       setCallback: async (callbackUrl: string) => ({ callbackUrl }),
     };
-    const controller = new WebhookController({ store: async () => ({ duplicated: false }) } as never, geweClient as never);
+    const controller = new WebhookController(
+      { store: async () => ({ duplicated: false }) } as never,
+      geweClient as never,
+      { logReceived: async () => undefined } as never,
+    );
 
     const result = await controller.setCallback({
       baseUrl: "http://3i2956l679.51vip.biz/",

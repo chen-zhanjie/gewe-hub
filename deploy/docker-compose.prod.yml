@@ -1,0 +1,30 @@
+services:
+  app:
+    image: gewehub:latest
+    container_name: gewehub
+    restart: unless-stopped
+    env_file:
+      - ./.env.production
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      FILE_STORAGE_DIR: /app/server/storage/files
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://gewehub.yunzxu.com}
+      WEB_ORIGIN: ${WEB_ORIGIN:-${PUBLIC_BASE_URL:-https://gewehub.yunzxu.com}}
+    ports:
+      - "127.0.0.1:${HOST_PORT:-1870}:80"
+    volumes:
+      - ./runtime/files:/app/server/storage/files
+      - ./runtime/logs:/app/server/storage/logs
+    networks:
+      - 1panel-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/api/health | grep -q '\"ok\":true'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+networks:
+  1panel-network:
+    external: true

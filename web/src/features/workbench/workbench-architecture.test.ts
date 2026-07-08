@@ -116,9 +116,13 @@ describe("Workbench 前端架构", () => {
   it("消息发送编辑器拆出独立模块，WorkbenchPage 不再承载附件条和工具栏渲染", () => {
     const source = readFileSync(resolve(__dirname, "WorkbenchPage.tsx"), "utf8");
     const composerPath = resolve(__dirname, "MessageComposer.tsx");
+    const composerOutletPath = resolve(__dirname, "WorkbenchComposerOutlet.tsx");
+    const composerOutletSource = readFileSync(composerOutletPath, "utf8");
 
     expect(existsSync(composerPath)).toBe(true);
-    expect(source).toContain('from "@/features/workbench/MessageComposer"');
+    expect(existsSync(composerOutletPath)).toBe(true);
+    expect(source).toContain('from "@/features/workbench/WorkbenchComposerOutlet"');
+    expect(composerOutletSource).toContain('from "@/features/workbench/MessageComposer"');
     expect(source).not.toContain("function PendingAttachmentBar(");
     expect(source).not.toContain("function PendingAttachmentIcon(");
   });

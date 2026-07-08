@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
-import { KeyRound, Link2, Pencil, Plus } from "lucide-react";
+import { KeyRound, Link2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/ui/DataTable";
 import { EntityCell } from "@/components/ui/EntityCell";
@@ -12,6 +12,7 @@ import { apiFetch } from "@/lib/api";
 import type { BackendAccount } from "../queries";
 import { AppFormSheet } from "./AppFormSheet";
 import { BindingSheet } from "./BindingSheet";
+import { DeleteAppDialog } from "./DeleteAppDialog";
 import { ResetTokenDialog } from "./ResetTokenDialog";
 import {
   AppConversationsResponse,
@@ -43,6 +44,10 @@ export function AppsPage() {
   const [resettingId, setResettingId] = useState<string | null>(null);
   const [confirmingResetApp, setConfirmingResetApp] = useState<BackendHubApp | null>(null);
   const [resetConfirmText, setResetConfirmText] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmingDeleteApp, setConfirmingDeleteApp] = useState<BackendHubApp | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [bindingApp, setBindingApp] = useState<BackendHubApp | null>(null);
   const [boundConversations, setBoundConversations] = useState<BackendAppConversation[]>([]);
   const [bindingsLoading, setBindingsLoading] = useState(false);
@@ -119,10 +124,24 @@ export function AppsPage() {
           >
             <KeyRound className="size-4" />
           </button>
+          <button
+            type="button"
+            aria-label={`停用应用 ${row.original.name}`}
+            title={`停用应用 ${row.original.name}`}
+            disabled={deletingId === row.original.id}
+            onClick={() => {
+              setConfirmingDeleteApp(row.original.source);
+              setDeleteConfirmText("");
+              setDeleteError(null);
+            }}
+            className="rounded-md border border-destructive/40 p-2 text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Trash2 className="size-4" />
+          </button>
         </div>
       ),
     },
-  ], [resettingId]);
+  ], [deletingId, resettingId]);
 
   useEffect(() => {
     if (!formOpen) return;
@@ -216,6 +235,24 @@ export function AppsPage() {
       setActionError(resetError instanceof Error ? resetError.message : "重置 token 失败");
     } finally {
       setResettingId(null);
+    }
+  }
+
+  async function handleDeleteApp(app: BackendHubApp) {
+    if (deletingId || deleteConfirmText !== app.name) return;
+    setDeletingId(app.id);
+    setDeleteError(null);
+    try {
+      await apiFetch(`/api/apps/${app.id}`, { method: "DELETE" });
+      await reload();
+      toast.success("应用已停用");
+      if (bindingApp?.id === app.id) setBindingApp(null);
+      setConfirmingDeleteApp(null);
+      setDeleteConfirmText("");
+    } catch (deleteError) {
+      setDeleteError(deleteError instanceof Error ? deleteError.message : "停用应用失败");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -313,6 +350,23 @@ export function AppsPage() {
         }}
         onConfirm={() => {
           if (confirmingResetApp) void handleResetToken(confirmingResetApp);
+        }}
+      />
+      <DeleteAppDialog
+        app={confirmingDeleteApp}
+        deletingId={deletingId}
+        error={deleteError}
+        confirmText={deleteConfirmText}
+        onConfirmTextChange={setDeleteConfirmText}
+        onOpenChange={(open) => {
+          if (!open && !deletingId) {
+            setConfirmingDeleteApp(null);
+            setDeleteConfirmText("");
+            setDeleteError(null);
+          }
+        }}
+        onConfirm={() => {
+          if (confirmingDeleteApp) void handleDeleteApp(confirmingDeleteApp);
         }}
       />
     </PageShell>

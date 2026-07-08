@@ -1,6 +1,7 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, NotFoundException, Param, Post } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, HttpCode, Logger, NotFoundException, Param, Post } from "@nestjs/common";
 import { z } from "zod";
 import { loadEnv } from "../../config/env.js";
+import { WebhookAuditLogger } from "./webhook-audit-logger.service.js";
 import { GeweClientService } from "./gewe-client.service.js";
 import { WebhookService } from "./webhook.service.js";
 
@@ -13,10 +14,12 @@ const setCallbackSchema = z
 @Controller()
 export class WebhookController {
   private readonly env = loadEnv();
+  private readonly logger = new Logger(WebhookController.name);
 
   constructor(
     private readonly webhook: WebhookService,
-    private readonly geweClient: GeweClientService
+    private readonly geweClient: GeweClientService,
+    private readonly webhookAudit: WebhookAuditLogger
   ) {}
 
   @Post("/webhook/gewe/:secret")
@@ -25,6 +28,9 @@ export class WebhookController {
     if (secret !== this.env.WEBHOOK_SECRET) {
       throw new NotFoundException();
     }
+    await this.webhookAudit.logReceived(payload).catch((error: unknown) => {
+      this.logger.warn(`GeWe 回调审计日志写入失败: ${error instanceof Error ? error.message : String(error)}`);
+    });
     const result = await this.webhook.store(payload);
     return {
       ok: true,

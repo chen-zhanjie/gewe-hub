@@ -299,11 +299,8 @@ export class ConversationsController {
       ${where}
       ORDER BY
         c.pinned_at IS NULL ASC,
-        GREATEST(
-          COALESCE(c.last_message_at, CAST('1970-01-01 00:00:00' AS DATETIME)),
-          COALESCE(c.last_opened_at, CAST('1970-01-01 00:00:00' AS DATETIME))
-        ) DESC,
-        c.updated_at DESC
+        COALESCE(c.last_message_at, CAST('1970-01-01 00:00:00' AS DATETIME)) DESC,
+        c.created_at DESC
       LIMIT 100
     `);
     return rows.map((row) => row.id);
@@ -321,7 +318,7 @@ export class ConversationsController {
     if (!contact) throw new BadRequestException("联系人不存在或尚未同步");
     if (contact.status !== "active") throw new BadRequestException("联系人状态不可用");
     return {
-      name: firstText(contact.nickname, contact.wxid) ?? contact.wxid,
+      name: firstText(contact.platformRemark, contact.nickname, contact.wxid) ?? contact.wxid,
       avatarUrl: firstText(contact.avatarUrl) ?? null,
       platformRemark: firstText(contact.platformRemark) ?? null
     };
@@ -339,7 +336,7 @@ export class ConversationsController {
     if (!group) throw new BadRequestException("群聊不存在或尚未同步");
     if (group.status !== "active") throw new BadRequestException("群聊状态不可用");
     return {
-      name: firstText(group.name, group.wxid) ?? group.wxid,
+      name: firstText(group.platformRemark, group.name, group.wxid) ?? group.wxid,
       avatarUrl: firstText(group.avatarUrl) ?? null,
       platformRemark: firstText(group.platformRemark) ?? null,
       memberCount: group.memberCount ?? null

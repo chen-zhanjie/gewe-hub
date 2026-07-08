@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { loadEnv } from "../../config/env.js";
+import { preserveLargeIntegerFields } from "./webhook-utils.js";
 
 type MediaKind = "image" | "voice" | "video" | "file" | "emoji";
 
@@ -74,7 +75,7 @@ export class GeweClientService {
     return this.post("/gewe/v2/api/group/getChatroomMemberDetail", { appId, chatroomId, memberWxids });
   }
 
-  async sendText(params: { appId: string; toWxid: string; content: string; ats?: string[] }) {
+  async sendText(params: { appId: string; toWxid: string; content: string; ats?: string }) {
     return this.post("/gewe/v2/api/message/postText", params);
   }
 
@@ -95,7 +96,10 @@ export class GeweClientService {
     newMsgId: string;
     createTime: string;
   }) {
-    return this.post("/gewe/v2/api/message/revokeMsg", params, this.env.GEWE_SEND_TIMEOUT_MS);
+    const result = await this.post("/gewe/v2/api/message/revokeMsg", params, this.env.GEWE_SEND_TIMEOUT_MS);
+    const businessError = getBusinessError(result);
+    if (businessError) throw new Error(`GeWe 撤回失败: ${businessError}`);
+    return result;
   }
 
   async downloadMedia(params: DownloadMediaParams): Promise<{ fileUrl: string }> {
@@ -134,7 +138,9 @@ export class GeweClientService {
     if (!response.ok) {
       throw new Error(`GeWe HTTP ${response.status}`);
     }
-    return response.json() as Promise<unknown>;
+    const text = await response.text();
+    if (!text.trim()) return {};
+    return JSON.parse(preserveLargeIntegerFields(text)) as unknown;
   }
 }
 

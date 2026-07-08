@@ -71,6 +71,7 @@ export interface PrepareOutboundFileInput {
   accountId: string;
   conversationId: string;
   kind: Exclude<MediaKind, "voice" | "emoji">;
+  purpose?: "media" | "thumbnail";
   contentBase64?: string;
   mediaUrl?: string;
   fileUrl?: string;
@@ -91,6 +92,12 @@ export interface PreparedOutboundFile {
   fileName: string;
   size: number;
   durationMs?: number;
+}
+
+export interface PrepareOutboundVideoThumbnailInput {
+  accountId: string;
+  videoPath: string;
+  fileName?: string;
 }
 
 interface OutboundFileRecord {
@@ -365,12 +372,26 @@ export class MediaService {
 
   async prepareOutboundFile(input: PrepareOutboundFileInput): Promise<PreparedOutboundFile> {
     const source = await this.loadOutboundFileSource(input);
-    const outbound = await normalizeOutboundFileSource(input.kind, source);
+    const outbound = await normalizeOutboundFileSource(input.kind, source, input.purpose ?? "media");
     return this.writeOutboundFile({
       accountId: input.accountId,
       bytes: outbound.bytes,
       mimeType: outbound.mimeType,
       fileName: outbound.fileName,
+    });
+  }
+
+  async prepareOutboundVideoThumbnail(input: PrepareOutboundVideoThumbnailInput): Promise<PreparedOutboundFile> {
+    const fileName = input.fileName ?? basename(input.videoPath);
+    const source = await normalizeOutboundVideoThumbnailSource({
+      path: input.videoPath,
+      fileName,
+    });
+    return this.writeOutboundFile({
+      accountId: input.accountId,
+      bytes: source.bytes,
+      mimeType: source.mimeType,
+      fileName: source.fileName,
     });
   }
 
@@ -1036,7 +1057,10 @@ function updateNodeMediaAtPath(
     };
     return {
       ...node,
-      text: patch.status === "failed" ? failedMediaText(node) : node.text,
+      text:
+        patch.status === "failed"
+          ? failedMediaText(node)
+          : restoredMediaText(node),
       media,
     };
   }
@@ -1089,6 +1113,16 @@ function failedMediaText(node: MessageNode): string {
   return `${node.text || "[媒体]"} 下载失败`;
 }
 
+function restoredMediaText(node: MessageNode): string {
+  const fileName = node.media?.fileName;
+  if (node.type === "file") return fileName ? `[文件] ${fileName}` : "[文件]";
+  if (node.type === "image") return "[图片]";
+  if (node.type === "voice") return "[语音]";
+  if (node.type === "video") return "[视频]";
+  if (node.type === "emoji") return "[动画表情]";
+  return node.text;
+}
+
 async function normalizeOutboundFileSource(
   kind: "image" | "file" | "video",
   source: {
@@ -1096,8 +1130,12 @@ async function normalizeOutboundFileSource(
     mimeType: string;
     fileName: string;
   },
+  purpose: "media" | "thumbnail",
 ): Promise<{ bytes: Buffer; mimeType: string; fileName: string }> {
   if (kind !== "image") return source;
+  if (purpose === "thumbnail") {
+    return normalizeOutboundThumbnailSource(source);
+  }
   const mimeType = source.mimeType.toLowerCase();
   if (mimeType.includes("gif") || source.fileName.toLowerCase().endsWith(".gif")) {
     return source;
@@ -1129,6 +1167,115 @@ async function normalizeOutboundFileSource(
       mimeType: usePng ? "image/png" : "image/jpeg",
       fileName: ensureExtension(stripExtension(source.fileName) || "image", usePng ? ".png" : ".jpg"),
     };
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+}
+
+async function normalizeOutboundThumbnailSource(source: {
+  bytes: Buffer;
+  mimeType: string;
+  fileName: string;
+}): Promise<{ bytes: Buffer; mimeType: string; fileName: string }> {
+  const directory = await mkdtemp(join(tmpdir(), "gewehub-outbound-thumb-"));
+  const inputPath = join(directory, safeFileName(source.fileName));
+  const outputStem = stripExtension(source.fileName) || "thumbnail";
+  try {
+    await writeFile(inputPath, source.bytes);
+    let fallback: Buffer | undefined;
+    for (const size of [320, 240, 160, 96]) {
+      for (const quality of [5, 8, 12, 16, 20, 24, 28, 31]) {
+        const outputPath = join(directory, `thumbnail-${size}-${quality}.jpg`);
+        await execFileAsync("ffmpeg", [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-y",
+          "-i",
+          inputPath,
+          "-map_metadata",
+          "-1",
+          "-frames:v",
+          "1",
+          "-vf",
+          `scale=${size}:${size}:force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p`,
+          "-q:v",
+          String(quality),
+          outputPath,
+        ]);
+        const bytes = await readFile(outputPath);
+        fallback = bytes;
+        if (bytes.byteLength <= 51_200) {
+          return {
+            bytes,
+            mimeType: "image/jpeg",
+            fileName: ensureExtension(outputStem, ".jpg"),
+          };
+        }
+      }
+    }
+    if (fallback) {
+      return {
+        bytes: fallback,
+        mimeType: "image/jpeg",
+        fileName: ensureExtension(outputStem, ".jpg"),
+      };
+    }
+    throw new Error("缩略图压缩失败");
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+}
+
+async function normalizeOutboundVideoThumbnailSource(source: {
+  path: string;
+  fileName: string;
+}): Promise<{ bytes: Buffer; mimeType: string; fileName: string }> {
+  const directory = await mkdtemp(join(tmpdir(), "gewehub-outbound-video-thumb-"));
+  const outputStem = stripExtension(source.fileName) || "thumbnail";
+  try {
+    let fallback: Buffer | undefined;
+    for (const size of [320, 240, 160, 96]) {
+      for (const quality of [5, 8, 12, 16, 20, 24, 28, 31]) {
+        const outputPath = join(directory, `thumbnail-${size}-${quality}.jpg`);
+        await execFileAsync("ffmpeg", [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-y",
+          "-ss",
+          "0",
+          "-i",
+          source.path,
+          "-map_metadata",
+          "-1",
+          "-frames:v",
+          "1",
+          "-vf",
+          `scale=${size}:${size}:force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p`,
+          "-q:v",
+          String(quality),
+          outputPath,
+        ]);
+        const bytes = await readFile(outputPath);
+        fallback = bytes;
+        if (bytes.byteLength <= 51_200) {
+          return {
+            bytes,
+            mimeType: "image/jpeg",
+            fileName: ensureExtension(outputStem, ".jpg"),
+          };
+        }
+      }
+    }
+    if (fallback) {
+      return {
+        bytes: fallback,
+        mimeType: "image/jpeg",
+        fileName: ensureExtension(outputStem, ".jpg"),
+      };
+    }
+    throw new Error("视频缩略图生成失败");
   } finally {
     await rm(directory, { force: true, recursive: true });
   }

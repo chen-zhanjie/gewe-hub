@@ -232,6 +232,46 @@ describe("WorkbenchPage realtime events", () => {
     ).toBe(false);
   });
 
+  it("初次打开有历史消息的会话后自动滚动到底部", async () => {
+    const clientHeightSpy = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(300);
+    const scrollHeightSpy = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(1600);
+    mockFetch({
+      "/api/accounts": [
+        {
+          id: "acc_1",
+          wxid: "wxid_bot",
+          nickname: "客服主号",
+          onlineStatus: "online",
+        },
+      ],
+      "/api/conversations": [
+        {
+          id: "conv_1",
+          peerWxid: "wxid_target",
+          type: "private",
+          platformRemark: "陈可乐",
+          lastMessageText: "最新消息",
+          lastMessageAt: "2026-07-06T07:18:37.000Z",
+          status: "active",
+        },
+      ],
+      "/api/conversations/conv_1/messages?take=50": [
+        messageFixture("row_new", "msg_new", "最新消息", "2026-07-06T07:18:37.000Z"),
+        messageFixture("row_old", "msg_old", "历史消息", "2026-07-06T07:16:37.000Z"),
+      ],
+    });
+
+    const { container } = renderWorkbenchPage();
+
+    await screen.findByText("最新消息");
+    const messageList = container.querySelector(".overflow-y-auto.p-6") as HTMLDivElement | null;
+    expect(messageList).toBeTruthy();
+
+    await waitFor(() => expect(messageList!.scrollTop).toBe(1600));
+    clientHeightSpy.mockRestore();
+    scrollHeightSpy.mockRestore();
+  });
+
   it("不在底部时收到当前会话 SSE 消息显示新消息浮标，点击后滚到底部并清零", async () => {
     const eventSources: FakeEventSource[] = [];
     vi.stubGlobal("EventSource", class extends FakeEventSource {
@@ -275,6 +315,7 @@ describe("WorkbenchPage realtime events", () => {
       scrollHeight: { configurable: true, value: 1200 },
     });
     messageList!.scrollTop = 200;
+    fireEvent.scroll(messageList!);
 
     eventSources[0]?.emit("message.created", {
       conversationId: "conv_1",

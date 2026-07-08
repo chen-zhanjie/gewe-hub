@@ -1,4 +1,5 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockFetch, renderWorkbenchPage } from "./WorkbenchPage.test-utils";
 
@@ -433,7 +434,7 @@ describe("WorkbenchPage composer", () => {
     expect(screen.queryByText("松开发送给 陈可乐")).not.toBeInTheDocument();
   });
 
-  it("选择视频文件后以 base64、缩略图和时长提交 video 发送请求", async () => {
+  it("视频按钮打开表单，上传视频和封面图片后提交 video 发送请求", async () => {
     const fetchMock = mockFetch({
       "/api/accounts": [
         {
@@ -478,12 +479,15 @@ describe("WorkbenchPage composer", () => {
     renderWorkbenchPage();
 
     await screen.findByText("客服主号");
-    fireEvent.change(screen.getByLabelText("视频缩略图 URL"), {
-      target: { value: "https://cdn.example/thumb.jpg" },
-    });
-    const videoInput = screen.getByLabelText("选择视频文件") as HTMLInputElement;
+    fireEvent.click(screen.getByRole("button", { name: "视频" }));
+    const dialog = await screen.findByRole("dialog", { name: "发送视频" });
+    const videoInput = within(dialog).getByLabelText("上传视频文件") as HTMLInputElement;
+    const coverInput = within(dialog).getByLabelText("上传视频封面图") as HTMLInputElement;
     const file = new File([new Uint8Array([0, 0, 0, 24])], "clip.mp4", { type: "video/mp4" });
+    const coverFile = new File([new Uint8Array([137, 80, 78, 71])], "cover.png", { type: "image/png" });
     fireEvent.change(videoInput, { target: { files: [file] } });
+    fireEvent.change(coverInput, { target: { files: [coverFile] } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "发送视频" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -496,7 +500,9 @@ describe("WorkbenchPage composer", () => {
             contentBase64: "AAAAGA==",
             mimeType: "video/mp4",
             fileName: "clip.mp4",
-            thumbUrl: "https://cdn.example/thumb.jpg",
+            thumbContentBase64: "iVBORw==",
+            thumbMimeType: "image/png",
+            thumbFileName: "cover.png",
             durationMs: 10400
           }),
           credentials: "include",
@@ -508,7 +514,89 @@ describe("WorkbenchPage composer", () => {
     createElement.mockRestore();
   });
 
-  it("填写链接表单后提交 link 发送请求", async () => {
+  it("视频未上传封面时自动截取第一帧作为封面", async () => {
+    const fetchMock = mockFetch({
+      "/api/accounts": [
+        {
+          id: "acc_1",
+          wxid: "wxid_bot",
+          nickname: "客服主号",
+          onlineStatus: "online",
+        },
+      ],
+      "/api/conversations": [
+        {
+          id: "conv_1",
+          peerWxid: "wxid_target",
+          type: "private",
+          platformRemark: "陈可乐",
+          lastMessageText: "旧消息",
+          lastMessageAt: "2026-07-06T07:16:37.000Z",
+          status: "active",
+        },
+      ],
+      "/api/conversations/conv_1/messages?take=50": [],
+      "/api/send": { id: "send_video", status: "pending" },
+    });
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn(() => "blob:video"),
+      revokeObjectURL: vi.fn(),
+    });
+    const originalCreateElement = document.createElement.bind(document);
+    const createElement = vi.spyOn(document, "createElement");
+    createElement.mockImplementation((tagName: string, options?: ElementCreationOptions) => {
+      const element = originalCreateElement(tagName, options);
+      if (tagName.toLowerCase() === "video") {
+        Object.defineProperty(element, "duration", { value: 4.2, configurable: true });
+        Object.defineProperty(element, "videoWidth", { value: 640, configurable: true });
+        Object.defineProperty(element, "videoHeight", { value: 360, configurable: true });
+        setTimeout(() => element.dispatchEvent(new Event("loadedmetadata")), 0);
+        setTimeout(() => element.dispatchEvent(new Event("seeked")), 0);
+      }
+      if (tagName.toLowerCase() === "canvas") {
+        Object.defineProperty(element, "getContext", {
+          configurable: true,
+          value: vi.fn(() => ({ drawImage: vi.fn() })),
+        });
+        Object.defineProperty(element, "toDataURL", {
+          configurable: true,
+          value: vi.fn(() => "data:image/jpeg;base64,/9j/4AAQSkZJRg=="),
+        });
+      }
+      return element;
+    });
+
+    renderWorkbenchPage();
+
+    await screen.findByText("客服主号");
+    fireEvent.click(screen.getByRole("button", { name: "视频" }));
+    const dialog = await screen.findByRole("dialog", { name: "发送视频" });
+    const videoInput = within(dialog).getByLabelText("上传视频文件") as HTMLInputElement;
+    const file = new File([new Uint8Array([0, 0, 0, 24])], "clip.mp4", { type: "video/mp4" });
+    fireEvent.change(videoInput, { target: { files: [file] } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "发送视频" }));
+
+    await waitFor(() => {
+      const sendCall = fetchMock.mock.calls.find(([input]) => String(input).replace("http://localhost", "") === "/api/send");
+      expect(sendCall).toBeTruthy();
+      const [, init] = sendCall!;
+      expect(JSON.parse(String(init?.body))).toEqual({
+        conversationId: "conv_1",
+        type: "video",
+        contentBase64: "AAAAGA==",
+        mimeType: "video/mp4",
+        fileName: "clip.mp4",
+        thumbContentBase64: "/9j/4AAQSkZJRg==",
+        thumbMimeType: "image/jpeg",
+        thumbFileName: "clip-cover.jpg",
+        durationMs: 4200,
+      });
+    });
+    createElement.mockRestore();
+  });
+
+  it("链接表单只要求链接地址，缩略图用上传图片提交", async () => {
     const fetchMock = mockFetch({
       "/api/accounts": [
         {
@@ -537,11 +625,14 @@ describe("WorkbenchPage composer", () => {
 
     await screen.findByText("客服主号");
     fireEvent.click(screen.getByRole("button", { name: "链接" }));
-    fireEvent.change(screen.getByLabelText("链接标题"), { target: { value: "文章标题" } });
-    fireEvent.change(screen.getByLabelText("链接描述"), { target: { value: "文章摘要" } });
-    fireEvent.change(screen.getByLabelText("链接地址"), { target: { value: "https://example.com/article" } });
-    fireEvent.change(screen.getByLabelText("链接缩略图 URL"), { target: { value: "https://example.com/thumb.jpg" } });
-    fireEvent.click(screen.getByRole("button", { name: "发送链接" }));
+    const dialog = await screen.findByRole("dialog", { name: "发送链接" });
+    fireEvent.change(within(dialog).getByLabelText("链接标题"), { target: { value: "文章标题" } });
+    fireEvent.change(within(dialog).getByLabelText("链接描述"), { target: { value: "文章摘要" } });
+    fireEvent.change(within(dialog).getByLabelText("链接地址"), { target: { value: "https://example.com/article" } });
+    const thumbInput = within(dialog).getByLabelText("上传链接缩略图") as HTMLInputElement;
+    const thumbFile = new File([new Uint8Array([255, 216, 255])], "thumb.jpg", { type: "image/jpeg" });
+    fireEvent.change(thumbInput, { target: { files: [thumbFile] } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "发送链接" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -554,15 +645,106 @@ describe("WorkbenchPage composer", () => {
             title: "文章标题",
             desc: "文章摘要",
             linkUrl: "https://example.com/article",
-            thumbUrl: "https://example.com/thumb.jpg"
+            thumbContentBase64: "/9j/",
+            thumbMimeType: "image/jpeg",
+            thumbFileName: "thumb.jpg"
           }),
           credentials: "include",
         }),
       ),
     );
-    expect(screen.getByLabelText("链接标题")).toHaveValue("");
-    expect(screen.getByLabelText("链接描述")).toHaveValue("");
-    expect(screen.getByLabelText("链接地址")).toHaveValue("");
-    expect(screen.getByLabelText("链接缩略图 URL")).toHaveValue("");
+    expect(screen.queryByRole("dialog", { name: "发送链接" })).not.toBeInTheDocument();
+  });
+
+  it("链接未填写标题描述和缩略图时自动补默认值", async () => {
+    const fetchMock = mockFetch({
+      "/api/accounts": [
+        {
+          id: "acc_1",
+          wxid: "wxid_bot",
+          nickname: "客服主号",
+          onlineStatus: "online",
+        },
+      ],
+      "/api/conversations": [
+        {
+          id: "conv_1",
+          peerWxid: "wxid_target",
+          type: "private",
+          platformRemark: "陈可乐",
+          lastMessageText: "旧消息",
+          lastMessageAt: "2026-07-06T07:16:37.000Z",
+          status: "active",
+        },
+      ],
+      "/api/conversations/conv_1/messages?take=50": [],
+      "/api/send": { id: "send_link", status: "pending" },
+    });
+
+    renderWorkbenchPage();
+
+    await screen.findByText("客服主号");
+    fireEvent.click(screen.getByRole("button", { name: "链接" }));
+    const dialog = await screen.findByRole("dialog", { name: "发送链接" });
+    fireEvent.change(within(dialog).getByLabelText("链接地址"), { target: { value: "https://example.com/article" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "发送链接" }));
+
+    await waitFor(() => {
+      const sendCall = fetchMock.mock.calls.find(([input]) => String(input).replace("http://localhost", "") === "/api/send");
+      expect(sendCall).toBeTruthy();
+      const [, init] = sendCall!;
+      expect(JSON.parse(String(init?.body))).toEqual({
+        conversationId: "conv_1",
+        type: "link",
+        title: "example.com",
+        desc: "https://example.com/article",
+        linkUrl: "https://example.com/article",
+      });
+    });
+  });
+
+  it("链接表单支持解析链接并回填标题描述", async () => {
+    const fetchMock = mockFetch({
+      "/api/accounts": [
+        {
+          id: "acc_1",
+          wxid: "wxid_bot",
+          nickname: "客服主号",
+          onlineStatus: "online",
+        },
+      ],
+      "/api/conversations": [
+        {
+          id: "conv_1",
+          peerWxid: "wxid_target",
+          type: "private",
+          platformRemark: "陈可乐",
+          lastMessageText: "旧消息",
+          lastMessageAt: "2026-07-06T07:16:37.000Z",
+          status: "active",
+        },
+      ],
+      "/api/conversations/conv_1/messages?take=50": [],
+      "/api/link-preview?url=https%3A%2F%2Fexample.com%2Farticle": {
+        title: "解析标题",
+        desc: "解析摘要",
+        linkUrl: "https://example.com/article",
+        thumbUrl: "https://example.com/og.jpg",
+      },
+    });
+
+    renderWorkbenchPage();
+
+    await screen.findByText("客服主号");
+    fireEvent.click(screen.getByRole("button", { name: "链接" }));
+    const dialog = await screen.findByRole("dialog", { name: "发送链接" });
+    fireEvent.change(within(dialog).getByLabelText("链接地址"), { target: { value: "https://example.com/article" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "解析链接" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/link-preview?url=https%3A%2F%2Fexample.com%2Farticle", expect.anything());
+      expect(within(dialog).getByLabelText("链接标题")).toHaveValue("解析标题");
+      expect(within(dialog).getByLabelText("链接描述")).toHaveValue("解析摘要");
+    });
   });
 });

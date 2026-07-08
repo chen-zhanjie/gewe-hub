@@ -3,7 +3,8 @@ import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, NestFastifyApplication } from "@nestjs/platform-fastify";
 import { loadEnv } from "./config/env.js";
 import { AppModule } from "./app.module.js";
-import { parseWebhookJsonBody } from "./modules/gewe/webhook-utils.js";
+import { registerJsonContentParser } from "./http/json-content-parser.js";
+import { registerWebhookGatewayRawLoggingHook } from "./http/webhook-gateway-raw-logging-hook.js";
 
 async function bootstrap() {
   const env = loadEnv();
@@ -11,18 +12,8 @@ async function bootstrap() {
     bodyLimit: env.JSON_BODY_LIMIT_BYTES
   });
   const fastify = adapter.getInstance();
-  fastify.removeContentTypeParser("application/json");
-  fastify.addContentTypeParser(
-    "application/json",
-    { parseAs: "string", bodyLimit: env.JSON_BODY_LIMIT_BYTES },
-    (_request, body, done) => {
-      try {
-        done(null, parseWebhookJsonBody(body as string));
-      } catch (error) {
-        done(error as Error, undefined);
-      }
-    }
-  );
+  registerWebhookGatewayRawLoggingHook(fastify, env);
+  registerJsonContentParser(fastify, env);
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter, {
     bodyParser: false
   });

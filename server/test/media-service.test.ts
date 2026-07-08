@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -497,6 +498,87 @@ describe("MediaService", () => {
       eventType: "message.updated",
       conversationId: "conv_1",
       messageId: "msg_1",
+    });
+  });
+
+  it("文件下载失败后重试成功时恢复正常消息摘要", async () => {
+    const payload = {
+      ...fileEnvelope(),
+      content: {
+        ...fileEnvelope().content,
+        text: "[文件: mapping_app.txt] 下载失败",
+        media: {
+          ...fileEnvelope().content.media,
+          status: "failed",
+          url: null,
+        },
+      },
+      renderedText: "[文件: mapping_app.txt] 下载失败",
+    } satisfies MessageEnvelope;
+    const prisma = {
+      mediaAsset: {
+        findUnique: vi.fn(async () => ({
+          id: "asset_file",
+          accountId: "account_1",
+          messageId: "message_file",
+          nodePath: "content.media",
+          kind: "file",
+          fileName: "mapping_app.txt",
+          sourcePayload: {
+            appId: "wx_app",
+            kind: "file",
+            msgId: "123",
+            rawContent: "<msg><appmsg /></msg>",
+          },
+          message: {
+            id: "message_file",
+            conversationId: "conv_1",
+            messageId: "msg_file",
+            payload,
+          },
+        })),
+        update: vi.fn(async (_args: unknown) => ({})),
+      },
+      message: {
+        update: vi.fn(async (_args: unknown) => ({})),
+      },
+    };
+    const gewe = {
+      downloadMedia: vi.fn(async () => ({
+        fileUrl: "https://download.example/mapping_app.txt",
+      })),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(new Uint8Array([1, 2, 3]), {
+            headers: { "content-type": "text/plain" },
+            status: 200,
+          }),
+      ),
+    );
+    const service = new MediaService(prisma as never, gewe as never);
+
+    await service.downloadMediaAsset("asset_file");
+
+    expect(prisma.message.update).toHaveBeenCalledWith({
+      where: { id: "message_file" },
+      data: expect.objectContaining({
+        payload: expect.objectContaining({
+          content: expect.objectContaining({
+            text: "[文件] mapping_app.txt",
+            media: expect.objectContaining({
+              status: "ready",
+              url: expect.stringMatching(
+                /^http:\/\/localhost:3000\/files\/asset_file\?exp=\d+&sig=/,
+              ),
+            }),
+          }),
+          renderedText: "[文件] mapping_app.txt",
+        }),
+        renderedText: "[文件] mapping_app.txt",
+      }),
     });
   });
 
@@ -1122,6 +1204,73 @@ describe("MediaService", () => {
     expect(written.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
     expect(written.includes(Buffer.from("jumb"))).toBe(false);
     expect(written.includes(Buffer.from("c2pa"))).toBe(false);
+  });
+
+  it("发送链接或视频缩略图前压缩为 GeWe 可接受的小 JPEG", async () => {
+    const service = new MediaService({} as never, {} as never);
+    const sourcePath = join(storageDir, "large-thumbnail.png");
+    execFileSync("ffmpeg", [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=size=1280x720:rate=1",
+      "-frames:v",
+      "1",
+      sourcePath,
+    ]);
+    const sourceBytes = readFileSync(sourcePath);
+
+    const prepared = await service.prepareOutboundFile({
+      accountId: "account_1",
+      conversationId: "conversation_1",
+      kind: "image",
+      purpose: "thumbnail",
+      contentBase64: sourceBytes.toString("base64"),
+      mimeType: "image/png",
+      fileName: "large-thumbnail.png",
+    });
+    const written = readFileSync(prepared.path);
+
+    expect(prepared.mimeType).toBe("image/jpeg");
+    expect(prepared.fileName).toBe("large-thumbnail.jpg");
+    expect(prepared.size).toBeLessThanOrEqual(51_200);
+    expect(written.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
+  });
+
+  it("发送视频未上传封面时可从第一帧生成缩略图", async () => {
+    const service = new MediaService({} as never, {} as never);
+    const sourcePath = join(storageDir, "clip.mp4");
+    execFileSync("ffmpeg", [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=size=320x180:rate=1",
+      "-t",
+      "1",
+      "-pix_fmt",
+      "yuv420p",
+      sourcePath,
+    ]);
+
+    const prepared = await service.prepareOutboundVideoThumbnail({
+      accountId: "account_1",
+      videoPath: sourcePath,
+      fileName: "clip.mp4",
+    });
+    const written = readFileSync(prepared.path);
+
+    expect(prepared.mimeType).toBe("image/jpeg");
+    expect(prepared.fileName).toBe("clip.jpg");
+    expect(prepared.size).toBeLessThanOrEqual(51_200);
+    expect(written.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
   });
 
   it("服务重启后仍可按 outbound 文件 ID 从磁盘读取出站文件", async () => {

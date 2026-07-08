@@ -107,7 +107,24 @@ describe("GeWe 样本标准化", () => {
 
     expect(result?.content.type).toBe("file");
     expect(result?.content.media?.fileName).toBeTruthy();
+    expect(result?.content.media?.status).toBe("pending");
+    expect(result?.content.media?.url).toBeNull();
     expect(geweMetadata?.overwriteNewMsgId).toBeTruthy();
+  });
+
+  it("FILE type=6 有任一非空下载字段时进入 pending 下载态", () => {
+    const result = normalizeGewePayload(
+      addMsgPayload({
+        MsgType: 49,
+        Content: {
+          string:
+            "<msg><appmsg><title>20260626225550.pdf</title><type>6</type><appattach><attachid></attachid><cdnattachurl>3057020100044b30490201000204</cdnattachurl><totallen>3788239</totallen></appattach></appmsg></msg>",
+        },
+      }),
+    );
+
+    expect(result?.content.type).toBe("file");
+    expect(result?.content.media?.status).toBe("pending");
   });
 
   it("顶层媒体样本进入 pending 下载态，等待媒体模块回写 ready/failed", () => {

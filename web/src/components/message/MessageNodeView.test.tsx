@@ -85,6 +85,37 @@ describe("MessageNodeView", () => {
     }
   });
 
+  it("文件节点展示类型图标、大小、下载和新标签打开操作", () => {
+    render(
+      <MessageNodeView
+        node={{
+          type: "file",
+          text: "[文件] 20260626225550.pdf",
+          media: {
+            status: "ready",
+            url: "https://example.test/files/20260626225550.pdf",
+            fileName: "20260626225550.pdf",
+            mimeType: "application/pdf",
+            size: 245760
+          }
+        }}
+      />
+    );
+
+    expect(screen.getByText("PDF")).toBeInTheDocument();
+    expect(screen.getByText("20260626225550.pdf")).toBeInTheDocument();
+    expect(screen.getByText("240 KB")).toBeInTheDocument();
+
+    const download = screen.getByRole("link", { name: "下载文件 20260626225550.pdf" });
+    expect(download).toHaveAttribute("href", "https://example.test/files/20260626225550.pdf");
+    expect(download).toHaveAttribute("download", "20260626225550.pdf");
+
+    const open = screen.getByRole("link", { name: "新标签页打开文件 20260626225550.pdf" });
+    expect(open).toHaveAttribute("href", "https://example.test/files/20260626225550.pdf");
+    expect(open).toHaveAttribute("target", "_blank");
+    expect(open).toHaveAttribute("rel", "noreferrer");
+  });
+
   it("图片节点点击后弹窗预览大图", () => {
     const { container } = render(
       <section data-testid="message-host">
@@ -162,6 +193,26 @@ describe("MessageNodeView", () => {
     expect(imageFrame).toHaveStyle({ aspectRatio: "320 / 180" });
     expect(imageFrame).toHaveClass("border", "border-dashed");
     expect(screen.queryByRole("button", { name: "查看图片" })).not.toBeInTheDocument();
+  });
+
+  it("视频下载中展示稳定占位和加载状态", () => {
+    const { container } = render(
+      <MessageNodeView
+        node={{
+          type: "video",
+          text: "[视频] clip.mp4",
+          media: { status: "pending", url: null, fileName: "clip.mp4", mimeType: "video/mp4", width: 320, height: 180 }
+        }}
+      />
+    );
+
+    expect(screen.getByText("视频加载中")).toBeInTheDocument();
+    expect(screen.getByText("clip.mp4")).toBeInTheDocument();
+    const videoFrame = container.querySelector('[data-media-frame="video"]') as HTMLElement | null;
+    expect(videoFrame).toBeTruthy();
+    expect(videoFrame).toHaveStyle({ aspectRatio: "320 / 180" });
+    expect(videoFrame).toHaveClass("border", "border-dashed");
+    expect(container.querySelector("video")).not.toBeInTheDocument();
   });
 
   it("图片和视频按媒体尺寸预留稳定占位，无尺寸时使用 200x150 默认尺寸", () => {

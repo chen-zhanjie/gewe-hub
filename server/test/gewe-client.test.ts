@@ -159,6 +159,24 @@ describe("GeweClientService", () => {
     );
   });
 
+  it("撤回接口返回业务失败时抛出 GeWe 错误，不按 HTTP 200 当成功", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ ret: 500, msg: "消息已超过可撤回时间" }), { status: 200 })),
+    );
+    const client = new GeweClientService();
+
+    await expect(
+      client.revokeMessage({
+        appId: "wx_app",
+        toWxid: "wxid_target",
+        msgId: "769533801",
+        newMsgId: "5271007655758710001",
+        createTime: "1704163145"
+      }),
+    ).rejects.toThrow("GeWe 撤回失败: 消息已超过可撤回时间");
+  });
+
   it("发送接口返回业务失败时抛出 GeWe 错误，不按 HTTP 200 当成功", async () => {
     vi.stubGlobal(
       "fetch",
@@ -189,6 +207,37 @@ describe("GeweClientService", () => {
         },
       }),
     ).rejects.toThrow("GeWe 发送失败: 图片格式错误");
+  });
+
+  it("发送接口响应中的超大 newMsgId 必须按原始字符串保留，供撤回参数复用", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            '{"ret":200,"msg":"ok","data":{"msgId":769533801,"newMsgId":5271007655758710001,"createTime":1704163145}}',
+            { status: 200 },
+          ),
+      ),
+    );
+    const client = new GeweClientService();
+
+    const result = await client.sendByMappedRequest({
+      path: "/gewe/v2/api/message/postImage",
+      body: {
+        appId: "wx_app",
+        toWxid: "wxid_target",
+        imgUrl: "http://example.com/image.jpg",
+      },
+    });
+
+    expect(result).toMatchObject({
+      data: {
+        msgId: 769533801,
+        newMsgId: "5271007655758710001",
+        createTime: 1704163145,
+      },
+    });
   });
 
   it("发送消息使用独立长超时，避免文件类发送在 GeWe 拉取文件时过早中断", async () => {

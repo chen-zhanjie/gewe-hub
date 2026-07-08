@@ -153,6 +153,32 @@ describe("AppsController", () => {
     });
   });
 
+  it("停用应用时保留绑定、备注、投递和发送审计数据", async () => {
+    const tx = {
+      delivery: { deleteMany: vi.fn() },
+      appAccountRemark: { deleteMany: vi.fn() },
+      conversation: { updateMany: vi.fn() },
+      sendRequest: { updateMany: vi.fn() },
+      hubApp: { update: vi.fn(async () => ({ id: "app_1", status: "disabled" })) }
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx))
+    };
+    const controller = new AppsController(prisma as never);
+
+    await controller.remove("app_1");
+
+    expect(prisma.$transaction).toHaveBeenCalledOnce();
+    expect(tx.delivery.deleteMany).not.toHaveBeenCalled();
+    expect(tx.appAccountRemark.deleteMany).not.toHaveBeenCalled();
+    expect(tx.conversation.updateMany).not.toHaveBeenCalled();
+    expect(tx.sendRequest.updateMany).not.toHaveBeenCalled();
+    expect(tx.hubApp.update).toHaveBeenCalledWith({
+      where: { id: "app_1" },
+      data: { status: "disabled" }
+    });
+  });
+
   it("应用级账号备注按 appId 和 accountId upsert", async () => {
     const prisma = {
       appAccountRemark: {

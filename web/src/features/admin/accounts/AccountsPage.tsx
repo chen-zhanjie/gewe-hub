@@ -2,17 +2,9 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
-import { MessageCircle, Pencil, Plus, Users } from "lucide-react";
+import { MessageCircle, Pencil, Plus, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/ui/DataTable";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/Dialog";
 import { EntityCell } from "@/components/ui/EntityCell";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { TimeText } from "@/components/ui/TimeText";
@@ -22,26 +14,22 @@ import { cn } from "@/lib/utils";
 import {
   type BackendAccount,
   useAccountsQuery,
+  useDeleteAccountMutation,
   useSaveAccountMutation,
   useSyncAccountProfileMutation,
   useSyncContactsMutation,
 } from "../queries";
+import { AccountFormDialog, DeleteAccountDialog, EMPTY_ACCOUNT_DRAFT } from "./AccountDialogs";
 import { SyncAccountProfileButton, SyncGroupMembersButton } from "./AccountActionButtons";
 import { ContactsSheet, type ContactRow, type ContactStatusFilter, type GroupRow } from "./ContactsSheet";
 
 type AccountRow = ReturnType<typeof mapAccountRow>;
 
-const EMPTY_ACCOUNT_DRAFT = {
-  appId: "",
-  wxid: "",
-  nickname: "",
-  platformRemark: "",
-};
-
 export function AccountsPage() {
   const router = useRouter({ warn: false });
   const accountsQuery = useAccountsQuery();
   const saveAccountMutation = useSaveAccountMutation();
+  const deleteAccountMutation = useDeleteAccountMutation();
   const syncAccountProfileMutation = useSyncAccountProfileMutation();
   const syncContactsMutation = useSyncContactsMutation();
   const accounts = accountsQuery.data ?? [];
@@ -49,8 +37,11 @@ export function AccountsPage() {
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
   const [draft, setDraft] = useState(EMPTY_ACCOUNT_DRAFT);
   const [editingAccount, setEditingAccount] = useState<BackendAccount | null>(null);
+  const [deletingAccount, setDeletingAccount] = useState<BackendAccount | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [syncError, setSyncError] = useState<string | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<BackendAccount | null>(null);
   const [contactSearch, setContactSearch] = useState("");
@@ -80,6 +71,11 @@ export function AccountsPage() {
       cell: ({ row }) => <StatusBadge status={row.original.onlineStatus ?? "unknown"} />,
     },
     {
+      accessorKey: "status",
+      header: "生命周期",
+      cell: ({ row }) => <StatusBadge status={row.original.status} />,
+    },
+    {
       accessorKey: "source",
       header: "来源",
       cell: ({ row }) => row.original.sourceKind === "manual" ? "手动" : "自动",
@@ -99,7 +95,7 @@ export function AccountsPage() {
         <div className="flex items-center justify-end gap-2">
           <SyncAccountProfileButton
             label={row.original.name}
-            disabled={!row.original.appId || syncingProfileAccountId === row.original.id}
+            disabled={row.original.status !== "active" || !row.original.appId || syncingProfileAccountId === row.original.id}
             loading={syncingProfileAccountId === row.original.id}
             onClick={() => {
               void handleSyncAccountProfile(row.original.source);
@@ -109,10 +105,11 @@ export function AccountsPage() {
             type="button"
             aria-label="联系人"
             title="联系人"
+            disabled={row.original.status !== "active"}
             onClick={() => {
               void openContactsSheet(row.original.source);
             }}
-            className="rounded-md border p-2 text-muted-foreground hover:text-foreground"
+            className="rounded-md border p-2 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Users className="size-4" />
           </button>
@@ -120,15 +117,26 @@ export function AccountsPage() {
             type="button"
             aria-label="编辑账号"
             title="编辑账号"
+            disabled={row.original.status !== "active"}
             onClick={() => openEditForm(row.original.source)}
-            className="rounded-md border p-2 text-muted-foreground hover:text-foreground"
+            className="rounded-md border p-2 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Pencil className="size-4" />
+          </button>
+          <button
+            type="button"
+            aria-label={`停用账号 ${row.original.name}`}
+            title={`停用账号 ${row.original.name}`}
+            disabled={row.original.status !== "active" || deleteAccountMutation.isPending}
+            onClick={() => openDeleteConfirm(row.original.source)}
+            className="rounded-md border border-destructive/40 p-2 text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Trash2 className="size-4" />
           </button>
         </div>
       ),
     },
-  ], [syncingProfileAccountId]);
+  ], [deleteAccountMutation.isPending, syncingProfileAccountId]);
 
   const contactColumns = useMemo<ColumnDef<ContactRow>[]>(() => [
     {
@@ -250,6 +258,12 @@ export function AccountsPage() {
     setFormOpen(true);
   }
 
+  function openDeleteConfirm(account: BackendAccount) {
+    setDeletingAccount(account);
+    setDeleteError(null);
+    setDeleteConfirmText("");
+  }
+
   async function handleSaveAccount() {
     const payload = {
       appId: draft.appId.trim(),
@@ -265,6 +279,20 @@ export function AccountsPage() {
       setFormOpen(false);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "保存账号失败");
+    }
+  }
+
+  async function handleDeleteAccount() {
+    if (!deletingAccount || deleteConfirmText !== deletingAccount.wxid || deleteAccountMutation.isPending) return;
+    setDeleteError(null);
+    try {
+      await deleteAccountMutation.mutateAsync(deletingAccount.id);
+      toast.success("账号已停用");
+      if (selectedAccount?.id === deletingAccount.id) setSelectedAccount(null);
+      setDeletingAccount(null);
+      setDeleteConfirmText("");
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "停用账号失败");
     }
   }
 
@@ -426,6 +454,23 @@ export function AccountsPage() {
           void handleSaveAccount();
         }}
       />
+      <DeleteAccountDialog
+        account={deletingAccount}
+        deleting={deleteAccountMutation.isPending}
+        error={deleteError}
+        confirmText={deleteConfirmText}
+        onConfirmTextChange={setDeleteConfirmText}
+        onOpenChange={(open) => {
+          if (!open && !deleteAccountMutation.isPending) {
+            setDeletingAccount(null);
+            setDeleteConfirmText("");
+            setDeleteError(null);
+          }
+        }}
+        onConfirm={() => {
+          void handleDeleteAccount();
+        }}
+      />
       <ContactsSheet
         open={selectedAccount !== null}
         accountName={selectedAccount ? readAccountDisplayName(selectedAccount) : undefined}
@@ -448,96 +493,6 @@ export function AccountsPage() {
         }}
       />
     </PageShell>
-  );
-}
-
-function AccountFormDialog({
-  open,
-  title,
-  draft,
-  saving,
-  error,
-  firstFieldRef,
-  onDraftChange,
-  onOpenChange,
-  onSave,
-}: {
-  open: boolean;
-  title: string;
-  draft: typeof EMPTY_ACCOUNT_DRAFT;
-  saving: boolean;
-  error: string | null;
-  firstFieldRef: React.RefObject<HTMLInputElement | null>;
-  onDraftChange: (draft: typeof EMPTY_ACCOUNT_DRAFT) => void;
-  onOpenChange: (open: boolean) => void;
-  onSave: () => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>录入 GeWe appId、账号 wxid 与平台备注。</DialogDescription>
-        </DialogHeader>
-        <fieldset disabled={saving} className="space-y-3 disabled:opacity-70">
-          <label className="block text-xs text-muted-foreground">
-            GeWe appId
-            <input
-              ref={firstFieldRef}
-              aria-label="GeWe appId"
-              value={draft.appId}
-              onChange={(event) => onDraftChange({ ...draft, appId: event.target.value })}
-              className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              placeholder="wx_app"
-            />
-          </label>
-          <label className="block text-xs text-muted-foreground">
-            账号 wxid
-            <input
-              aria-label="账号 wxid"
-              value={draft.wxid}
-              onChange={(event) => onDraftChange({ ...draft, wxid: event.target.value })}
-              className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              placeholder="wxid_bot"
-            />
-          </label>
-          <label className="block text-xs text-muted-foreground">
-            账号昵称
-            <input
-              aria-label="账号昵称"
-              value={draft.nickname}
-              onChange={(event) => onDraftChange({ ...draft, nickname: event.target.value })}
-              className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              placeholder="客服主号"
-            />
-          </label>
-          <label className="block text-xs text-muted-foreground">
-            平台备注
-            <input
-              aria-label="平台备注"
-              value={draft.platformRemark}
-              onChange={(event) => onDraftChange({ ...draft, platformRemark: event.target.value })}
-              className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              placeholder="主控账号"
-            />
-          </label>
-          {error ? <div className="rounded-md border border-destructive/30 bg-background px-3 py-2 text-sm text-destructive">{error}</div> : null}
-        </fieldset>
-        <DialogFooter>
-          <button type="button" disabled={saving} onClick={() => onOpenChange(false)} className="rounded-md border px-3 py-2 text-sm disabled:opacity-50">
-            取消
-          </button>
-          <button
-            type="button"
-            disabled={!draft.appId.trim() || !draft.wxid.trim() || saving}
-            onClick={onSave}
-            className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {saving ? "保存中" : "保存账号"}
-          </button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -648,6 +603,7 @@ function mapAccountRow(account: BackendAccount) {
     },
     appId: account.appId,
     onlineStatus: account.onlineStatus ?? "unknown",
+    status: account.status ?? "active",
     sourceKind: account.source ?? "auto",
     lastSyncedAt: account.lastSyncedAt,
     source: account,
@@ -706,10 +662,16 @@ function openChatKey(type: OpenConversationType, peerWxid: string): string {
 
 function sortAccountsForOperations(accounts: BackendAccount[]): BackendAccount[] {
   return [...accounts].sort((left, right) => {
+    const byLifecycle = accountLifecyclePriority(left.status) - accountLifecyclePriority(right.status);
+    if (byLifecycle !== 0) return byLifecycle;
     const byStatus = accountStatusPriority(left.onlineStatus) - accountStatusPriority(right.onlineStatus);
     if (byStatus !== 0) return byStatus;
     return readAccountDisplayName(left).localeCompare(readAccountDisplayName(right), "zh-Hans-CN");
   });
+}
+
+function accountLifecyclePriority(status: BackendAccount["status"]): number {
+  return status === "disabled" ? 1 : 0;
 }
 
 function accountStatusPriority(status: BackendAccount["onlineStatus"]): number {

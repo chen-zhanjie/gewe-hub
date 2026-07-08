@@ -21,7 +21,7 @@ export interface BackendHubApp {
   deliverSelfMessages?: boolean;
   createdAt?: string | Date | null;
   accountRemarks?: BackendAppAccountRemark[];
-  _count?: { conversations?: number };
+  _count?: { conversations?: number; deliveries?: number };
 }
 
 export interface BackendAppAccountRemark {

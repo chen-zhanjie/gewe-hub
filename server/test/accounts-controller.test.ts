@@ -150,6 +150,52 @@ describe("AccountsController", () => {
     expect(gewe.checkOnline).toHaveBeenCalledWith("wx_app_new");
   });
 
+  it("停用微信账号时保留本地审计数据并终止账号同步任务", async () => {
+    const tx = {
+      group: { findMany: vi.fn(async () => [{ id: "group_1" }, { id: "group_2" }]) },
+      outboxTask: { updateMany: vi.fn(async () => ({ count: 0 })) },
+      wechatAccount: { update: vi.fn(async () => ({ id: "acc_1", status: "disabled" })) }
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx))
+    };
+    const gewe = { checkOnline: vi.fn(), getProfile: vi.fn() };
+    const controller = new AccountsController(prisma as never, gewe as never);
+
+    await controller.remove("acc_1");
+
+    expect(prisma.$transaction).toHaveBeenCalledOnce();
+    expect(tx.group.findMany).toHaveBeenCalledWith({
+      where: { accountId: "acc_1" },
+      select: { id: true }
+    });
+    expect(tx.outboxTask.updateMany).toHaveBeenCalledWith({
+      where: {
+        status: { in: ["pending", "running", "failed"] },
+        OR: [
+          { taskType: "sync_contacts", refId: "acc_1" },
+          {
+            taskType: "sync_group_members",
+            refId: { in: ["group_1", "group_2"] }
+          }
+        ]
+      },
+      data: {
+        status: "dead",
+        nextRetryAt: null,
+        leaseUntil: null,
+        lastError: "微信账号已停用"
+      }
+    });
+    expect(tx.wechatAccount.update).toHaveBeenCalledWith({
+      where: { id: "acc_1" },
+      data: {
+        status: "disabled",
+        statusChangedAt: expect.any(Date)
+      }
+    });
+  });
+
   it("可以按账号 ID 主动同步头像昵称和在线状态", async () => {
     const prisma = {
       wechatAccount: {

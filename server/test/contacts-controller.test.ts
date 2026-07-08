@@ -229,6 +229,9 @@ describe("ContactsController", () => {
 
   it("触发账号通讯录同步时写入 outbox 任务", async () => {
     const prisma = {
+      wechatAccount: {
+        findUnique: vi.fn(async () => ({ id: "acc_1", status: "active" }))
+      },
       outboxTask: {
         create: vi.fn(async () => ({ id: "task_1" }))
       }
@@ -240,6 +243,10 @@ describe("ContactsController", () => {
       mode: "full"
     });
 
+    expect(prisma.wechatAccount.findUnique).toHaveBeenCalledWith({
+      where: { id: "acc_1" },
+      select: { id: true, status: true }
+    });
     expect(prisma.outboxTask.create).toHaveBeenCalledWith({
       data: {
         taskType: "sync_contacts",
@@ -253,8 +260,26 @@ describe("ContactsController", () => {
     });
   });
 
+  it("停用账号不能继续触发通讯录同步任务", async () => {
+    const prisma = {
+      wechatAccount: {
+        findUnique: vi.fn(async () => ({ id: "acc_1", status: "disabled" }))
+      },
+      outboxTask: {
+        create: vi.fn()
+      }
+    };
+    const controller = new ContactsController(prisma as never);
+
+    await expect(controller.syncContacts({ accountId: "acc_1", mode: "full" })).rejects.toThrow("账号已停用");
+    expect(prisma.outboxTask.create).not.toHaveBeenCalled();
+  });
+
   it("触发群成员同步时写入 outbox 任务", async () => {
     const prisma = {
+      group: {
+        findUnique: vi.fn(async () => ({ id: "group_1", accountId: "acc_1", account: { status: "active" } }))
+      },
       outboxTask: {
         create: vi.fn(async () => ({ id: "task_2" }))
       }
@@ -263,15 +288,39 @@ describe("ContactsController", () => {
 
     await controller.syncGroupMembers("group_1");
 
+    expect(prisma.group.findUnique).toHaveBeenCalledWith({
+      where: { id: "group_1" },
+      select: {
+        id: true,
+        accountId: true,
+        account: { select: { status: true } }
+      }
+    });
     expect(prisma.outboxTask.create).toHaveBeenCalledWith({
       data: {
         taskType: "sync_group_members",
         refId: "group_1",
         payload: {
-          groupId: "group_1"
+          groupId: "group_1",
+          accountId: "acc_1"
         },
         status: "pending"
       }
     });
+  });
+
+  it("停用账号的群不能继续触发群成员同步任务", async () => {
+    const prisma = {
+      group: {
+        findUnique: vi.fn(async () => ({ id: "group_1", accountId: "acc_1", account: { status: "disabled" } }))
+      },
+      outboxTask: {
+        create: vi.fn()
+      }
+    };
+    const controller = new ContactsController(prisma as never);
+
+    await expect(controller.syncGroupMembers("group_1")).rejects.toThrow("账号已停用");
+    expect(prisma.outboxTask.create).not.toHaveBeenCalled();
   });
 });

@@ -111,6 +111,8 @@ describe("OutboxService 文件两阶段回调", () => {
       content: {
         type: "file",
         media: {
+          status: "pending",
+          url: null,
           fileName: "mapping_app.txt",
           size: 2732,
           md5: "562d96ac785059b4b32ca1adc6789765",

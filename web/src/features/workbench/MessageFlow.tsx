@@ -45,7 +45,7 @@ export function MessageBubble({
   const framedByContent = isFramedMessageNode(message.content);
   const localSend = message.localSend;
   const deliveryStatus = localSend ? null : readDeliveryStatus(message.deliveries);
-  const metaAlwaysVisible = message.status === "revoked" || Boolean(localSend);
+  const metaAlwaysVisible = Boolean(localSend);
   const showSenderName = !message.isSelf && startsGroup;
   const messageMeta = (
     <div

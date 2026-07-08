@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import logging
+import mimetypes
 import os
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
@@ -162,7 +166,7 @@ class GeWeHubAdapter(BasePlatformAdapter):
     def __init__(self, config=None, **kwargs) -> None:
         if config is None:
             config = SimpleNamespace(extra={})
-        super().__init__(config=config, platform=Platform(_GEWEHUB_PLATFORM_NAME))
+        super().__init__(config=config, platform=_platform_for_name(_GEWEHUB_PLATFORM_NAME))
         extra = getattr(config, "extra", {}) or {}
 
         self.base_url = _clean_string(os.getenv("GEWEHUB_BASE_URL") or extra.get("base_url")).rstrip("/")
@@ -187,6 +191,10 @@ class GeWeHubAdapter(BasePlatformAdapter):
     @property
     def name(self) -> str:
         return "GeWeHub"
+
+    async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
+        chat_id = str(chat_id)
+        return {"name": chat_id, "type": "dm", "chat_id": chat_id}
 
     async def connect(self, *, is_reconnect: bool = False) -> bool:
         if self.is_connected and self._sse_task and not self._sse_task.done():
@@ -231,7 +239,11 @@ class GeWeHubAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         try:
-            response = await self._ensure_client().send_text(chat_id, content)
+            response = await self._ensure_client().send_text(
+                chat_id,
+                content,
+                idempotency_key=_idempotency_key_from_metadata(metadata),
+            )
             return SendResult(success=True, message_id=_response_message_id(response), raw_response=response)
         except Exception as exc:
             return SendResult(success=False, error=self._redact(str(exc)))
@@ -247,19 +259,104 @@ class GeWeHubAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
-        return await self._send_media_url(chat_id, media_type="image", url=image_url, caption=caption)
+        return await self._send_media_url(
+            chat_id,
+            media_type="image",
+            url=image_url,
+            caption=caption,
+            metadata=metadata,
+        )
+
+    async def send_image_file(
+        self,
+        chat_id: str,
+        image_path: str,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> SendResult:
+        return await self._send_media_file(
+            chat_id,
+            image_path,
+            requested_type="image",
+            caption=caption,
+            metadata=metadata,
+        )
 
     async def send_document(
         self,
         chat_id: str,
-        file_url: str,
+        file_url: str | None = None,
         caption: Optional[str] = None,
         file_name: Optional[str] = None,
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> SendResult:
-        return await self._send_media_url(chat_id, media_type="file", url=file_url, file_name=file_name, caption=caption)
+        document_path = file_url or _metadata_string(None, kwargs, "file_path", "path")
+        if not document_path:
+            return SendResult(success=False, error="document file path or URL is required")
+        if _looks_like_url(document_path):
+            return await self._send_media_url(
+                chat_id,
+                media_type="file",
+                url=document_path,
+                file_name=file_name,
+                caption=caption,
+                metadata=metadata,
+            )
+        return await self._send_media_file(
+            chat_id,
+            document_path,
+            requested_type="file",
+            caption=caption,
+            file_name=file_name,
+            metadata=metadata,
+        )
+
+    async def send_voice(
+        self,
+        chat_id: str,
+        audio_path: str,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> SendResult:
+        return await self._send_media_file(
+            chat_id,
+            audio_path,
+            requested_type="voice",
+            caption=caption,
+            metadata=metadata,
+            duration_ms=_duration_ms_from_metadata(metadata, kwargs),
+        )
+
+    async def send_video(
+        self,
+        chat_id: str,
+        video_path: str,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> SendResult:
+        if _looks_like_url(video_path):
+            return await self._send_media_url(
+                chat_id,
+                media_type="video",
+                url=video_path,
+                caption=caption,
+                metadata=metadata,
+            )
+        return await self._send_media_file(
+            chat_id,
+            video_path,
+            requested_type="video",
+            caption=caption,
+            metadata=metadata,
+        )
 
     async def _sse_loop(self) -> None:
         backoff = 1.0
@@ -466,11 +563,14 @@ class GeWeHubAdapter(BasePlatformAdapter):
         clean = [str(event_id).strip() for event_id in event_ids if str(event_id or "").strip()]
         if not clean:
             return
-        client = self._client
-        if client is not None:
-            await client.ack_events(clean)
         self._last_event_id = clean[-1]
         self._state_store.save_last_event_id(clean[-1])
+        client = self._client
+        if client is not None:
+            try:
+                await client.ack_events(clean)
+            except Exception as exc:
+                logger.warning("GeWeHub SSE ACK failed for %s: %s", clean[-1], self._redact(str(exc)))
 
     async def _download_media(self, normalized) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
@@ -513,17 +613,70 @@ class GeWeHubAdapter(BasePlatformAdapter):
         url: str,
         file_name: str | None = None,
         caption: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SendResult:
         try:
+            idempotency_key = _idempotency_key_from_metadata(metadata)
             response = await self._ensure_client().send_media_url(
                 chat_id,
                 media_type=media_type,
                 url=url,
                 file_name=file_name,
+                idempotency_key=idempotency_key,
             )
             raw_response: dict[str, Any] = {"media": response}
             if caption:
-                raw_response["caption"] = await self._ensure_client().send_text(chat_id, caption)
+                raw_response["caption"] = await self._ensure_client().send_text(
+                    chat_id,
+                    caption,
+                    idempotency_key=_derived_idempotency_key(idempotency_key, "caption"),
+                )
+            return SendResult(success=True, message_id=_response_message_id(response), raw_response=raw_response)
+        except Exception as exc:
+            return SendResult(success=False, error=self._redact(str(exc)))
+
+    async def _send_media_file(
+        self,
+        chat_id: str,
+        path: str,
+        *,
+        requested_type: str,
+        caption: str | None = None,
+        file_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        duration_ms: int | None = None,
+        thumb_path: str | None = None,
+        thumb_content_base64: str | None = None,
+        thumb_mime_type: str | None = None,
+        thumb_file_name: str | None = None,
+    ) -> SendResult:
+        try:
+            file_path = Path(path)
+            if not file_path.is_file():
+                raise GeWeHubError(f"media file does not exist: {file_path}")
+            resolved_name = file_name or file_path.name
+            resolved_mime = mimetypes.guess_type(resolved_name)[0] or "application/octet-stream"
+            idempotency_key = _idempotency_key_from_metadata(metadata)
+            response = await self._ensure_client().send_media_file(
+                chat_id,
+                media_type=requested_type,
+                content_base64=base64.b64encode(file_path.read_bytes()).decode("ascii"),
+                file_name=resolved_name,
+                mime_type=resolved_mime,
+                duration_ms=duration_ms,
+                thumb_path=thumb_path,
+                thumb_content_base64=thumb_content_base64,
+                thumb_mime_type=thumb_mime_type,
+                thumb_file_name=thumb_file_name,
+                idempotency_key=idempotency_key,
+            )
+            raw_response: dict[str, Any] = {"media": response}
+            if caption:
+                raw_response["caption"] = await self._ensure_client().send_text(
+                    chat_id,
+                    caption,
+                    idempotency_key=_derived_idempotency_key(idempotency_key, "caption"),
+                )
             return SendResult(success=True, message_id=_response_message_id(response), raw_response=raw_response)
         except Exception as exc:
             return SendResult(success=False, error=self._redact(str(exc)))
@@ -547,6 +700,13 @@ def _extra_from_env() -> dict[str, Any]:
         if parsed is not None:
             extra[key] = parsed
     return extra
+
+
+def _platform_for_name(name: str):
+    try:
+        return Platform(name)
+    except Exception:
+        return SimpleNamespace(value=name, name=name.upper().replace("-", "_"))
 
 
 def _platform_config_source(yaml_cfg: dict, platform_cfg: dict) -> dict[str, Any]:
@@ -630,6 +790,62 @@ def _message_type_for(normalized, media_types: list[str]) -> MessageType:
     return MessageType.TEXT
 
 
+def _idempotency_key_from_metadata(metadata: dict[str, Any] | None) -> str | None:
+    if not isinstance(metadata, dict):
+        return None
+    value = _first_metadata_value(metadata, ("idempotency_key", "idempotencyKey", "request_id", "requestId"))
+    if value:
+        return value
+    gewehub = metadata.get("gewehub")
+    if isinstance(gewehub, dict):
+        return _first_metadata_value(gewehub, ("idempotency_key", "idempotencyKey", "request_id", "requestId"))
+    return None
+
+
+def _derived_idempotency_key(idempotency_key: str | None, suffix: str) -> str | None:
+    if not idempotency_key:
+        return None
+    return f"{idempotency_key}:{suffix}"
+
+
+def _duration_ms_from_metadata(metadata: dict[str, Any] | None, kwargs: dict[str, Any] | None = None) -> int | None:
+    raw = _metadata_string(metadata, kwargs, "duration_ms", "durationMs", "audio_duration_ms", "video_duration_ms")
+    if raw is None:
+        return None
+    parsed = _coerce_int(raw)
+    return parsed if parsed and parsed > 0 else None
+
+
+def _metadata_string(metadata: dict[str, Any] | None, kwargs: dict[str, Any] | None, *keys: str) -> str | None:
+    if isinstance(kwargs, dict):
+        value = _first_metadata_value(kwargs, keys)
+        if value:
+            return value
+    if isinstance(metadata, dict):
+        value = _first_metadata_value(metadata, keys)
+        if value:
+            return value
+        gewehub = metadata.get("gewehub")
+        if isinstance(gewehub, dict):
+            value = _first_metadata_value(gewehub, keys)
+            if value:
+                return value
+    return None
+
+
+def _first_metadata_value(source: dict[str, Any], keys) -> str | None:
+    for key in keys:
+        value = source.get(key)
+        text = _clean_string(value)
+        if text:
+            return text
+    return None
+
+
+def _looks_like_url(value: str) -> bool:
+    return value.startswith("http://") or value.startswith("https://")
+
+
 def _conversation_id(normalized) -> str:
     return _clean_string(normalized.conversation.get("id") or normalized.conversation.get("wxid"))
 
@@ -679,19 +895,49 @@ def _response_message_id(response: dict[str, Any]) -> str | None:
 
 
 async def _standalone_send(
-    *,
-    base_url: str,
-    app_token: str,
-    conversation_id: str,
+    pconfig=None,
+    chat_id: str | None = None,
     message: str | None = None,
+    *,
+    base_url: str | None = None,
+    app_token: str | None = None,
+    conversation_id: str | None = None,
+    thread_id: str | None = None,
+    media_files=None,
+    force_document: bool = False,
     **kwargs,
 ) -> dict[str, Any]:
+    extra = getattr(pconfig, "extra", {}) or {}
+    base_url = _clean_string(os.getenv("GEWEHUB_BASE_URL") or base_url or extra.get("base_url")).rstrip("/")
+    app_token = _clean_string(os.getenv("GEWEHUB_APP_TOKEN") or app_token or extra.get("app_token"))
+    conversation_id = _clean_string(conversation_id or chat_id)
+    if not (base_url and app_token and conversation_id):
+        return {"error": "GeWeHub standalone send requires base_url, app_token, and conversation_id"}
     client = GeWeHubClient(base_url, app_token=app_token)
+    last_response: dict[str, Any] | None = None
     try:
-        if not message:
-            return {"error": "GeWeHub standalone send requires message"}
-        response = await client.send_text(conversation_id, message)
-        return {"success": True, "message_id": _response_message_id(response), "raw_response": response}
+        text = str(message or "").strip()
+        if text:
+            last_response = await client.send_text(
+                conversation_id,
+                text,
+                idempotency_key=_generated_idempotency_key(thread_id, conversation_id, text, "text"),
+            )
+        for index, item in enumerate(media_files or []):
+            media_path, is_voice = _standalone_media_entry(item)
+            media_type = "voice" if is_voice else ("file" if force_document else _requested_media_type_for_path(media_path))
+            file_name = Path(media_path).name
+            last_response = await client.send_media_file(
+                conversation_id,
+                media_type=media_type,
+                path=media_path,
+                file_name=file_name,
+                mime_type=mimetypes.guess_type(file_name)[0],
+                idempotency_key=_generated_idempotency_key(thread_id, conversation_id, media_path, index, "media"),
+            )
+        if last_response is None:
+            return {"error": "GeWeHub standalone send requires message or media_files"}
+        return {"success": True, "message_id": _response_message_id(last_response), "raw_response": last_response}
     except Exception as exc:
         redacted = str(exc).replace(app_token, "[REDACTED]") if app_token else str(exc)
         return {"error": f"GeWeHub standalone send failed: {redacted}"}
@@ -708,6 +954,32 @@ def _coerce_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _standalone_media_entry(item: Any) -> tuple[str, bool]:
+    if isinstance(item, (list, tuple)):
+        media_path = item[0] if item else ""
+        is_voice = bool(item[1]) if len(item) > 1 else False
+        return str(media_path), is_voice
+    return str(item), False
+
+
+def _requested_media_type_for_path(path: str) -> str:
+    mime_type = mimetypes.guess_type(path)[0] or ""
+    if mime_type.startswith("image/"):
+        return "image"
+    if mime_type.startswith("audio/"):
+        return "voice"
+    if mime_type.startswith("video/"):
+        return "video"
+    return "file"
+
+
+def _generated_idempotency_key(*parts: Any) -> str:
+    raw = "|".join(str(part or "") for part in parts)
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+    label = _clean_string(parts[0]) or "standalone"
+    return f"hermes-gewehub-{label}-{_clean_string(parts[1])}-{_clean_string(parts[-1])}-{digest}"
 
 
 def register(ctx) -> None:

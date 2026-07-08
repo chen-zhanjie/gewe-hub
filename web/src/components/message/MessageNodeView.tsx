@@ -1,5 +1,23 @@
 import type { MessageNode } from "@gewehub/contracts";
-import { Banknote, Contact, Gift, ImageIcon, MapPin, MessagesSquare, X } from "lucide-react";
+import {
+  Archive,
+  Banknote,
+  Code2,
+  Contact,
+  Download,
+  ExternalLink,
+  File,
+  FileAudio,
+  FileImage,
+  FileSpreadsheet,
+  FileText,
+  FileVideo,
+  Gift,
+  ImageIcon,
+  MapPin,
+  MessagesSquare,
+  X,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -34,12 +52,7 @@ function MessageNodeContent({ node, depth = 0 }: MessageNodeViewProps) {
   }
 
   if (node.type === "file") {
-    return (
-      <div className="w-64 rounded-md border bg-background p-3 text-sm">
-        <div className="font-medium">{node.media?.fileName ?? node.text}</div>
-        <div className="text-xs text-muted-foreground">{node.media?.status === "failed" ? "下载失败" : node.text}</div>
-      </div>
-    );
+    return <FileMessageCard node={node} />;
   }
 
   if (node.type === "image" || node.type === "emoji") {
@@ -80,7 +93,7 @@ function MessageNodeContent({ node, depth = 0 }: MessageNodeViewProps) {
       );
     }
 
-    return <div className="text-sm text-muted-foreground">{node.text}</div>;
+    return <PendingVideoPreview node={node} />;
   }
 
   if (node.type === "link") {
@@ -153,6 +166,82 @@ function MessageNodeContent({ node, depth = 0 }: MessageNodeViewProps) {
   }
 
   return <span className="whitespace-pre-wrap break-words text-sm leading-relaxed">{node.text}</span>;
+}
+
+function FileMessageCard({ node }: { node: MessageNode }) {
+  const fileName = node.media?.fileName ?? readFileNameFromText(node.text);
+  const fileInfo = readFileInfo(fileName, node.media?.mimeType);
+  const fileUrl = node.media?.url;
+  const fileSize = formatFileSize(node.media?.size);
+  const status = node.media?.status ?? "pending";
+  const statusText = status === "failed" ? "下载失败" : status === "pending" ? "等待下载" : fileInfo.typeLabel;
+  const actionable = typeof fileUrl === "string" && fileUrl.length > 0;
+
+  return (
+    <div className="flex w-[min(22rem,calc(100vw-5rem))] items-center gap-3 rounded-md border bg-background p-3 text-sm shadow-sm">
+      <span className="flex size-11 shrink-0 flex-col items-center justify-center rounded-md bg-muted text-muted-foreground">
+        <fileInfo.icon className="size-5" aria-hidden="true" />
+        <span className="mt-0.5 max-w-9 truncate text-[10px] font-semibold leading-none">{fileInfo.extensionLabel}</span>
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-medium" title={fileName}>
+          {fileName}
+        </span>
+        <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <span>{fileSize ?? statusText}</span>
+          {fileSize ? <span>{statusText}</span> : null}
+        </span>
+      </span>
+      <span className="flex shrink-0 items-center gap-1">
+        {actionable ? (
+          <>
+            <a
+              href={fileUrl}
+              download={fileName}
+              aria-label={`下载文件 ${fileName}`}
+              title="下载文件"
+              className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <Download className="size-4" />
+            </a>
+            <a
+              href={fileUrl}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={`新标签页打开文件 ${fileName}`}
+              title="新标签页打开"
+              className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <ExternalLink className="size-4" />
+            </a>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              disabled
+              aria-label={`下载文件 ${fileName}`}
+              title="文件未就绪，暂不可下载"
+              className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground/40"
+            >
+              <Download className="size-4" />
+            </button>
+            <button
+              type="button"
+              disabled
+              aria-label={`新标签页打开文件 ${fileName}`}
+              title="文件未就绪，暂不可打开"
+              className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground/40"
+            >
+              <ExternalLink className="size-4" />
+            </button>
+          </>
+        )}
+      </span>
+    </div>
+  );
 }
 
 function NodeSummaryCard({
@@ -352,6 +441,26 @@ function PendingImagePreview({ node }: { node: MessageNode }) {
   );
 }
 
+function PendingVideoPreview({ node }: { node: MessageNode }) {
+  const failed = node.media?.status === "failed";
+  const label = failed ? "视频加载失败" : "视频加载中";
+  const fileName = node.media?.fileName ?? readMediaTitleFromText(node.text, "视频");
+
+  return (
+    <MediaFrame node={node} kind="video" className="border border-dashed border-border bg-muted/60">
+      <span className="flex size-full flex-col items-center justify-center gap-2 px-3 text-center text-xs text-muted-foreground">
+        <FileVideo className="size-5" />
+        <span>{label}</span>
+        {fileName ? (
+          <span className="max-w-full truncate text-[11px]" title={fileName}>
+            {fileName}
+          </span>
+        ) : null}
+      </span>
+    </MediaFrame>
+  );
+}
+
 function MediaFrame({
   node,
   kind,
@@ -506,4 +615,72 @@ function formatDuration(durationMs: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function readFileInfo(fileName: string, mimeType?: string): {
+  extensionLabel: string;
+  typeLabel: string;
+  icon: typeof File;
+} {
+  const extension = readFileExtension(fileName);
+  const normalizedMimeType = mimeType?.toLowerCase() ?? "";
+  const extensionLabel = extension ? extension.slice(0, 4).toUpperCase() : "FILE";
+
+  if (normalizedMimeType.includes("pdf") || extension === "pdf") {
+    return { extensionLabel: "PDF", typeLabel: "PDF 文件", icon: FileText };
+  }
+  if (normalizedMimeType.startsWith("image/") || ["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic"].includes(extension)) {
+    return { extensionLabel, typeLabel: "图片文件", icon: FileImage };
+  }
+  if (normalizedMimeType.startsWith("audio/") || ["mp3", "wav", "m4a", "aac", "flac", "silk", "amr"].includes(extension)) {
+    return { extensionLabel, typeLabel: "音频文件", icon: FileAudio };
+  }
+  if (normalizedMimeType.startsWith("video/") || ["mp4", "mov", "avi", "mkv", "webm"].includes(extension)) {
+    return { extensionLabel, typeLabel: "视频文件", icon: FileVideo };
+  }
+  if (
+    normalizedMimeType.includes("spreadsheet") ||
+    normalizedMimeType.includes("excel") ||
+    ["xls", "xlsx", "csv"].includes(extension)
+  ) {
+    return { extensionLabel, typeLabel: "表格文件", icon: FileSpreadsheet };
+  }
+  if (["zip", "rar", "7z", "tar", "gz"].includes(extension)) {
+    return { extensionLabel, typeLabel: "压缩文件", icon: Archive };
+  }
+  if (["js", "ts", "tsx", "jsx", "json", "xml", "html", "css", "md", "sql", "log"].includes(extension)) {
+    return { extensionLabel, typeLabel: "文本文件", icon: Code2 };
+  }
+  if (normalizedMimeType.startsWith("text/") || ["txt", "doc", "docx", "ppt", "pptx"].includes(extension)) {
+    return { extensionLabel, typeLabel: "文档文件", icon: FileText };
+  }
+  return { extensionLabel, typeLabel: "文件", icon: File };
+}
+
+function readFileExtension(fileName: string): string {
+  const normalizedName = fileName.trim().toLowerCase();
+  const lastDotIndex = normalizedName.lastIndexOf(".");
+  if (lastDotIndex <= 0 || lastDotIndex === normalizedName.length - 1) return "";
+  return normalizedName.slice(lastDotIndex + 1);
+}
+
+function readFileNameFromText(text: string): string {
+  return text.replace(/^\[文件\]\s*/, "").trim() || "文件";
+}
+
+function readMediaTitleFromText(text: string, label: string): string {
+  return text.replace(new RegExp(`^\\[${label}\\]\\s*`), "").trim();
+}
+
+function formatFileSize(size: number | undefined): string | null {
+  if (typeof size !== "number" || !Number.isFinite(size)) return null;
+  const units = ["B", "KB", "MB", "GB"];
+  let value = Math.max(0, size);
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const precision = unitIndex === 0 || value >= 10 ? 0 : 1;
+  return `${value.toFixed(precision)} ${units[unitIndex]}`;
 }

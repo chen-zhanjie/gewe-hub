@@ -18,6 +18,11 @@ enum AccountSource {
   manual
 }
 
+enum AccountStatus {
+  active
+  disabled
+}
+
 enum SoftContactStatus {
   active
   deleted
@@ -159,6 +164,8 @@ model WechatAccount {
   avatarUrl      String?      @db.Text @map("avatar_url")
   region         String?
   onlineStatus   OnlineStatus @default(unknown) @map("online_status")
+  status         AccountStatus @default(active)
+  statusChangedAt DateTime?   @map("status_changed_at")
   source         AccountSource @default(auto)
   platformRemark String?      @map("platform_remark")
   lastSyncedAt   DateTime?    @map("last_synced_at")
@@ -414,6 +421,7 @@ model SendRequest {
   appId            String?      @map("app_id")
   accountId        String       @map("account_id")
   conversationId   String       @map("conversation_id")
+  idempotencyKey   String?      @map("idempotency_key")
   type             String
   requestPayload   Json         @map("request_payload")
   geweRequest      Json?        @map("gewe_request")
@@ -431,6 +439,7 @@ model SendRequest {
   conversation     Conversation @relation(fields: [conversationId], references: [id])
   message          Message?
 
+  @@unique([appId, conversationId, idempotencyKey])
   @@map("send_requests")
 }
 

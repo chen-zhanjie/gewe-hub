@@ -81,6 +81,9 @@ export interface SendMediaRequest {
   mimeType: string;
   fileName: string;
   thumbUrl?: string;
+  thumbContentBase64?: string;
+  thumbMimeType?: string;
+  thumbFileName?: string;
   durationMs?: number;
 }
 
@@ -90,7 +93,17 @@ export interface SendLinkRequest {
   title: string;
   desc: string;
   linkUrl: string;
-  thumbUrl: string;
+  thumbUrl?: string;
+  thumbContentBase64?: string;
+  thumbMimeType?: string;
+  thumbFileName?: string;
+}
+
+export interface LinkPreviewResponse {
+  title?: string;
+  desc?: string;
+  linkUrl: string;
+  thumbUrl?: string;
 }
 
 export interface WorkbenchSendResponse {
@@ -235,6 +248,11 @@ export async function sendWorkbenchLink(payload: SendLinkRequest): Promise<Workb
   });
 }
 
+export async function parseWorkbenchLinkPreview(linkUrl: string): Promise<LinkPreviewResponse> {
+  const params = new URLSearchParams({ url: linkUrl });
+  return apiFetch<LinkPreviewResponse>(`/api/link-preview?${params.toString()}`);
+}
+
 export async function sendWorkbenchPayload(
   conversationId: string,
   payload: LocalSendPayload,
@@ -246,7 +264,10 @@ export async function sendWorkbenchPayload(
       title: payload.title ?? "",
       desc: payload.desc ?? "",
       linkUrl: payload.linkUrl ?? "",
-      thumbUrl: payload.thumbUrl ?? "",
+      ...(payload.thumbUrl ? { thumbUrl: payload.thumbUrl } : {}),
+      ...(payload.thumbContentBase64 ? { thumbContentBase64: payload.thumbContentBase64 } : {}),
+      ...(payload.thumbMimeType ? { thumbMimeType: payload.thumbMimeType } : {}),
+      ...(payload.thumbFileName ? { thumbFileName: payload.thumbFileName } : {}),
     });
   }
 
@@ -257,6 +278,9 @@ export async function sendWorkbenchPayload(
     mimeType: payload.mimeType ?? "application/octet-stream",
     fileName: payload.fileName ?? "",
     ...(payload.thumbUrl ? { thumbUrl: payload.thumbUrl } : {}),
+    ...(payload.thumbContentBase64 ? { thumbContentBase64: payload.thumbContentBase64 } : {}),
+    ...(payload.thumbMimeType ? { thumbMimeType: payload.thumbMimeType } : {}),
+    ...(payload.thumbFileName ? { thumbFileName: payload.thumbFileName } : {}),
     ...(payload.durationMs ? { durationMs: payload.durationMs } : {}),
   });
 }

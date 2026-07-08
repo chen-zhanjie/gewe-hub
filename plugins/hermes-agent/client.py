@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import mimetypes
 import os
 import tempfile
@@ -79,11 +80,14 @@ class GeWeHubClient:
             return {"ok": True, "acked": 0}
         return await self._request("POST", "/api/apps/events/ack", json={"eventIds": clean})
 
-    async def send_text(self, conversation_id: str, text: str) -> dict[str, Any]:
+    async def send_text(self, conversation_id: str, text: str, idempotency_key: str | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {"conversationId": str(conversation_id), "type": "text", "text": text}
+        if idempotency_key:
+            payload["idempotencyKey"] = idempotency_key
         return await self._request(
             "POST",
             "/api/send",
-            json={"conversationId": str(conversation_id), "type": "text", "text": text},
+            json=payload,
         )
 
     async def send_media_url(
@@ -93,6 +97,7 @@ class GeWeHubClient:
         media_type: str,
         url: str,
         file_name: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {"conversationId": str(conversation_id), "type": media_type}
         if media_type == "image":
@@ -101,6 +106,57 @@ class GeWeHubClient:
             payload["fileUrl"] = url
         if file_name:
             payload["fileName"] = file_name
+        if idempotency_key:
+            payload["idempotencyKey"] = idempotency_key
+        return await self._request("POST", "/api/send", json=payload)
+
+    async def send_media_file(
+        self,
+        conversation_id: str,
+        *,
+        media_type: str,
+        path: str | None = None,
+        content_base64: str | None = None,
+        file_name: str | None = None,
+        mime_type: str | None = None,
+        duration_ms: int | None = None,
+        thumb_path: str | None = None,
+        thumb_content_base64: str | None = None,
+        thumb_mime_type: str | None = None,
+        thumb_file_name: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        file_path = Path(path) if path else None
+        if not content_base64:
+            if file_path is None or not file_path.is_file():
+                raise GeWeHubError(f"media file does not exist: {file_path}")
+            content_base64 = base64.b64encode(file_path.read_bytes()).decode("ascii")
+        resolved_name = file_name or (file_path.name if file_path else "media.bin")
+        resolved_mime = mime_type or mimetypes.guess_type(resolved_name)[0] or "application/octet-stream"
+        payload: dict[str, Any] = {
+            "conversationId": str(conversation_id),
+            "type": media_type,
+            "contentBase64": content_base64,
+            "fileName": resolved_name,
+            "mimeType": resolved_mime,
+        }
+        if duration_ms is not None:
+            payload["durationMs"] = duration_ms
+        if thumb_path:
+            thumb_file = Path(thumb_path)
+            if not thumb_file.is_file():
+                raise GeWeHubError(f"thumbnail file does not exist: {thumb_file}")
+            thumb_file_name = thumb_file_name or thumb_file.name
+            thumb_mime_type = thumb_mime_type or mimetypes.guess_type(thumb_file_name)[0] or "image/jpeg"
+            thumb_content_base64 = base64.b64encode(thumb_file.read_bytes()).decode("ascii")
+        if thumb_content_base64:
+            payload["thumbContentBase64"] = thumb_content_base64
+            if thumb_mime_type:
+                payload["thumbMimeType"] = thumb_mime_type
+            if thumb_file_name:
+                payload["thumbFileName"] = thumb_file_name
+        if idempotency_key:
+            payload["idempotencyKey"] = idempotency_key
         return await self._request("POST", "/api/send", json=payload)
 
     async def download_media(self, descriptor: dict[str, Any]) -> dict[str, Any]:

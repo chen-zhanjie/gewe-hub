@@ -80,8 +80,7 @@ describe("OutboxService 发送任务", () => {
       body: {
         appId: "wx_app",
         toWxid: "wxid_target",
-        content: "hello",
-        ats: []
+        content: "hello"
       }
     });
     expect(prisma.message.upsert).toHaveBeenCalledWith({
@@ -727,6 +726,366 @@ describe("OutboxService 发送任务", () => {
     });
   });
 
+  it("公网视频 URL 发送时直接透传 videoUrl，不重新发布为签名 URL", async () => {
+    const publicVideoUrl = "https://cdn.example.test/clip.mp4";
+    const prisma = {
+      outboxTask: {
+        findFirst: vi.fn(async () => ({
+          id: "task_video_url",
+          taskType: "send",
+          refId: "send_video_url",
+          payload: { sendRequestId: "send_video_url" },
+          retryCount: 0,
+          maxRetry: 5
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      sendRequest: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "send_video_url",
+          accountId: "account_1",
+          conversationId: "conversation_1",
+          type: "video",
+          requestPayload: {
+            conversationId: "conversation_1",
+            type: "video",
+            fileUrl: publicVideoUrl
+          },
+          geweRequest: {
+            path: "/gewe/v2/api/message/postVideo",
+            body: {
+              appId: "wx_app",
+              toWxid: "wxid_target",
+              videoUrl: publicVideoUrl,
+              videoDuration: 1
+            }
+          },
+          conversation: {
+            id: "conversation_1",
+            peerWxid: "wxid_target",
+            account: {
+              wxid: "wxid_bot"
+            }
+          }
+        })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      message: {
+        findUnique: vi.fn(async () => null),
+        upsert: vi.fn(async (_args: unknown) => ({}))
+      },
+      conversation: {
+        update: vi.fn(async () => ({}))
+      }
+    };
+    const gewe = {
+      sendByMappedRequest: vi.fn(async () => ({
+        data: {
+          newMsgId: "9154866412345683",
+          msgId: "123461",
+          createTime: "1782932724225"
+        }
+      }))
+    };
+    const media = {
+      prepareOutboundFile: vi.fn(async () => {
+        throw new Error("公网视频 URL 不应该重新进入本地媒体发布流程");
+      }),
+      prepareOutboundVideoThumbnail: vi.fn(async () => {
+        throw new Error("公网视频 URL 没有本地视频文件时不应该自动截封面");
+      })
+    };
+    const service = new OutboxService(
+      prisma as never,
+      { createForMessage: vi.fn() } as never,
+      { syncContacts: vi.fn(), syncGroupMembers: vi.fn() } as never,
+      media as never,
+      gewe as never
+    );
+
+    await service.tick();
+
+    expect(media.prepareOutboundFile).not.toHaveBeenCalled();
+    expect(media.prepareOutboundVideoThumbnail).not.toHaveBeenCalled();
+    expect(gewe.sendByMappedRequest).toHaveBeenCalledWith({
+      path: "/gewe/v2/api/message/postVideo",
+      body: {
+        appId: "wx_app",
+        toWxid: "wxid_target",
+        videoUrl: publicVideoUrl,
+        thumbUrl: undefined,
+        videoDuration: 1
+      }
+    });
+    expect(prisma.message.upsert).toHaveBeenCalledWith({
+      where: { sendRequestId: "send_video_url" },
+      create: expect.objectContaining({
+        type: "video",
+        renderedText: "[视频]",
+        payload: expect.objectContaining({
+          content: expect.objectContaining({
+            type: "video",
+            media: expect.objectContaining({
+              status: "ready",
+              url: publicVideoUrl,
+              thumbnailUrl: undefined,
+              mimeType: "video/mp4",
+              fileName: "video.mp4",
+              size: 0,
+              durationMs: 1000
+            })
+          })
+        })
+      }),
+      update: expect.objectContaining({
+        renderedText: "[视频]"
+      })
+    });
+  });
+
+  it("发送视频前将上传封面图发布为签名 URL 后作为 thumbUrl", async () => {
+    const prisma = {
+      outboxTask: {
+        findFirst: vi.fn(async () => ({
+          id: "task_video_thumb",
+          taskType: "send",
+          refId: "send_video_thumb",
+          payload: { sendRequestId: "send_video_thumb" },
+          retryCount: 0,
+          maxRetry: 5
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      sendRequest: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "send_video_thumb",
+          accountId: "account_1",
+          conversationId: "conversation_1",
+          type: "video",
+          requestPayload: {
+            conversationId: "conversation_1",
+            type: "video",
+            contentBase64: "AAAAIGZ0eXA=",
+            mimeType: "video/mp4",
+            fileName: "clip.mp4",
+            thumbContentBase64: "iVBORw0KGgo=",
+            thumbMimeType: "image/png",
+            thumbFileName: "cover.png",
+            durationMs: 10_000
+          },
+          geweRequest: {
+            path: "/gewe/v2/api/message/postVideo",
+            body: {
+              appId: "wx_app",
+              toWxid: "wxid_target",
+              thumbSource: {
+                contentBase64: "iVBORw0KGgo=",
+                mimeType: "image/png",
+                fileName: "cover.png"
+              },
+              videoDuration: 10,
+              source: {
+                contentBase64: "AAAAIGZ0eXA=",
+                mimeType: "video/mp4",
+                fileName: "clip.mp4"
+              }
+            }
+          },
+          conversation: {
+            id: "conversation_1",
+            peerWxid: "wxid_target",
+            account: {
+              wxid: "wxid_bot"
+            }
+          }
+        })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      message: {
+        findUnique: vi.fn(async () => null),
+        upsert: vi.fn(async (_args: unknown) => ({}))
+      },
+      conversation: {
+        update: vi.fn(async () => ({}))
+      }
+    };
+    const gewe = {
+      sendByMappedRequest: vi.fn(async () => ({
+        data: {
+          newMsgId: "9154866412345684",
+          msgId: "123462",
+          createTime: "1782932724226"
+        }
+      }))
+    };
+    const media = {
+      prepareOutboundFile: vi.fn(async (input: { kind: string }) =>
+        input.kind === "video"
+          ? {
+              url: "http://localhost:8090/files/outbound/out_video?exp=1893456000&sig=test",
+              mimeType: "video/mp4",
+              fileName: "clip.mp4",
+              size: 1024
+            }
+          : {
+              url: "http://localhost:8090/files/outbound/out_thumb?exp=1893456000&sig=test",
+              mimeType: "image/png",
+              fileName: "cover.png",
+              size: 4
+            }
+      )
+    };
+    const service = new OutboxService(
+      prisma as never,
+      { createForMessage: vi.fn() } as never,
+      { syncContacts: vi.fn(), syncGroupMembers: vi.fn() } as never,
+      media as never,
+      gewe as never
+    );
+
+    await service.tick();
+
+    expect(media.prepareOutboundFile).toHaveBeenNthCalledWith(1, {
+      accountId: "account_1",
+      conversationId: "conversation_1",
+      kind: "video",
+      contentBase64: "AAAAIGZ0eXA=",
+      mimeType: "video/mp4",
+      fileName: "clip.mp4"
+    });
+    expect(media.prepareOutboundFile).toHaveBeenNthCalledWith(2, {
+      accountId: "account_1",
+      conversationId: "conversation_1",
+      kind: "image",
+      contentBase64: "iVBORw0KGgo=",
+      mimeType: "image/png",
+      fileName: "cover.png",
+      purpose: "thumbnail"
+    });
+    expect(gewe.sendByMappedRequest).toHaveBeenCalledWith({
+      path: "/gewe/v2/api/message/postVideo",
+      body: {
+        appId: "wx_app",
+        toWxid: "wxid_target",
+        videoUrl: "http://localhost:8090/files/outbound/out_video?exp=1893456000&sig=test",
+        thumbUrl: "http://localhost:8090/files/outbound/out_thumb?exp=1893456000&sig=test",
+        videoDuration: 10
+      }
+    });
+  });
+
+  it("发送视频未传封面和时长时由 Hub 自动生成缩略图并使用默认时长", async () => {
+    const prisma = {
+      outboxTask: {
+        findFirst: vi.fn(async () => ({
+          id: "task_video_auto_thumb",
+          taskType: "send",
+          refId: "send_video_auto_thumb",
+          payload: { sendRequestId: "send_video_auto_thumb" },
+          retryCount: 0,
+          maxRetry: 5
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      sendRequest: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "send_video_auto_thumb",
+          accountId: "account_1",
+          conversationId: "conversation_1",
+          type: "video",
+          requestPayload: {
+            conversationId: "conversation_1",
+            type: "video",
+            contentBase64: "AAAAIGZ0eXA=",
+            mimeType: "video/mp4",
+            fileName: "clip.mp4"
+          },
+          geweRequest: {
+            path: "/gewe/v2/api/message/postVideo",
+            body: {
+              appId: "wx_app",
+              toWxid: "wxid_target",
+              videoDuration: 1,
+              source: {
+                contentBase64: "AAAAIGZ0eXA=",
+                mimeType: "video/mp4",
+                fileName: "clip.mp4"
+              }
+            }
+          },
+          conversation: {
+            id: "conversation_1",
+            peerWxid: "wxid_target",
+            account: {
+              wxid: "wxid_bot"
+            }
+          }
+        })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      message: {
+        findUnique: vi.fn(async () => null),
+        upsert: vi.fn(async (_args: unknown) => ({}))
+      },
+      conversation: {
+        update: vi.fn(async () => ({}))
+      }
+    };
+    const gewe = {
+      sendByMappedRequest: vi.fn(async () => ({
+        data: {
+          newMsgId: "9154866412345685",
+          msgId: "123463",
+          createTime: "1782932724227"
+        }
+      }))
+    };
+    const media = {
+      prepareOutboundFile: vi.fn(async () => ({
+        url: "http://localhost:8090/files/outbound/out_video?exp=1893456000&sig=test",
+        path: "/tmp/out_video.mp4",
+        mimeType: "video/mp4",
+        fileName: "clip.mp4",
+        size: 1024
+      })),
+      prepareOutboundVideoThumbnail: vi.fn(async () => ({
+        url: "http://localhost:8090/files/outbound/out_video_thumb?exp=1893456000&sig=test",
+        path: "/tmp/out_video_thumb.jpg",
+        mimeType: "image/jpeg",
+        fileName: "clip.jpg",
+        size: 4096
+      }))
+    };
+    const service = new OutboxService(
+      prisma as never,
+      { createForMessage: vi.fn() } as never,
+      { syncContacts: vi.fn(), syncGroupMembers: vi.fn() } as never,
+      media as never,
+      gewe as never
+    );
+
+    await service.tick();
+
+    expect(media.prepareOutboundVideoThumbnail).toHaveBeenCalledWith({
+      accountId: "account_1",
+      videoPath: "/tmp/out_video.mp4",
+      fileName: "clip.mp4"
+    });
+    expect(gewe.sendByMappedRequest).toHaveBeenCalledWith({
+      path: "/gewe/v2/api/message/postVideo",
+      body: {
+        appId: "wx_app",
+        toWxid: "wxid_target",
+        videoUrl: "http://localhost:8090/files/outbound/out_video?exp=1893456000&sig=test",
+        thumbUrl: "http://localhost:8090/files/outbound/out_video_thumb?exp=1893456000&sig=test",
+        videoDuration: 1
+      }
+    });
+  });
+
   it("发送链接时调用 GeWe postLink，并生成本地链接消息", async () => {
     const prisma = {
       outboxTask: {
@@ -838,6 +1197,117 @@ describe("OutboxService 发送任务", () => {
     });
   });
 
+  it("发送链接缺少标题描述缩略图时补默认值并发布默认缩略图", async () => {
+    const prisma = {
+      outboxTask: {
+        findFirst: vi.fn(async () => ({
+          id: "task_link_default",
+          taskType: "send",
+          refId: "send_link_default",
+          payload: { sendRequestId: "send_link_default" },
+          retryCount: 0,
+          maxRetry: 5
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      sendRequest: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "send_link_default",
+          accountId: "account_1",
+          conversationId: "conversation_1",
+          type: "link",
+          requestPayload: {
+            conversationId: "conversation_1",
+            type: "link",
+            linkUrl: "https://example.com/article"
+          },
+          geweRequest: {
+            path: "/gewe/v2/api/message/postLink",
+            body: {
+              appId: "wx_app",
+              toWxid: "wxid_target",
+              linkUrl: "https://example.com/article"
+            }
+          },
+          conversation: {
+            id: "conversation_1",
+            peerWxid: "wxid_target",
+            account: {
+              wxid: "wxid_bot"
+            }
+          }
+        })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      message: {
+        findUnique: vi.fn(async () => null),
+        upsert: vi.fn(async (_args: unknown) => ({}))
+      },
+      conversation: {
+        update: vi.fn(async () => ({}))
+      }
+    };
+    const gewe = {
+      sendByMappedRequest: vi.fn(async () => ({
+        data: {
+          newMsgId: "9154866412345685",
+          msgId: "123463",
+          createTime: "1782932724227"
+        }
+      }))
+    };
+    const media = {
+      prepareOutboundFile: vi.fn(async () => ({
+        url: "http://localhost:8090/files/outbound/out_link_thumb?exp=1893456000&sig=test",
+        mimeType: "image/png",
+        fileName: "link-thumbnail.png",
+        size: 1413
+      }))
+    };
+    const service = new OutboxService(
+      prisma as never,
+      { createForMessage: vi.fn() } as never,
+      { syncContacts: vi.fn(), syncGroupMembers: vi.fn() } as never,
+      media as never,
+      gewe as never
+    );
+
+    await service.tick();
+
+    expect(media.prepareOutboundFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "account_1",
+        conversationId: "conversation_1",
+        kind: "image",
+        mimeType: "image/jpeg",
+        fileName: "link-thumbnail.jpg",
+        purpose: "thumbnail"
+      })
+    );
+    expect(gewe.sendByMappedRequest).toHaveBeenCalledWith({
+      path: "/gewe/v2/api/message/postLink",
+      body: {
+        appId: "wx_app",
+        toWxid: "wxid_target",
+        title: "example.com",
+        desc: "https://example.com/article",
+        linkUrl: "https://example.com/article",
+        thumbUrl: "http://localhost:8090/files/outbound/out_link_thumb?exp=1893456000&sig=test"
+      }
+    });
+    expect(prisma.message.upsert).toHaveBeenCalledWith({
+      where: { sendRequestId: "send_link_default" },
+      create: expect.objectContaining({
+        type: "link",
+        renderedText: "[链接] example.com",
+      }),
+      update: expect.objectContaining({
+        renderedText: "[链接] example.com"
+      })
+    });
+  });
+
   it("GeWe 发送业务失败时标记发送请求失败并终止 outbox，避免自动重复发送", async () => {
     const prisma = {
       outboxTask: {
@@ -919,6 +1389,19 @@ describe("OutboxService 发送任务", () => {
     await service.tick();
 
     expect(prisma.message.upsert).not.toHaveBeenCalled();
+    expect(prisma.sendRequest.update).toHaveBeenCalledWith({
+      where: { id: "send_failed_image" },
+      data: {
+        geweRequest: {
+          path: "/gewe/v2/api/message/postImage",
+          body: {
+            appId: "wx_app",
+            toWxid: "wxid_target",
+            imgUrl: "http://localhost:8090/files/outbound/out_image?exp=1893456000&sig=test"
+          }
+        }
+      }
+    });
     expect(prisma.sendRequest.update).toHaveBeenCalledWith({
       where: { id: "send_failed_image" },
       data: {
