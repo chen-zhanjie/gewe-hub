@@ -48,6 +48,8 @@ describe("Prisma schema", () => {
     expect(htmlPageModel).toMatch(/sendRequestId\s+String\?\s+@unique\s+@map\("send_request_id"\)/);
     expect(htmlPageModel).toMatch(/storageKey\s+String\s+@db\.VarChar\(1024\)\s+@map\("storage_key"\)/);
     expect(htmlPageModel).toMatch(/publicUrl\s+String\s+@db\.Text\s+@map\("public_url"\)/);
+    expect(htmlPageModel).toMatch(/sizeBytes\s+Int\s+@map\("size_bytes"\)/);
+    expect(htmlPageModel).toMatch(/sha256\s+String/);
     expect(htmlPageModel).toMatch(/@@map\("html_pages"\)/);
   });
 });

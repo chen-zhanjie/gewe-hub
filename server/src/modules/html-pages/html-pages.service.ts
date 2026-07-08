@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { BadRequestException, Injectable } from "@nestjs/common";
@@ -70,7 +70,8 @@ export class HtmlPagesService {
         fileName: sanitizeFileName(input.htmlFileName),
         storageKey,
         publicUrl,
-        size: info.size,
+        sizeBytes: info.size,
+        sha256: createSha256(bytes),
         status: "active",
       } as Prisma.HtmlPageUncheckedCreateInput,
     });
@@ -127,4 +128,8 @@ function normalizeText(value: string | null | undefined): string | undefined {
 function sanitizeFileName(fileName: string | null | undefined): string | null {
   const clean = basename(fileName || "").replace(/[^\w.\-()\u4e00-\u9fa5 ]+/g, "_").trim();
   return clean || null;
+}
+
+function createSha256(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }

@@ -17,6 +17,7 @@ describe("HtmlPagesPage", () => {
           title: "日报",
           desc: "今日 AI 日报",
           publicUrl: "https://gewehub.yunzxu.com/h/html_token",
+          sizeBytes: 42,
           status: "active",
           createdAt: "2026-07-08T07:16:37.000Z",
           account: { nickname: "客服主号", wxid: "wxid_bot" },
@@ -25,6 +26,16 @@ describe("HtmlPagesPage", () => {
           sendRequest: { id: "send_html_1", status: "sent" },
         },
       ],
+      "/api/send-requests/send_html_1": {
+        id: "send_html_1",
+        type: "html",
+        status: "sent",
+        requestPayload: {
+          htmlPublicUrl: "https://gewehub.yunzxu.com/h/html_token",
+          htmlPageId: "html_1",
+          htmlHosted: true,
+        },
+      },
       "/api/html-pages/html_1/archive": { id: "html_1", status: "archived" },
     });
 
@@ -34,6 +45,9 @@ describe("HtmlPagesPage", () => {
     expect(within(table).getByText("html_1")).toBeInTheDocument();
     expect(within(table).getByText("日报")).toBeInTheDocument();
     expect(within(table).getByText("今日 AI 日报")).toBeInTheDocument();
+    expect(within(table).getByText("https://gewehub.yunzxu.com/h/html_token")).toBeInTheDocument();
+    expect(within(table).getByText("send_html_1")).toBeInTheDocument();
+    expect(within(table).getByText("42 B")).toBeInTheDocument();
     expect(within(table).getByText("陈可乐")).toBeInTheDocument();
     expect(within(table).getByText("Hermes 助手")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("搜索 HTML 页面")).toBeInTheDocument();
@@ -42,6 +56,14 @@ describe("HtmlPagesPage", () => {
     const openLink = within(table).getByRole("link", { name: "打开公网页面 日报" });
     expect(openLink).toHaveAttribute("href", "https://gewehub.yunzxu.com/h/html_token");
     expect(openLink).toHaveAttribute("target", "_blank");
+
+    fireEvent.click(within(table).getByRole("button", { name: "查看关联发送请求 send_html_1" }));
+    const detailSheet = await screen.findByRole("dialog", { name: "关联发送请求" });
+    expect(within(detailSheet).getAllByText("send_html_1").length).toBeGreaterThan(0);
+    expect(within(detailSheet).getByText("html")).toBeInTheDocument();
+    expect(within(detailSheet).getByText("htmlPublicUrl")).toBeInTheDocument();
+    fireEvent.click(within(detailSheet).getByRole("button", { name: "关闭" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "关联发送请求" })).not.toBeInTheDocument());
 
     fireEvent.click(within(table).getByRole("button", { name: "归档" }));
     const confirmDialog = await screen.findByRole("alertdialog", { name: "归档 HTML 页面" });

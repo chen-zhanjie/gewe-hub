@@ -468,7 +468,8 @@ model HtmlPage {
   fileName      String?        @map("file_name")
   storageKey    String         @db.VarChar(1024) @map("storage_key")
   publicUrl     String         @db.Text @map("public_url")
-  size          Int
+  sizeBytes     Int            @map("size_bytes")
+  sha256        String
   status        HtmlPageStatus @default(active)
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")

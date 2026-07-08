@@ -82,7 +82,8 @@ export class SendController {
       if (existing) return sendResponse(existing);
     }
     const htmlInfo = body.type === "html" ? await this.resolveHtmlSend(body, conversation, app?.id ?? null) : undefined;
-    const requestPayload = buildRequestPayload(body, idempotencyKey, htmlInfo);
+    const htmlPresentation = resolveHtmlPresentation(body, htmlInfo);
+    const requestPayload = buildRequestPayload(body, idempotencyKey, htmlInfo, htmlPresentation);
     const mapped = mapSendRequestToGewe({
       appId: conversation.account.appId,
       peerWxid: conversation.peerWxid,
@@ -97,8 +98,8 @@ export class SendController {
       thumbContentBase64: body.thumbContentBase64,
       thumbMimeType: body.thumbMimeType,
       thumbFileName: body.thumbFileName,
-      title: body.title,
-      desc: body.desc,
+      title: htmlPresentation?.title ?? body.title,
+      desc: htmlPresentation?.desc ?? body.desc,
       linkUrl: htmlInfo?.htmlPublicUrl ?? body.linkUrl,
       durationMs: body.durationMs,
       mentions: body.mentions
@@ -268,10 +269,16 @@ function normalizeIdempotencyKey(value: string | undefined): string | undefined 
   return normalized || undefined;
 }
 
+function normalizeText(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized || undefined;
+}
+
 function buildRequestPayload(
   body: SendRequest,
   idempotencyKey: string | undefined,
-  htmlInfo: ResolveHtmlForSendResult | undefined
+  htmlInfo: ResolveHtmlForSendResult | undefined,
+  htmlPresentation: HtmlPresentation | undefined
 ): Record<string, unknown> {
   if (body.type !== "html") {
     return idempotencyKey ? { ...body, idempotencyKey } : body;
@@ -280,8 +287,8 @@ function buildRequestPayload(
   return compactUndefined({
     conversationId: body.conversationId,
     type: body.type,
-    title: body.title,
-    desc: body.desc,
+    title: htmlPresentation?.title,
+    desc: htmlPresentation?.desc,
     linkUrl: body.linkUrl,
     htmlFileName: body.htmlFileName,
     thumbUrl: body.thumbUrl,
@@ -294,6 +301,18 @@ function buildRequestPayload(
     htmlPageId: htmlInfo?.htmlPageId,
     htmlHosted: htmlInfo?.htmlHosted
   });
+}
+
+interface HtmlPresentation {
+  title: string;
+  desc: string;
+}
+
+function resolveHtmlPresentation(body: SendRequest, htmlInfo: ResolveHtmlForSendResult | undefined): HtmlPresentation | undefined {
+  if (body.type !== "html") return undefined;
+  const title = normalizeText(body.title) ?? "HTML 页面";
+  const desc = normalizeText(body.desc) ?? normalizeText(body.linkUrl) ?? htmlInfo?.htmlPublicUrl ?? "HTML 页面";
+  return { title, desc };
 }
 
 function sendResponse(

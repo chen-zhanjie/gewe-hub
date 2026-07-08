@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,7 +73,8 @@ describe("HtmlPagesService", () => {
         fileName: "report.html",
         storageKey: expect.stringMatching(/^html\/\d{8}\/[A-Za-z0-9_-]+\.html$/),
         publicUrl: result.htmlPublicUrl,
-        size: Buffer.byteLength("<!doctype html><html><body>报告</body></html>"),
+        sizeBytes: Buffer.byteLength("<!doctype html><html><body>报告</body></html>"),
+        sha256: sha256("<!doctype html><html><body>报告</body></html>"),
         status: "active",
       }),
     });
@@ -103,7 +105,8 @@ describe("HtmlPagesService", () => {
     expect(result.htmlHosted).toBe(true);
     expect(prisma.htmlPage.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        size: Buffer.byteLength("<html>base64</html>"),
+        sizeBytes: Buffer.byteLength("<html>base64</html>"),
+        sha256: sha256("<html>base64</html>"),
       }),
     });
 
@@ -140,3 +143,7 @@ describe("HtmlPagesService", () => {
     expect(prisma.htmlPage.create).not.toHaveBeenCalled();
   });
 });
+
+function sha256(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}

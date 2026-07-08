@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Archive, Copy, ExternalLink } from "lucide-react";
+import { Archive, ClipboardList, Copy, ExternalLink } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,7 +13,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/AlertDialog";
 import { DataTable } from "@/components/ui/DataTable";
+import { DescriptionList } from "@/components/ui/DescriptionList";
+import { DetailSheet } from "@/components/ui/DetailSheet";
 import { EntityCell } from "@/components/ui/EntityCell";
+import { JsonViewer } from "@/components/ui/JsonViewer";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { TimeText } from "@/components/ui/TimeText";
 import { apiFetch } from "@/lib/api";
@@ -42,12 +45,22 @@ interface BackendHtmlPage {
   title?: string | null;
   desc?: string | null;
   publicUrl: string;
+  sizeBytes?: number | null;
   status: string;
   createdAt?: string | Date;
   account?: { nickname?: string | null; platformRemark?: string | null; wxid?: string | null } | null;
   conversation?: { platformRemark?: string | null; name?: string | null; peerWxid?: string | null } | null;
   app?: { name?: string | null } | null;
   sendRequest?: { id?: string | null; status?: string | null } | null;
+}
+
+interface BackendSendRequest {
+  id: string;
+  type?: string | null;
+  status?: string | null;
+  requestPayload?: unknown;
+  geweRequest?: unknown;
+  geweResponse?: unknown;
 }
 
 export function HtmlPagesPage({
@@ -65,6 +78,9 @@ export function HtmlPagesPage({
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [confirmingArchive, setConfirmingArchive] = useState<BackendHtmlPage | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [selectedSendRequest, setSelectedSendRequest] = useState<BackendSendRequest | null>(null);
+  const [selectedSendRequestLoading, setSelectedSendRequestLoading] = useState(false);
+  const [selectedSendRequestError, setSelectedSendRequestError] = useState<string | null>(null);
   const rows = pages.map(mapHtmlPageRow);
   const visibleRows = rows.filter((row) => matchesHtmlPageSearch(row, pageSearch));
   const canGoPrevious = filters.page > 1;
@@ -89,6 +105,29 @@ export function HtmlPagesPage({
       accessorKey: "conversation",
       header: "会话",
       cell: ({ row }) => <EntityCell entity={row.original.conversationEntity} />,
+    },
+    {
+      accessorKey: "publicUrl",
+      header: "URL",
+      cell: ({ row }) => <code className="block max-w-72 truncate font-mono text-xs">{row.original.publicUrl}</code>,
+    },
+    {
+      accessorKey: "sendRequest",
+      header: "发送请求",
+      cell: ({ row }) => (
+        row.original.sendRequestId ? (
+          <div className="min-w-0">
+            <code className="block truncate font-mono text-xs">{row.original.sendRequestId}</code>
+            {row.original.sendRequestStatus ? <div className="mt-1"><StatusBadge status={row.original.sendRequestStatus} /></div> : null}
+          </div>
+        ) : "—"
+      ),
+    },
+    {
+      accessorKey: "sizeBytes",
+      header: "文件大小",
+      cell: ({ row }) => <span className="tabular-nums">{formatBytes(row.original.sizeBytes)}</span>,
+      meta: { align: "right" },
     },
     {
       accessorKey: "app",
@@ -135,6 +174,18 @@ export function HtmlPagesPage({
           </button>
           <button
             type="button"
+            title="查看关联发送请求"
+            aria-label={`查看关联发送请求 ${row.original.sendRequestId ?? row.original.id}`}
+            disabled={!row.original.sendRequestId || selectedSendRequestLoading}
+            onClick={() => {
+              if (row.original.sendRequestId) void openSendRequestDetail(row.original.sendRequestId);
+            }}
+            className="rounded-md border p-2 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <ClipboardList className="size-4" />
+          </button>
+          <button
+            type="button"
             title="归档"
             aria-label="归档"
             disabled={row.original.status !== "active" || archivingId === row.original.id}
@@ -149,7 +200,7 @@ export function HtmlPagesPage({
         </div>
       ),
     },
-  ], [archivingId]);
+  ], [archivingId, selectedSendRequestLoading]);
 
   function updateFilters(nextFilters: HtmlPageFilters) {
     setFilters(nextFilters);
@@ -168,6 +219,20 @@ export function HtmlPagesPage({
       setArchiveError(archiveError instanceof Error ? archiveError.message : "归档失败");
     } finally {
       setArchivingId(null);
+    }
+  }
+
+  async function openSendRequestDetail(sendRequestId: string) {
+    setSelectedSendRequestLoading(true);
+    setSelectedSendRequestError(null);
+    setSelectedSendRequest({ id: sendRequestId });
+    try {
+      const detail = await apiFetch<BackendSendRequest>(`/api/send-requests/${sendRequestId}`);
+      setSelectedSendRequest(detail);
+    } catch (detailError) {
+      setSelectedSendRequestError(detailError instanceof Error ? detailError.message : "关联发送请求加载失败");
+    } finally {
+      setSelectedSendRequestLoading(false);
     }
   }
 
@@ -209,6 +274,17 @@ export function HtmlPagesPage({
           onLastPage: () => updateFilters({ ...filters, page: filters.page + 1 }),
           canPreviousPage: canGoPrevious && !loading,
           canNextPage: canGoNext && !loading,
+        }}
+      />
+      <SendRequestDetailSheet
+        request={selectedSendRequest}
+        loading={selectedSendRequestLoading}
+        error={selectedSendRequestError}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedSendRequest(null);
+            setSelectedSendRequestError(null);
+          }
         }}
       />
       <AlertDialog
@@ -361,13 +437,56 @@ function mapHtmlPageRow(page: BackendHtmlPage) {
     title: page.title || "未命名 HTML",
     desc: page.desc ?? "",
     publicUrl: page.publicUrl,
+    sizeBytes: page.sizeBytes ?? null,
     conversation: getHtmlPageConversationName(page),
     conversationEntity: mapConversationEntity(page.conversation),
     app: page.app?.name ?? "—",
+    sendRequestId: page.sendRequest?.id ?? null,
+    sendRequestStatus: page.sendRequest?.status ?? null,
     status: page.status,
     createdAt: page.createdAt,
     source: page,
   };
+}
+
+function SendRequestDetailSheet({
+  request,
+  loading,
+  error,
+  onOpenChange,
+}: {
+  request: BackendSendRequest | null;
+  loading: boolean;
+  error: string | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <DetailSheet
+      open={request !== null}
+      onOpenChange={onOpenChange}
+      title="关联发送请求"
+      description={request?.id}
+      status={request?.status ? <StatusBadge status={request.status} /> : undefined}
+    >
+      {request ? (
+        <div className="space-y-4">
+          {loading ? <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">正在加载详情</div> : null}
+          {error ? <div className="rounded-md border border-destructive/30 bg-background px-3 py-2 text-sm text-destructive">{error}</div> : null}
+          <DescriptionList
+            className="rounded-md border p-3"
+            items={[
+              { label: "发送请求 ID", value: <code className="font-mono text-xs">{request.id}</code> },
+              { label: "类型", value: request.type },
+              { label: "状态", value: request.status },
+            ]}
+          />
+          <JsonViewer title="请求 payload" value={request.requestPayload ?? {}} />
+          {request.geweRequest ? <JsonViewer title="GeWe 请求" value={request.geweRequest} /> : null}
+          {request.geweResponse ? <JsonViewer title="GeWe 响应" value={request.geweResponse} /> : null}
+        </div>
+      ) : null}
+    </DetailSheet>
+  );
 }
 
 function getHtmlPageConversationName(page: BackendHtmlPage): string {
@@ -388,7 +507,18 @@ function mapConversationEntity(
 function matchesHtmlPageSearch(row: HtmlPageRow, query: string): boolean {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) return true;
-  return [row.id, row.title, row.desc, row.publicUrl, row.conversation, row.app, row.status, String(row.createdAt ?? "")]
+  return [
+    row.id,
+    row.title,
+    row.desc,
+    row.publicUrl,
+    row.conversation,
+    row.app,
+    row.sendRequestId ?? "",
+    row.sendRequestStatus ?? "",
+    row.status,
+    String(row.createdAt ?? ""),
+  ]
     .some((value) => value.toLowerCase().includes(normalizedQuery));
 }
 
@@ -410,4 +540,18 @@ function asPageSize(value: number): number {
 function countRowsByFacet(rows: HtmlPageRow[], status: HtmlPageFilters["status"]): number {
   if (!status) return rows.length;
   return rows.filter((row) => row.status === status).length;
+}
+
+function formatBytes(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "—";
+  if (value < 1024) return `${value} B`;
+  const units = ["KB", "MB", "GB"];
+  let size = value / 1024;
+  for (const unit of units) {
+    if (size < 1024 || unit === "GB") {
+      return `${size >= 10 ? size.toFixed(0) : size.toFixed(1)} ${unit}`;
+    }
+    size /= 1024;
+  }
+  return `${value} B`;
 }

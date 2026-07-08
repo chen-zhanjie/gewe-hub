@@ -628,6 +628,61 @@ describe("SendController", () => {
     });
   });
 
+  it("创建 HTML 发送请求缺少标题描述时补默认 link 标题和描述", async () => {
+    const prisma = {
+      hubApp: {
+        findUnique: vi.fn()
+      },
+      conversation: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "conversation_1",
+          accountId: "account_1",
+          peerWxid: "wxid_target",
+          account: {
+            appId: "wx_app",
+            wxid: "wxid_bot"
+          }
+        }))
+      },
+      sendRequest: {
+        create: vi.fn(async () => ({ id: "send_html_defaults", status: "pending" }))
+      },
+      outboxTask: {
+        create: vi.fn(async () => ({ id: "task_html_defaults" }))
+      }
+    };
+    const htmlPages = {
+      resolveForSend: vi.fn(async () => ({
+        htmlPublicUrl: "https://gewehub.yunzxu.com/h/html_default",
+        htmlPageId: "html_default",
+        htmlHosted: true
+      })),
+      bindSendRequest: vi.fn(async () => undefined)
+    };
+    const controller = new SendController(prisma as never, {} as never, htmlPages as never);
+
+    await controller.send(undefined, {
+      conversationId: "conversation_1",
+      type: "html",
+      htmlContent: "<html>default</html>"
+    });
+
+    expect(prisma.sendRequest.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        requestPayload: expect.objectContaining({
+          title: "HTML 页面",
+          desc: "https://gewehub.yunzxu.com/h/html_default"
+        }),
+        geweRequest: expect.objectContaining({
+          body: expect.objectContaining({
+            title: "HTML 页面",
+            desc: "https://gewehub.yunzxu.com/h/html_default"
+          })
+        })
+      })
+    });
+  });
+
   it("撤回已发送消息时用三件套调用 GeWe，并把本地 hub_send 消息标记为已撤回", async () => {
     const prisma = {
       sendRequest: {
