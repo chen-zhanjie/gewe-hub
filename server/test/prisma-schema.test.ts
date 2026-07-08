@@ -28,4 +28,26 @@ describe("Prisma schema", () => {
       expect(model).toMatch(/avatarUrl\s+String\?\s+@db\.Text\s+@map\("avatar_url"\)/);
     }
   });
+
+  it("send_requests 表包含列表排序索引，避免宽表按创建时间排序触发 MySQL filesort", () => {
+    const schema = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const sendRequestModel = schema.match(/model SendRequest \{[\s\S]*?\n\}/)?.[0] ?? "";
+
+    expect(sendRequestModel).toMatch(/@@index\(\[createdAt, id\](?:,\s*map:\s*"send_requests_created_at_id_idx")?\)/);
+    expect(sendRequestModel).toMatch(/@@index\(\[status, createdAt, id\](?:,\s*map:\s*"send_requests_status_created_at_id_idx")?\)/);
+  });
+
+  it("HTML 页面模型支持托管页面、发送记录关联和公开访问状态", () => {
+    const schema = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
+    const standardTypeEnum = schema.match(/enum StandardMessageType \{[\s\S]*?\n\}/)?.[0] ?? "";
+    const htmlPageModel = schema.match(/model HtmlPage \{[\s\S]*?\n\}/)?.[0] ?? "";
+
+    expect(standardTypeEnum).toMatch(/\n\s+html\n/);
+    expect(schema).toContain("enum HtmlPageStatus");
+    expect(htmlPageModel).toMatch(/token\s+String\s+@unique/);
+    expect(htmlPageModel).toMatch(/sendRequestId\s+String\?\s+@unique\s+@map\("send_request_id"\)/);
+    expect(htmlPageModel).toMatch(/storageKey\s+String\s+@db\.VarChar\(1024\)\s+@map\("storage_key"\)/);
+    expect(htmlPageModel).toMatch(/publicUrl\s+String\s+@db\.Text\s+@map\("public_url"\)/);
+    expect(htmlPageModel).toMatch(/@@map\("html_pages"\)/);
+  });
 });

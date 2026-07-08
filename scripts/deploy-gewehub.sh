@@ -37,7 +37,16 @@ if [ ! -f "$ENV_SOURCE" ]; then
 fi
 
 if [ -z "$REDIS_PASSWORD" ]; then
-  REDIS_PASSWORD="$(ssh "$REMOTE_HOST" "docker inspect $REDIS_HOST --format '{{json .Config.Cmd}}'" | sed -n 's/.*--requirepass[\", ]*\\([^\", ]*\\).*/\\1/p')"
+  REDIS_PASSWORD="$(
+    ssh "$REMOTE_HOST" "docker inspect $REDIS_HOST --format '{{json .Config.Cmd}}'" |
+      python3 -c 'import json, sys
+cmd = json.load(sys.stdin)
+try:
+    print(cmd[cmd.index("--requirepass") + 1])
+except (ValueError, IndexError):
+    print("")
+'
+  )"
 fi
 
 if [ -n "$REDIS_PASSWORD" ]; then

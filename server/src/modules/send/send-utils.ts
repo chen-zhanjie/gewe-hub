@@ -3,7 +3,7 @@ import type { MessageEnvelope, MessageNode } from "@gewehub/contracts";
 export interface SendMappingInput {
   appId: string;
   peerWxid: string;
-  type: "text" | "image" | "file" | "voice" | "video" | "link";
+  type: "text" | "image" | "file" | "voice" | "video" | "link" | "html";
   text?: string;
   mediaUrl?: string;
   fileUrl?: string;
@@ -90,7 +90,7 @@ export function mapSendRequestToGewe(input: SendMappingInput) {
           })
     };
   }
-  if (input.type === "link") {
+  if (input.type === "link" || input.type === "html") {
     return {
       path: "/gewe/v2/api/message/postLink",
       body: compactRecord({

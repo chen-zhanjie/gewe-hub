@@ -278,6 +278,30 @@ describe("MessageNodeView", () => {
     expect(screen.getByText("00:05")).toBeInTheDocument();
   });
 
+  it("HTML 节点使用带 HTML 标签的链接卡片展示", () => {
+    render(
+      <MessageNodeView
+        node={{
+          type: "html",
+          text: "[HTML] 日报",
+          link: {
+            title: "日报",
+            desc: "今日 AI 日报",
+            url: "https://gewehub.yunzxu.com/h/html_token",
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("HTML")).toBeInTheDocument();
+    expect(screen.getByText("日报")).toBeInTheDocument();
+    expect(screen.getByText("今日 AI 日报")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "打开 HTML 日报" })).toHaveAttribute(
+      "href",
+      "https://gewehub.yunzxu.com/h/html_token",
+    );
+  });
+
   it("位置、名片、红包、转账使用独立摘要形态", () => {
     const { rerender } = render(
       <MessageNodeView

@@ -20,6 +20,8 @@ export function WorkbenchComposerOutlet({
       videoDraft={composer.videoDraft}
       showLinkForm={composer.showLinkForm}
       linkDraft={composer.linkDraft}
+      showHtmlForm={composer.showHtmlForm}
+      htmlDraft={composer.htmlDraft}
       pendingAttachments={composer.pendingAttachments}
       sendError={composer.sendError}
       parsingLink={composer.parsingLink}
@@ -28,14 +30,18 @@ export function WorkbenchComposerOutlet({
       videoInputRef={composer.videoInputRef}
       videoThumbInputRef={composer.videoThumbInputRef}
       linkThumbInputRef={composer.linkThumbInputRef}
+      htmlFileInputRef={composer.htmlFileInputRef}
       fileInputRef={composer.fileInputRef}
       onMessageTextChange={composer.setMessageText}
       onShowVideoFormChange={composer.setShowVideoForm}
       onVideoDraftChange={composer.setVideoDraft}
       onShowLinkFormChange={composer.setShowLinkForm}
+      onShowHtmlFormChange={composer.setShowHtmlForm}
       onCloseVideoForm={composer.closeVideoForm}
       onCloseLinkForm={composer.closeLinkForm}
+      onCloseHtmlForm={composer.closeHtmlForm}
       onLinkDraftChange={composer.setLinkDraft}
+      onHtmlDraftChange={composer.setHtmlDraft}
       onSendMedia={(file, type) => {
         void composer.handleSendMedia(file, type);
       }}
@@ -45,6 +51,9 @@ export function WorkbenchComposerOutlet({
       }}
       onSendLink={() => {
         void composer.handleSendLink();
+      }}
+      onSendHtml={() => {
+        void composer.handleSendHtml();
       }}
       onParseLink={() => {
         void composer.handleParseLink();

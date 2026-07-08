@@ -84,6 +84,7 @@ enum StandardMessageType {
   file
   emoji
   link
+  html
   mini_program
   chat_record
   location
@@ -156,6 +157,12 @@ enum OutboxTaskType {
   sync_group_members
 }
 
+enum HtmlPageStatus {
+  active
+  archived
+  deleted
+}
+
 model WechatAccount {
   id             String       @id @default(cuid())
   appId          String       @map("app_id")
@@ -179,6 +186,7 @@ model WechatAccount {
   messages       Message[]
   mediaAssets    MediaAsset[]
   sendRequests   SendRequest[]
+  htmlPages      HtmlPage[]
   appRemarks     AppAccountRemark[]
 
   @@map("wechat_accounts")
@@ -272,6 +280,7 @@ model Conversation {
   app            HubApp?            @relation(fields: [appId], references: [id])
   messages       Message[]
   sendRequests   SendRequest[]
+  htmlPages      HtmlPage[]
 
   @@unique([accountId, peerWxid])
   @@map("conversations")
@@ -374,6 +383,7 @@ model HubApp {
   accountRemarks      AppAccountRemark[]
   deliveries          Delivery[]
   sendRequests        SendRequest[]
+  htmlPages           HtmlPage[]
 
   @@map("hub_apps")
 }
@@ -438,9 +448,40 @@ model SendRequest {
   account          WechatAccount @relation(fields: [accountId], references: [id])
   conversation     Conversation @relation(fields: [conversationId], references: [id])
   message          Message?
+  htmlPage         HtmlPage?
 
   @@unique([appId, conversationId, idempotencyKey])
+  @@index([createdAt, id], map: "send_requests_created_at_id_idx")
+  @@index([status, createdAt, id], map: "send_requests_status_created_at_id_idx")
   @@map("send_requests")
+}
+
+model HtmlPage {
+  id            String         @id @default(cuid())
+  token         String         @unique
+  accountId     String         @map("account_id")
+  conversationId String        @map("conversation_id")
+  appId         String?        @map("app_id")
+  sendRequestId String?        @unique @map("send_request_id")
+  title         String
+  desc          String?        @db.Text
+  fileName      String?        @map("file_name")
+  storageKey    String         @db.VarChar(1024) @map("storage_key")
+  publicUrl     String         @db.Text @map("public_url")
+  size          Int
+  status        HtmlPageStatus @default(active)
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  account       WechatAccount  @relation(fields: [accountId], references: [id])
+  conversation  Conversation   @relation(fields: [conversationId], references: [id])
+  app           HubApp?        @relation(fields: [appId], references: [id])
+  sendRequest   SendRequest?   @relation(fields: [sendRequestId], references: [id])
+
+  @@index([accountId, createdAt])
+  @@index([conversationId, createdAt])
+  @@index([status, createdAt])
+  @@map("html_pages")
 }
 
 model OutboxTask {

@@ -99,6 +99,17 @@ export interface SendLinkRequest {
   thumbFileName?: string;
 }
 
+export interface SendHtmlRequest {
+  conversationId: string;
+  type: "html";
+  title: string;
+  desc: string;
+  linkUrl?: string;
+  htmlContent?: string;
+  htmlContentBase64?: string;
+  htmlFileName?: string;
+}
+
 export interface LinkPreviewResponse {
   title?: string;
   desc?: string;
@@ -109,6 +120,9 @@ export interface LinkPreviewResponse {
 export interface WorkbenchSendResponse {
   id: string;
   status?: string;
+  htmlPublicUrl?: string;
+  htmlPageId?: string | null;
+  htmlHosted?: boolean;
 }
 
 export interface WorkbenchOutboxTaskResponse {
@@ -248,6 +262,13 @@ export async function sendWorkbenchLink(payload: SendLinkRequest): Promise<Workb
   });
 }
 
+export async function sendWorkbenchHtml(payload: SendHtmlRequest): Promise<WorkbenchSendResponse> {
+  return apiFetch<WorkbenchSendResponse>("/api/send", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function parseWorkbenchLinkPreview(linkUrl: string): Promise<LinkPreviewResponse> {
   const params = new URLSearchParams({ url: linkUrl });
   return apiFetch<LinkPreviewResponse>(`/api/link-preview?${params.toString()}`);
@@ -268,6 +289,19 @@ export async function sendWorkbenchPayload(
       ...(payload.thumbContentBase64 ? { thumbContentBase64: payload.thumbContentBase64 } : {}),
       ...(payload.thumbMimeType ? { thumbMimeType: payload.thumbMimeType } : {}),
       ...(payload.thumbFileName ? { thumbFileName: payload.thumbFileName } : {}),
+    });
+  }
+
+  if (payload.type === "html") {
+    return sendWorkbenchHtml({
+      conversationId,
+      type: "html",
+      title: payload.title ?? "",
+      desc: payload.desc ?? "",
+      ...(payload.linkUrl ? { linkUrl: payload.linkUrl } : {}),
+      ...(payload.htmlContent ? { htmlContent: payload.htmlContent } : {}),
+      ...(payload.htmlContentBase64 ? { htmlContentBase64: payload.htmlContentBase64 } : {}),
+      ...(payload.htmlFileName ? { htmlFileName: payload.htmlFileName } : {}),
     });
   }
 

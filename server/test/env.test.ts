@@ -27,4 +27,8 @@ describe("env 配置", () => {
   it("允许通过环境变量调整 JSON 请求体上限", () => {
     expect(loadEnv({ ...baseEnv, JSON_BODY_LIMIT_BYTES: "33554432" }).JSON_BODY_LIMIT_BYTES).toBe(32 * 1024 * 1024);
   });
+
+  it("HTML 页面默认大小上限为 5MB", () => {
+    expect(loadEnv(baseEnv).HTML_PAGE_MAX_BYTES).toBe(5 * 1024 * 1024);
+  });
 });

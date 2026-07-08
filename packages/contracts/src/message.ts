@@ -8,6 +8,7 @@ export const messageNodeTypeSchema = z.enum([
   "file",
   "emoji",
   "link",
+  "html",
   "mini_program",
   "chat_record",
   "location",

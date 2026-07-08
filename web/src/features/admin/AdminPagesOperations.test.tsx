@@ -252,7 +252,7 @@ describe("AdminPage operations", () => {
   });
 
   it("发送记录页可以打开单条详情查看请求和 GeWe 响应", async () => {
-    mockFetch({
+    const fetchMock = mockFetch({
       "/api/send-requests?take=20&skip=0": [
         {
           id: "send_detail_1",
@@ -261,9 +261,6 @@ describe("AdminPage operations", () => {
           resultMsgId: "769533801",
           resultNewMsgId: "5271007655758710001",
           updatedAt: "2026-07-06T07:16:37.000Z",
-          requestPayload: { type: "image", fileName: "真实图片.png" },
-          geweRequest: { api: "postImage", imageUrl: "http://media.local/a.png" },
-          geweResponse: { ret: 200, msg: "发送成功", newMsgId: "5271007655758710001" },
           conversation: {
             platformRemark: "陈可乐",
             name: null,
@@ -271,6 +268,22 @@ describe("AdminPage operations", () => {
           },
         },
       ],
+      "/api/send-requests/send_detail_1": {
+        id: "send_detail_1",
+        type: "image",
+        status: "sent",
+        resultMsgId: "769533801",
+        resultNewMsgId: "5271007655758710001",
+        updatedAt: "2026-07-06T07:16:37.000Z",
+        requestPayload: { type: "image", fileName: "真实图片.png" },
+        geweRequest: { api: "postImage", imageUrl: "http://media.local/a.png" },
+        geweResponse: { ret: 200, msg: "发送成功", newMsgId: "5271007655758710001" },
+        conversation: {
+          platformRemark: "陈可乐",
+          name: null,
+          peerWxid: "wxid_target",
+        },
+      },
     });
 
     window.history.replaceState(null, "", "/send-requests");
@@ -280,6 +293,12 @@ describe("AdminPage operations", () => {
     fireEvent.click(within(table).getByRole("button", { name: "查看详情" }));
 
     const detailDialog = await screen.findByRole("dialog", { name: "发送详情" });
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/send-requests/send_detail_1",
+        expect.objectContaining({ credentials: "include" }),
+      ),
+    );
     expect(detailDialog).toHaveClass("inset-y-0");
     expect(detailDialog).toHaveClass("right-0");
     expect(within(detailDialog).getAllByText("send_detail_1").length).toBeGreaterThan(0);

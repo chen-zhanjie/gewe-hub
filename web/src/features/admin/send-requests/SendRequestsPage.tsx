@@ -74,6 +74,8 @@ export function SendRequestsPage({
   const [confirmingRevoke, setConfirmingRevoke] = useState<BackendSendRequest | null>(null);
   const [confirmingCancel, setConfirmingCancel] = useState<BackendSendRequest | null>(null);
   const [selectedSendRequest, setSelectedSendRequest] = useState<BackendSendRequest | null>(null);
+  const [selectedSendRequestLoading, setSelectedSendRequestLoading] = useState(false);
+  const [selectedSendRequestError, setSelectedSendRequestError] = useState<string | null>(null);
   const [revokeError, setRevokeError] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [sendSearch, setSendSearch] = useState("");
@@ -123,7 +125,9 @@ export function SendRequestsPage({
             type="button"
             title="查看详情"
             aria-label="查看详情"
-            onClick={() => setSelectedSendRequest(row.original.source)}
+            onClick={() => {
+              void openSendRequestDetail(row.original.source);
+            }}
             className="rounded-md border p-2 text-muted-foreground hover:text-foreground"
           >
             <ClipboardList className="size-4" />
@@ -194,6 +198,20 @@ export function SendRequestsPage({
     }
   }
 
+  async function openSendRequestDetail(row: BackendSendRequest) {
+    setSelectedSendRequest(row);
+    setSelectedSendRequestLoading(true);
+    setSelectedSendRequestError(null);
+    try {
+      const detail = await apiFetch<BackendSendRequest>(`/api/send-requests/${row.id}`);
+      setSelectedSendRequest(detail);
+    } catch (error) {
+      setSelectedSendRequestError(error instanceof Error ? error.message : "发送详情加载失败");
+    } finally {
+      setSelectedSendRequestLoading(false);
+    }
+  }
+
   return (
     <PageShell description="追踪后台和应用发起的发送请求。">
       <QuickStatusTabs
@@ -235,7 +253,17 @@ export function SendRequestsPage({
           canNextPage: canGoNext && !loading,
         }}
       />
-      <SendRequestDetailSheet request={selectedSendRequest} onOpenChange={(open) => !open && setSelectedSendRequest(null)} />
+      <SendRequestDetailSheet
+        request={selectedSendRequest}
+        loading={selectedSendRequestLoading}
+        error={selectedSendRequestError}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedSendRequest(null);
+            setSelectedSendRequestError(null);
+          }
+        }}
+      />
       <AlertDialog
         open={confirmingRevoke !== null}
         onOpenChange={(open) => {
@@ -365,9 +393,13 @@ function SendRequestSummary({ row }: { row: BackendSendRequest }) {
 
 function SendRequestDetailSheet({
   request,
+  loading,
+  error,
   onOpenChange,
 }: {
   request: BackendSendRequest | null;
+  loading: boolean;
+  error: string | null;
   onOpenChange: (open: boolean) => void;
 }) {
   return (
@@ -380,6 +412,8 @@ function SendRequestDetailSheet({
     >
       {request ? (
         <div className="space-y-4">
+          {loading ? <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">正在加载详情</div> : null}
+          {error ? <div className="rounded-md border border-destructive/30 bg-background px-3 py-2 text-sm text-destructive">{error}</div> : null}
           <DescriptionList
             className="rounded-md border p-3"
             items={[

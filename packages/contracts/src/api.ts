@@ -16,7 +16,7 @@ export const ackResponseSchema = z
 export const sendRequestSchema = z
   .object({
     conversationId: z.string(),
-    type: z.enum(["text", "image", "file", "voice", "video", "link"]),
+    type: z.enum(["text", "image", "file", "voice", "video", "link", "html"]),
     text: z.string().optional(),
     mediaUrl: z.string().url().optional(),
     fileUrl: z.string().url().optional(),
@@ -30,6 +30,9 @@ export const sendRequestSchema = z
     title: z.string().optional(),
     desc: z.string().optional(),
     linkUrl: z.string().url().optional(),
+    htmlContent: z.string().optional(),
+    htmlContentBase64: z.string().optional(),
+    htmlFileName: z.string().optional(),
     durationMs: z.number().int().positive().optional(),
     mentions: z.array(z.string()).optional(),
     requestId: z.string().optional(),
@@ -73,6 +76,16 @@ export const sendRequestSchema = z
         });
       }
     }
+    if (value.type === "html") {
+      const sources = [value.linkUrl?.trim(), value.htmlContent?.trim(), value.htmlContentBase64?.trim()].filter(Boolean);
+      if (sources.length !== 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["htmlContent"],
+          message: "HTML 消息必须提供 linkUrl、htmlContent、htmlContentBase64 三选一"
+        });
+      }
+    }
   });
 
 export type SendRequest = z.infer<typeof sendRequestSchema>;
@@ -81,7 +94,10 @@ export const sendResponseSchema = z
   .object({
     id: z.string(),
     status: z.enum(["pending", "sent", "failed"]),
-    messageId: z.string().optional()
+    messageId: z.string().optional(),
+    htmlPublicUrl: z.string().url().optional(),
+    htmlPageId: z.string().nullable().optional(),
+    htmlHosted: z.boolean().optional()
   })
   .strict();
 

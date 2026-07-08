@@ -1,7 +1,7 @@
 import type { MessageNode } from "@gewehub/contracts";
 import type { AccountSummary, LocalSendPayload, MessageItem } from "@/lib/workspace-data";
 
-export type LocalSendType = "text" | "image" | "file" | "voice" | "video" | "link";
+export type LocalSendType = "text" | "image" | "file" | "voice" | "video" | "link" | "html";
 
 export interface LocalSend {
   id: string;
@@ -185,6 +185,18 @@ function localSendContent(send: LocalSend): MessageNode {
       },
     };
   }
+  if (send.type === "html") {
+    return {
+      type: "html",
+      text: send.text,
+      link: {
+        title: send.sendPayload?.title,
+        desc: send.sendPayload?.desc,
+        url: send.sendPayload?.htmlPublicUrl ?? send.sendPayload?.linkUrl,
+        thumbnailUrl: send.sendPayload?.thumbUrl,
+      },
+    };
+  }
   return {
     type: send.type,
     text: send.text,
@@ -203,6 +215,7 @@ function localSendText(payload: LocalSendPayload): string {
   if (payload.type === "voice") return "[语音]";
   if (payload.type === "video") return payload.fileName ? `[视频] ${payload.fileName}` : "[视频]";
   if (payload.type === "link") return payload.title ? `[链接] ${payload.title}` : "[链接]";
+  if (payload.type === "html") return payload.title ? `[HTML] ${payload.title}` : "[HTML]";
   return payload.fileName ? `[文件] ${payload.fileName}` : "[文件]";
 }
 

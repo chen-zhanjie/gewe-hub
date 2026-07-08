@@ -14,6 +14,7 @@ import {
   FileVideo,
   Gift,
   ImageIcon,
+  Link2,
   MapPin,
   MessagesSquare,
   X,
@@ -96,13 +97,8 @@ function MessageNodeContent({ node, depth = 0 }: MessageNodeViewProps) {
     return <PendingVideoPreview node={node} />;
   }
 
-  if (node.type === "link") {
-    return (
-      <div className="w-72 rounded-md border bg-background p-3 text-sm">
-        <div className="line-clamp-1 font-medium">{node.link?.title ?? node.text}</div>
-        {node.link?.desc ? <div className="line-clamp-2 text-xs text-muted-foreground">{node.link.desc}</div> : null}
-      </div>
-    );
+  if (node.type === "link" || node.type === "html") {
+    return <LinkMessageCard node={node} />;
   }
 
   if (node.type === "mini_program") {
@@ -241,6 +237,44 @@ function FileMessageCard({ node }: { node: MessageNode }) {
         )}
       </span>
     </div>
+  );
+}
+
+function LinkMessageCard({ node }: { node: MessageNode }) {
+  const title = node.link?.title ?? node.text;
+  const label = node.type === "html" ? "HTML" : "链接";
+  const url = node.link?.url;
+  const content = (
+    <>
+      <span className="flex items-start gap-3">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+          {node.type === "html" ? <Code2 className="size-5" /> : <Link2 className="size-5" />}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-xs text-muted-foreground">{label}</span>
+          <span className="mt-1 block truncate font-medium">{title}</span>
+          {node.link?.desc ? <span className="mt-1 block line-clamp-2 text-xs text-muted-foreground">{node.link.desc}</span> : null}
+        </span>
+        {url ? <ExternalLink className="mt-1 size-4 shrink-0 text-muted-foreground" /> : null}
+      </span>
+    </>
+  );
+
+  if (!url) {
+    return <div className="w-72 rounded-md border bg-background p-3 text-sm">{content}</div>;
+  }
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={`打开 ${label} ${title}`}
+      className="block w-72 rounded-md border bg-background p-3 text-sm shadow-sm transition hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      onClick={(event) => event.stopPropagation()}
+    >
+      {content}
+    </a>
   );
 }
 
@@ -569,6 +603,7 @@ function summarizeChatRecordTypes(node: MessageNode): string[] {
     ["file", "文件"],
     ["emoji", "表情"],
     ["link", "链接"],
+    ["html", "HTML"],
     ["mini_program", "小程序"],
     ["chat_record", "聊天记录"],
     ["location", "位置"],
@@ -595,6 +630,7 @@ export function isFramedMessageNode(node: MessageNode): boolean {
     "video",
     "file",
     "link",
+    "html",
     "mini_program",
     "chat_record",
     "location",

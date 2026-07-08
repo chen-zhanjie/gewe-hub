@@ -563,14 +563,15 @@ class GeWeHubAdapter(BasePlatformAdapter):
         clean = [str(event_id).strip() for event_id in event_ids if str(event_id or "").strip()]
         if not clean:
             return
-        self._last_event_id = clean[-1]
-        self._state_store.save_last_event_id(clean[-1])
         client = self._client
         if client is not None:
             try:
                 await client.ack_events(clean)
             except Exception as exc:
                 logger.warning("GeWeHub SSE ACK failed for %s: %s", clean[-1], self._redact(str(exc)))
+                return
+        self._last_event_id = clean[-1]
+        self._state_store.save_last_event_id(clean[-1])
 
     async def _download_media(self, normalized) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []

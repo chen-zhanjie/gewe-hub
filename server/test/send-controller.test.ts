@@ -464,6 +464,170 @@ describe("SendController", () => {
     });
   });
 
+  it("创建 HTML 内容发送请求时先托管页面，并在响应里返回公网访问链接", async () => {
+    const prisma = {
+      hubApp: {
+        findUnique: vi.fn(async () => ({ id: "app_1", status: "active" }))
+      },
+      conversation: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "conversation_1",
+          accountId: "account_1",
+          peerWxid: "wxid_target",
+          account: {
+            appId: "wx_app",
+            wxid: "wxid_bot"
+          }
+        }))
+      },
+      sendRequest: {
+        findFirst: vi.fn(async () => null),
+        create: vi.fn(async () => ({
+          id: "send_html",
+          status: "pending"
+        }))
+      },
+      outboxTask: {
+        create: vi.fn(async () => ({ id: "task_html" }))
+      }
+    };
+    const htmlPages = {
+      resolveForSend: vi.fn(async () => ({
+        htmlPublicUrl: "https://gewehub.yunzxu.com/h/html_token",
+        htmlPageId: "html_1",
+        htmlHosted: true
+      })),
+      bindSendRequest: vi.fn(async () => undefined)
+    };
+    const controller = new SendController(prisma as never, {} as never, htmlPages as never);
+
+    const result = await controller.send("Bearer app_token", {
+      conversationId: "conversation_1",
+      type: "html",
+      title: "日报",
+      desc: "今日 AI 日报",
+      htmlContent: "<!doctype html><html>report</html>",
+      htmlFileName: "report.html",
+      idempotencyKey: "html_idem_1"
+    });
+
+    expect(htmlPages.resolveForSend).toHaveBeenCalledWith({
+      accountId: "account_1",
+      conversationId: "conversation_1",
+      appId: "app_1",
+      title: "日报",
+      desc: "今日 AI 日报",
+      htmlContent: "<!doctype html><html>report</html>",
+      htmlContentBase64: undefined,
+      htmlFileName: "report.html",
+      linkUrl: undefined
+    });
+    expect(prisma.sendRequest.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: "html",
+        requestPayload: {
+          conversationId: "conversation_1",
+          type: "html",
+          title: "日报",
+          desc: "今日 AI 日报",
+          htmlFileName: "report.html",
+          idempotencyKey: "html_idem_1",
+          htmlPublicUrl: "https://gewehub.yunzxu.com/h/html_token",
+          htmlPageId: "html_1",
+          htmlHosted: true
+        },
+        geweRequest: {
+          path: "/gewe/v2/api/message/postLink",
+          body: {
+            appId: "wx_app",
+            toWxid: "wxid_target",
+            title: "日报",
+            desc: "今日 AI 日报",
+            linkUrl: "https://gewehub.yunzxu.com/h/html_token"
+          }
+        }
+      })
+    });
+    expect(htmlPages.bindSendRequest).toHaveBeenCalledWith("html_1", "send_html");
+    expect(result).toEqual({
+      id: "send_html",
+      status: "pending",
+      htmlPublicUrl: "https://gewehub.yunzxu.com/h/html_token",
+      htmlPageId: "html_1",
+      htmlHosted: true
+    });
+  });
+
+  it("创建 HTML URL 发送请求时不托管页面，响应返回原始 URL", async () => {
+    const prisma = {
+      hubApp: {
+        findUnique: vi.fn()
+      },
+      conversation: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "conversation_1",
+          accountId: "account_1",
+          peerWxid: "wxid_target",
+          account: {
+            appId: "wx_app",
+            wxid: "wxid_bot"
+          }
+        }))
+      },
+      sendRequest: {
+        create: vi.fn(async () => ({ id: "send_html_url", status: "pending" }))
+      },
+      outboxTask: {
+        create: vi.fn(async () => ({ id: "task_html_url" }))
+      }
+    };
+    const htmlPages = {
+      resolveForSend: vi.fn(async () => ({
+        htmlPublicUrl: "https://example.com/report.html",
+        htmlPageId: null,
+        htmlHosted: false
+      }))
+    };
+    const controller = new SendController(prisma as never, {} as never, htmlPages as never);
+
+    const result = await controller.send(undefined, {
+      conversationId: "conversation_1",
+      type: "html",
+      title: "外部报告",
+      desc: "外部页面",
+      linkUrl: "https://example.com/report.html"
+    });
+
+    expect(htmlPages.resolveForSend).toHaveBeenCalledWith({
+      accountId: "account_1",
+      conversationId: "conversation_1",
+      appId: null,
+      title: "外部报告",
+      desc: "外部页面",
+      htmlContent: undefined,
+      htmlContentBase64: undefined,
+      htmlFileName: undefined,
+      linkUrl: "https://example.com/report.html"
+    });
+    expect(prisma.sendRequest.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: "html",
+        requestPayload: expect.objectContaining({
+          htmlPublicUrl: "https://example.com/report.html",
+          htmlPageId: null,
+          htmlHosted: false
+        })
+      })
+    });
+    expect(result).toEqual({
+      id: "send_html_url",
+      status: "pending",
+      htmlPublicUrl: "https://example.com/report.html",
+      htmlPageId: null,
+      htmlHosted: false
+    });
+  });
+
   it("撤回已发送消息时用三件套调用 GeWe，并把本地 hub_send 消息标记为已撤回", async () => {
     const prisma = {
       sendRequest: {
@@ -523,7 +687,7 @@ describe("SendController", () => {
     });
   });
 
-  it("查询发送记录支持 status、take 和 skip，并包含会话和应用", async () => {
+  it("查询发送记录支持 status、take 和 skip，并只返回列表摘要字段", async () => {
     const prisma = {
       sendRequest: {
         findMany: vi.fn(async () => [])
@@ -537,9 +701,37 @@ describe("SendController", () => {
       where: {
         status: "failed"
       },
-      include: {
-        conversation: true,
-        app: true
+      select: {
+        id: true,
+        appId: true,
+        accountId: true,
+        conversationId: true,
+        idempotencyKey: true,
+        type: true,
+        status: true,
+        errorMessage: true,
+        resultMsgId: true,
+        resultNewMsgId: true,
+        resultCreateTime: true,
+        createdAt: true,
+        updatedAt: true,
+        conversation: {
+          select: {
+            id: true,
+            peerWxid: true,
+            type: true,
+            name: true,
+            avatarUrl: true,
+            platformRemark: true
+          }
+        },
+        app: {
+          select: {
+            id: true,
+            name: true,
+            status: true
+          }
+        }
       },
       orderBy: {
         createdAt: "desc"
@@ -570,6 +762,36 @@ describe("SendController", () => {
     });
     expect(prisma.sendRequest.findUniqueOrThrow).toHaveBeenCalledWith({
       where: { id: "send_failed_file" },
+      include: {
+        conversation: true,
+        app: true
+      }
+    });
+  });
+
+  it("按 ID 查询单条发送记录包含完整请求和响应 JSON", async () => {
+    const prisma = {
+      sendRequest: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "send_detail",
+          requestPayload: { contentBase64: "large-payload" },
+          geweRequest: { path: "/gewe/v2/api/message/postImage" },
+          geweResponse: { ret: 200 }
+        }))
+      }
+    };
+    const controller = new SendController(prisma as never, {} as never);
+
+    const result = await controller.detail("send_detail");
+
+    expect(result).toMatchObject({
+      id: "send_detail",
+      requestPayload: { contentBase64: "large-payload" },
+      geweRequest: { path: "/gewe/v2/api/message/postImage" },
+      geweResponse: { ret: 200 }
+    });
+    expect(prisma.sendRequest.findUniqueOrThrow).toHaveBeenCalledWith({
+      where: { id: "send_detail" },
       include: {
         conversation: true,
         app: true

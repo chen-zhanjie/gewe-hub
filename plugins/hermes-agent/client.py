@@ -159,6 +159,52 @@ class GeWeHubClient:
             payload["idempotencyKey"] = idempotency_key
         return await self._request("POST", "/api/send", json=payload)
 
+    async def send_html(
+        self,
+        conversation_id: str,
+        *,
+        title: str,
+        desc: str = "",
+        link_url: str | None = None,
+        html_content: str | None = None,
+        html_content_base64: str | None = None,
+        html_file_path: str | None = None,
+        html_file_name: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        sources = [
+            bool(str(link_url or "").strip()),
+            bool(str(html_content or "").strip()),
+            bool(str(html_content_base64 or "").strip()),
+            bool(str(html_file_path or "").strip()),
+        ]
+        if sum(sources) != 1:
+            raise GeWeHubError("send_html requires exactly one of link_url, html_content, html_content_base64, html_file_path")
+
+        payload: dict[str, Any] = {
+            "conversationId": str(conversation_id),
+            "type": "html",
+            "title": str(title or ""),
+            "desc": str(desc or ""),
+        }
+        if link_url:
+            payload["linkUrl"] = str(link_url).strip()
+        elif html_content is not None and str(html_content).strip():
+            payload["htmlContent"] = str(html_content)
+        elif html_content_base64:
+            payload["htmlContentBase64"] = str(html_content_base64).strip()
+            if html_file_name:
+                payload["htmlFileName"] = str(html_file_name)
+        else:
+            html_file = Path(str(html_file_path))
+            if not html_file.is_file():
+                raise GeWeHubError(f"html file does not exist: {html_file}")
+            payload["htmlContentBase64"] = base64.b64encode(html_file.read_bytes()).decode("ascii")
+            payload["htmlFileName"] = html_file_name or html_file.name
+        if idempotency_key:
+            payload["idempotencyKey"] = idempotency_key
+        return await self._request("POST", "/api/send", json=payload)
+
     async def download_media(self, descriptor: dict[str, Any]) -> dict[str, Any]:
         url = str(descriptor.get("url") or "").strip()
         if not url:

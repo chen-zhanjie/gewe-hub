@@ -1,5 +1,6 @@
 import {
   ChevronDown,
+  Code2,
   FileText,
   Image,
   Link2,
@@ -38,6 +39,15 @@ export interface LinkDraft {
   thumbFile: File | null;
 }
 
+export interface HtmlDraft {
+  source: "content" | "file" | "url";
+  title: string;
+  desc: string;
+  linkUrl: string;
+  htmlContent: string;
+  file: File | null;
+}
+
 export interface VideoDraft {
   file: File | null;
   thumbFile: File | null;
@@ -52,6 +62,8 @@ export function MessageComposer({
   videoDraft,
   showLinkForm,
   linkDraft,
+  showHtmlForm,
+  htmlDraft,
   pendingAttachments,
   sendError,
   parsingLink,
@@ -60,18 +72,23 @@ export function MessageComposer({
   videoInputRef,
   videoThumbInputRef,
   linkThumbInputRef,
+  htmlFileInputRef,
   fileInputRef,
   onMessageTextChange,
   onShowVideoFormChange,
   onVideoDraftChange,
   onShowLinkFormChange,
+  onShowHtmlFormChange,
   onCloseVideoForm,
   onCloseLinkForm,
+  onCloseHtmlForm,
   onLinkDraftChange,
+  onHtmlDraftChange,
   onSendMedia,
   onVoiceRecord,
   onSendVideo,
   onSendLink,
+  onSendHtml,
   onParseLink,
   onRemovePendingAttachment,
   onSendPendingAttachments,
@@ -86,6 +103,8 @@ export function MessageComposer({
   videoDraft: VideoDraft;
   showLinkForm: boolean;
   linkDraft: LinkDraft;
+  showHtmlForm: boolean;
+  htmlDraft: HtmlDraft;
   pendingAttachments: PendingAttachment[];
   sendError: string | null;
   parsingLink: boolean;
@@ -94,18 +113,23 @@ export function MessageComposer({
   videoInputRef: RefObject<HTMLInputElement | null>;
   videoThumbInputRef: RefObject<HTMLInputElement | null>;
   linkThumbInputRef: RefObject<HTMLInputElement | null>;
+  htmlFileInputRef: RefObject<HTMLInputElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
   onMessageTextChange: (text: string) => void;
   onShowVideoFormChange: (show: boolean) => void;
   onVideoDraftChange: (draft: VideoDraft | ((current: VideoDraft) => VideoDraft)) => void;
   onShowLinkFormChange: (show: boolean | ((current: boolean) => boolean)) => void;
+  onShowHtmlFormChange: (show: boolean | ((current: boolean) => boolean)) => void;
   onCloseVideoForm: () => void;
   onCloseLinkForm: () => void;
+  onCloseHtmlForm: () => void;
   onLinkDraftChange: (draft: LinkDraft | ((current: LinkDraft) => LinkDraft)) => void;
+  onHtmlDraftChange: (draft: HtmlDraft | ((current: HtmlDraft) => HtmlDraft)) => void;
   onSendMedia: (file: File | undefined, type: MediaSendType) => void;
   onVoiceRecord: () => void;
   onSendVideo: () => void;
   onSendLink: () => void;
+  onSendHtml: () => void;
   onParseLink: () => void;
   onRemovePendingAttachment: (attachmentId: string) => void;
   onSendPendingAttachments: () => void;
@@ -212,6 +236,18 @@ export function MessageComposer({
         <button
           type="button"
           disabled={!selected || sending}
+          onClick={() => onShowHtmlFormChange((current) => !current)}
+          className={cn(
+            "inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50",
+            showHtmlForm && "border-primary text-primary",
+          )}
+        >
+          <Code2 className="size-4" />
+          HTML
+        </button>
+        <button
+          type="button"
+          disabled={!selected || sending}
           onClick={() => fileInputRef.current?.click()}
           className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -241,6 +277,16 @@ export function MessageComposer({
         onParse={onParseLink}
         onSend={onSendLink}
         parsing={parsingLink}
+      />
+      <HtmlSendDialog
+        open={showHtmlForm}
+        selected={selected}
+        sending={sending}
+        draft={htmlDraft}
+        fileInputRef={htmlFileInputRef}
+        onOpenChange={(open) => (open ? onShowHtmlFormChange(true) : onCloseHtmlForm())}
+        onDraftChange={onHtmlDraftChange}
+        onSend={onSendHtml}
       />
       {pendingAttachments.length > 0 ? (
         <PendingAttachmentBar
@@ -558,6 +604,153 @@ function LinkSendDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function HtmlSendDialog({
+  open,
+  selected,
+  sending,
+  draft,
+  fileInputRef,
+  onOpenChange,
+  onDraftChange,
+  onSend,
+}: {
+  open: boolean;
+  selected: boolean;
+  sending: boolean;
+  draft: HtmlDraft;
+  fileInputRef: RefObject<HTMLInputElement | null>;
+  onOpenChange: (open: boolean) => void;
+  onDraftChange: (draft: HtmlDraft | ((current: HtmlDraft) => HtmlDraft)) => void;
+  onSend: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl">
+        <input
+          ref={fileInputRef}
+          aria-label="上传 HTML 文件"
+          type="file"
+          accept=".html,.htm,text/html"
+          className="sr-only"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0] ?? null;
+            onDraftChange((current) => ({ ...current, file }));
+          }}
+        />
+        <DialogHeader>
+          <DialogTitle>发送 HTML</DialogTitle>
+          <DialogDescription>HTML 会以链接卡片形式发送</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="inline-flex w-fit overflow-hidden rounded-md border bg-background">
+            {(["content", "file", "url"] as const).map((source) => (
+              <button
+                key={source}
+                type="button"
+                disabled={sending}
+                onClick={() => onDraftChange((current) => ({ ...current, source }))}
+                className={cn(
+                  "px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50",
+                  draft.source === source ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                {formatHtmlSourceLabel(source)}
+              </button>
+            ))}
+          </div>
+          <label className="text-xs text-muted-foreground">
+            HTML 标题
+            <input
+              aria-label="HTML 标题"
+              value={draft.title}
+              onChange={(event) => onDraftChange((current) => ({ ...current, title: event.target.value }))}
+              className="mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+            />
+          </label>
+          <label className="text-xs text-muted-foreground">
+            HTML 描述
+            <input
+              aria-label="HTML 描述"
+              value={draft.desc}
+              onChange={(event) => onDraftChange((current) => ({ ...current, desc: event.target.value }))}
+              className="mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+            />
+          </label>
+          {draft.source === "content" ? (
+            <label className="text-xs text-muted-foreground">
+              HTML 内容
+              <textarea
+                aria-label="HTML 内容"
+                value={draft.htmlContent}
+                onChange={(event) => onDraftChange((current) => ({ ...current, htmlContent: event.target.value }))}
+                className="mt-1 block min-h-40 w-full resize-y rounded-md border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+                spellCheck={false}
+              />
+            </label>
+          ) : null}
+          {draft.source === "file" ? (
+            <button
+              type="button"
+              disabled={!selected || sending}
+              onClick={() => fileInputRef.current?.click()}
+              className="flex w-full items-center justify-between gap-3 rounded-md border px-3 py-3 text-left text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span className="min-w-0">
+                <span className="block font-medium">HTML 文件</span>
+                <span className="block truncate text-xs text-muted-foreground">{draft.file?.name ?? "点击上传 .html/.htm 文件"}</span>
+              </span>
+              <FileText className="size-4 shrink-0 text-muted-foreground" />
+            </button>
+          ) : null}
+          {draft.source === "url" ? (
+            <label className="text-xs text-muted-foreground">
+              HTML 地址
+              <input
+                aria-label="HTML 地址"
+                value={draft.linkUrl}
+                onChange={(event) => onDraftChange((current) => ({ ...current, linkUrl: event.target.value }))}
+                className="mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+                placeholder="https://..."
+              />
+            </label>
+          ) : null}
+        </div>
+        <DialogFooter>
+          <button
+            type="button"
+            disabled={sending}
+            onClick={() => onOpenChange(false)}
+            className="inline-flex items-center justify-center rounded-md border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={!selected || sending || !isHtmlDraftReady(draft)}
+            onClick={onSend}
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Send className="size-4" />
+            发送 HTML
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function formatHtmlSourceLabel(source: HtmlDraft["source"]): string {
+  if (source === "file") return "文件";
+  if (source === "url") return "URL";
+  return "内容";
+}
+
+function isHtmlDraftReady(draft: HtmlDraft): boolean {
+  if (draft.source === "file") return Boolean(draft.file);
+  if (draft.source === "url") return Boolean(draft.linkUrl.trim());
+  return Boolean(draft.htmlContent.trim());
 }
 
 function PendingAttachmentIcon({ type }: { type: MediaSendType }) {

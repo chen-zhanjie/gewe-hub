@@ -747,4 +747,5 @@ describe("WorkbenchPage composer", () => {
       expect(within(dialog).getByLabelText("链接描述")).toHaveValue("解析摘要");
     });
   });
+
 });

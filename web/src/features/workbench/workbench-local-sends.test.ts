@@ -146,6 +146,46 @@ describe("workbench-local-sends", () => {
     vi.useRealTimers();
   });
 
+  it("将本地 HTML 发送草稿映射为 html 消息节点", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-06T07:16:37.000Z"));
+
+    const send = createLocalMediaSend("conv_1", {
+      type: "html",
+      title: "日报",
+      desc: "今日 AI 日报",
+      htmlContentBase64: "PGh0bWw+PC9odG1sPg==",
+      htmlFileName: "report.html",
+    });
+    const message = mapLocalSendToMessageItem(send);
+
+    expect(send).toMatchObject({
+      conversationId: "conv_1",
+      type: "html",
+      text: "[HTML] 日报",
+      status: "pending",
+      sendPayload: {
+        type: "html",
+        title: "日报",
+        desc: "今日 AI 日报",
+        htmlContentBase64: "PGh0bWw+PC9odG1sPg==",
+        htmlFileName: "report.html",
+      },
+    });
+    expect(message.content).toEqual({
+      type: "html",
+      text: "[HTML] 日报",
+      link: {
+        title: "日报",
+        desc: "今日 AI 日报",
+        url: undefined,
+        thumbnailUrl: undefined,
+      },
+    });
+
+    vi.useRealTimers();
+  });
+
   it("构造可见消息时过滤已被服务端 sendRequestId 替换的本地消息并按时间排序", () => {
     const server = messageFixture("server_1", "send_1", "2026-07-06T07:16:39.000Z");
     const visible = buildVisibleMessages(

@@ -32,6 +32,7 @@ function isPublicRoute(method: string, path: string): boolean {
   if (method === "GET" && path === "/api/health") return true;
   if (method === "POST" && path === "/api/auth/login") return true;
   if (method === "POST" && path.startsWith("/webhook/gewe/")) return true;
+  if (method === "GET" && path.startsWith("/h/")) return true;
   if (path.startsWith("/files/")) return true;
   if (path === "/api/apps/events" || path === "/api/apps/events/ack") return true;
   return false;

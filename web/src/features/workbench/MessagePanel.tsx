@@ -181,7 +181,7 @@ function estimateMessageTimelineItemSize(item: MessageTimelineItem | undefined):
   if (item.type === "date") return 40;
   if (item.message.content.type === "system") return 48;
   if (["image", "video"].includes(item.message.content.type)) return 220;
-  if (["file", "link", "mini_program", "chat_record", "quote", "card", "location", "transfer", "red_packet"].includes(item.message.content.type)) {
+  if (["file", "link", "html", "mini_program", "chat_record", "quote", "card", "location", "transfer", "red_packet"].includes(item.message.content.type)) {
     return 120;
   }
   return 64;

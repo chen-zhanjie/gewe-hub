@@ -11,6 +11,7 @@ export const envSchema = z.object({
   SESSION_SECRET: z.string().min(16),
   FILE_STORAGE_DIR: z.string().min(1),
   PUBLIC_BASE_URL: z.string().url(),
+  HTML_PAGE_MAX_BYTES: z.coerce.number().int().positive().default(5 * 1024 * 1024),
   WEB_ORIGIN: z.string().url().default("http://localhost:5173"),
   JSON_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(16 * 1024 * 1024),
   WEBHOOK_GATEWAY_RAW_LOG_ENABLED: z.coerce.boolean().default(false),

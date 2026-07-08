@@ -6,6 +6,7 @@ import {
   AppWindow,
   Bell,
   BookOpenText,
+  Code2,
   LogOut,
   MessageSquareText,
   Plus,
@@ -32,7 +33,7 @@ import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { mapConversationSummary, type ConversationSummary } from "@/lib/workspace-data";
 
-export type PageKey = "workbench" | "apps" | "accounts" | "deliveries" | "sendRequests" | "observability" | "settings";
+export type PageKey = "workbench" | "apps" | "accounts" | "deliveries" | "sendRequests" | "htmlPages" | "observability" | "settings";
 
 interface NavItem {
   key: PageKey;
@@ -50,6 +51,7 @@ const navItems: NavItem[] = [
   { key: "accounts", label: "账号与联系人", icon: Users },
   { key: "deliveries", label: "推送日志", icon: Bell },
   { key: "sendRequests", label: "发送记录", icon: Send },
+  { key: "htmlPages", label: "HTML 页面", icon: Code2 },
   { key: "observability", label: "运行观测", icon: Activity },
   { key: "settings", label: "接入设置", icon: Settings }
 ];
@@ -60,6 +62,7 @@ export const pageRoutes: Record<PageKey, `/${string}`> = {
   accounts: "/accounts",
   deliveries: "/deliveries",
   sendRequests: "/send-requests",
+  htmlPages: "/html-pages",
   observability: "/observability",
   settings: "/settings",
 };

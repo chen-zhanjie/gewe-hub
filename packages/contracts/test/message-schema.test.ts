@@ -143,6 +143,33 @@ describe("标准消息契约", () => {
         linkUrl: "https://example.com/article"
       }).type
     ).toBe("link");
+    expect(
+      sendRequestSchema.parse({
+        conversationId: "cvs_1",
+        type: "html",
+        title: "页面标题",
+        desc: "页面描述",
+        htmlContent: "<!doctype html><html><body>报告</body></html>",
+        htmlFileName: "report.html"
+      }).type
+    ).toBe("html");
+    expect(
+      sendRequestSchema.parse({
+        conversationId: "cvs_1",
+        type: "html",
+        title: "页面标题",
+        htmlContentBase64: "PCFkb2N0eXBlIGh0bWw+",
+        htmlFileName: "report.html"
+      }).type
+    ).toBe("html");
+    expect(
+      sendRequestSchema.parse({
+        conversationId: "cvs_1",
+        type: "html",
+        title: "页面标题",
+        linkUrl: "https://example.com/report.html"
+      }).type
+    ).toBe("html");
     expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "image" })).toThrow();
     expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "file" })).toThrow();
     expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "video" })).toThrow();
@@ -154,6 +181,7 @@ describe("标准消息契约", () => {
       })
     ).toThrow("远程视频消息必须提供缩略图");
     expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "link" })).toThrow();
+    expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "html" })).toThrow();
     expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "sticker" })).toThrow();
   });
 
@@ -161,7 +189,31 @@ describe("标准消息契约", () => {
     expect(ackResponseSchema.parse({ ok: true, acked: 2 }).acked).toBe(2);
     expect(sendResponseSchema.parse({ id: "send_1", status: "pending" }).status).toBe("pending");
     expect(sendResponseSchema.parse({ id: "send_1", status: "sent", messageId: "msg_1" }).messageId).toBe("msg_1");
+    expect(
+      sendResponseSchema.parse({
+        id: "send_html",
+        status: "pending",
+        htmlPublicUrl: "https://gewehub.yunzxu.com/h/html_token",
+        htmlPageId: "html_1",
+        htmlHosted: true
+      }).htmlPublicUrl
+    ).toBe("https://gewehub.yunzxu.com/h/html_token");
     expect(() => ackResponseSchema.parse({ ok: false, acked: 0 })).toThrow();
     expect(() => sendResponseSchema.parse({ id: "send_1", status: "unknown" })).toThrow();
+  });
+
+  it("接受 html 标准消息节点，链接字段承载公网访问地址", () => {
+    const parsed = messageNodeSchema.parse({
+      type: "html",
+      text: "[HTML] 页面标题",
+      link: {
+        title: "页面标题",
+        desc: "页面描述",
+        url: "https://gewehub.yunzxu.com/h/html_token"
+      }
+    });
+
+    expect(parsed.type).toBe("html");
+    expect(parsed.link?.url).toBe("https://gewehub.yunzxu.com/h/html_token");
   });
 });

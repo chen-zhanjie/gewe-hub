@@ -17,6 +17,7 @@ describe("app router architecture", () => {
     expect(routerSource).toContain('import { z } from "zod"');
     expect(routerSource).toContain("deliveriesSearchSchema");
     expect(routerSource).toContain("sendRequestsSearchSchema");
+    expect(routerSource).toContain("htmlPagesSearchSchema");
     expect(routerSource).toContain("validateSearch");
     expect(adminSource).not.toContain("window.location.search");
     expect(adminSource).not.toContain("window.history.pushState");

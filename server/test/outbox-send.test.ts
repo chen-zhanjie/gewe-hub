@@ -1197,6 +1197,116 @@ describe("OutboxService 发送任务", () => {
     });
   });
 
+  it("发送 HTML 时调用 GeWe postLink，并生成本地 HTML 消息", async () => {
+    const prisma = {
+      outboxTask: {
+        findFirst: vi.fn(async () => ({
+          id: "task_html",
+          taskType: "send",
+          refId: "send_html",
+          payload: { sendRequestId: "send_html" },
+          retryCount: 0,
+          maxRetry: 5
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      sendRequest: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "send_html",
+          accountId: "account_1",
+          conversationId: "conversation_1",
+          type: "html",
+          requestPayload: {
+            conversationId: "conversation_1",
+            type: "html",
+            title: "HTML 标题",
+            desc: "HTML 描述",
+            htmlPublicUrl: "https://gewehub.yunzxu.com/h/html_token",
+            htmlPageId: "html_1",
+            htmlHosted: true
+          },
+          geweRequest: {
+            path: "/gewe/v2/api/message/postLink",
+            body: {
+              appId: "wx_app",
+              toWxid: "wxid_target",
+              title: "HTML 标题",
+              desc: "HTML 描述",
+              linkUrl: "https://gewehub.yunzxu.com/h/html_token"
+            }
+          },
+          conversation: {
+            id: "conversation_1",
+            peerWxid: "wxid_target",
+            account: {
+              wxid: "wxid_bot"
+            }
+          }
+        })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      message: {
+        findUnique: vi.fn(async () => null),
+        upsert: vi.fn(async (_args: unknown) => ({}))
+      },
+      conversation: {
+        update: vi.fn(async () => ({}))
+      }
+    };
+    const gewe = {
+      sendByMappedRequest: vi.fn(async () => ({
+        data: {
+          newMsgId: "9154866412345688",
+          msgId: "123468",
+          createTime: "1782932724230"
+        }
+      }))
+    };
+    const service = new OutboxService(
+      prisma as never,
+      { createForMessage: vi.fn() } as never,
+      { syncContacts: vi.fn(), syncGroupMembers: vi.fn() } as never,
+      undefined,
+      gewe as never
+    );
+
+    await service.tick();
+
+    expect(gewe.sendByMappedRequest).toHaveBeenCalledWith({
+      path: "/gewe/v2/api/message/postLink",
+      body: {
+        appId: "wx_app",
+        toWxid: "wxid_target",
+        title: "HTML 标题",
+        desc: "HTML 描述",
+        linkUrl: "https://gewehub.yunzxu.com/h/html_token"
+      }
+    });
+    expect(prisma.message.upsert).toHaveBeenCalledWith({
+      where: { sendRequestId: "send_html" },
+      create: expect.objectContaining({
+        type: "html",
+        renderedText: "[HTML] HTML 标题",
+        payload: expect.objectContaining({
+          content: expect.objectContaining({
+            type: "html",
+            text: "[HTML] HTML 标题",
+            link: {
+              title: "HTML 标题",
+              desc: "HTML 描述",
+              url: "https://gewehub.yunzxu.com/h/html_token",
+              thumbnailUrl: undefined
+            }
+          })
+        })
+      }),
+      update: expect.objectContaining({
+        renderedText: "[HTML] HTML 标题"
+      })
+    });
+  });
+
   it("发送链接缺少标题描述缩略图时补默认值并发布默认缩略图", async () => {
     const prisma = {
       outboxTask: {

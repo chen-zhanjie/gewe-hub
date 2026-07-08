@@ -26,11 +26,11 @@ describe("production deploy assets", () => {
     expect(entrypoint).toContain("FILE_STORAGE_DIR");
   });
 
-  it("serves web assets and proxies api, webhook and file routes to the local server", () => {
+  it("serves web assets and proxies api, webhook, file and hosted HTML routes to the local server", () => {
     const nginx = readDeployFile("deploy/nginx.conf");
 
     expect(nginx).toContain("root /app/web");
-    expect(nginx).toContain("location ~ ^/(api|webhook|files)/");
+    expect(nginx).toContain("location ~ ^/(api|webhook|files|h)/");
     expect(nginx).toContain("proxy_pass http://127.0.0.1:3000");
     expect(nginx).toContain("proxy_buffering off");
     expect(nginx).toContain("try_files $uri $uri/ /index.html");
@@ -62,5 +62,13 @@ describe("production deploy assets", () => {
     expect(script).toContain("https://gewehub.yunzxu.com");
     expect(script).toContain('MYSQL_PASSWORD="${MYSQL_PASSWORD:-${GEWEHUB_DATABASE_PASSWORD:-}}"');
     expect(script).not.toMatch(/MYSQL_PASSWORD="\$\{MYSQL_PASSWORD:-[^$}][^}]*}"/);
+  });
+
+  it("deploy script parses Redis requirepass from docker inspect JSON instead of brittle text matching", () => {
+    const script = readDeployFile("scripts/deploy-gewehub.sh");
+
+    expect(script).toContain("json.load(sys.stdin)");
+    expect(script).toContain('cmd.index("--requirepass")');
+    expect(script).not.toContain("sed -n 's/.*--requirepass");
   });
 });

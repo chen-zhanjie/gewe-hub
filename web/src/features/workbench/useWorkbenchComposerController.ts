@@ -26,6 +26,15 @@ interface LinkDraft {
   thumbFile: File | null;
 }
 
+interface HtmlDraft {
+  source: "content" | "file" | "url";
+  title: string;
+  desc: string;
+  linkUrl: string;
+  htmlContent: string;
+  file: File | null;
+}
+
 interface VideoDraft {
   file: File | null;
   thumbFile: File | null;
@@ -66,6 +75,15 @@ export function useWorkbenchComposerController({
     thumbUrl: "",
     thumbFile: null,
   });
+  const [showHtmlForm, setShowHtmlForm] = useState(false);
+  const [htmlDraft, setHtmlDraft] = useState<HtmlDraft>({
+    source: "content",
+    title: "",
+    desc: "",
+    linkUrl: "",
+    htmlContent: "",
+    file: null,
+  });
   const [sending, setSending] = useState(false);
   const [parsingLink, setParsingLink] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -77,6 +95,7 @@ export function useWorkbenchComposerController({
   const videoInputRef = useRef<HTMLInputElement | null>(null);
   const videoThumbInputRef = useRef<HTMLInputElement | null>(null);
   const linkThumbInputRef = useRef<HTMLInputElement | null>(null);
+  const htmlFileInputRef = useRef<HTMLInputElement | null>(null);
   const { recording: voiceRecording, toggleRecording: toggleVoiceRecording } = useVoiceRecorder({
     enabled: Boolean(selectedConversation) && !sending,
     onError: setSendError,
@@ -263,6 +282,58 @@ export function useWorkbenchComposerController({
     }
   }
 
+  async function handleSendHtml() {
+    if (!selectedConversation || sending) return;
+    const title = htmlDraft.title.trim() || defaultHtmlTitle(htmlDraft);
+    const desc = htmlDraft.desc.trim() || title;
+
+    setSending(true);
+    setSendError(null);
+    try {
+      if (htmlDraft.source === "url") {
+        const linkUrl = htmlDraft.linkUrl.trim();
+        if (!linkUrl) throw new Error("请填写 HTML 地址");
+        onSendPayload({
+          type: "html",
+          title,
+          desc,
+          linkUrl,
+        });
+        closeHtmlForm();
+        return;
+      }
+
+      if (htmlDraft.source === "file") {
+        const file = htmlDraft.file;
+        if (!file) throw new Error("请上传 HTML 文件");
+        const htmlContentBase64 = await readFileAsArrayBuffer(file).then(arrayBufferToBase64);
+        onSendPayload({
+          type: "html",
+          title,
+          desc,
+          htmlContentBase64,
+          htmlFileName: file.name,
+        });
+        closeHtmlForm();
+        return;
+      }
+
+      const htmlContent = htmlDraft.htmlContent;
+      if (!htmlContent.trim()) throw new Error("请填写 HTML 内容");
+      onSendPayload({
+        type: "html",
+        title,
+        desc,
+        htmlContent,
+      });
+      closeHtmlForm();
+    } catch (sendError) {
+      setSendError(sendError instanceof Error ? sendError.message : "发送失败");
+    } finally {
+      setSending(false);
+    }
+  }
+
   async function handleParseLink() {
     const linkUrl = linkDraft.linkUrl.trim();
     if (!linkUrl || parsingLink) return;
@@ -329,6 +400,12 @@ export function useWorkbenchComposerController({
     if (linkThumbInputRef.current) linkThumbInputRef.current.value = "";
   }
 
+  function closeHtmlForm() {
+    setShowHtmlForm(false);
+    setHtmlDraft({ source: "content", title: "", desc: "", linkUrl: "", htmlContent: "", file: null });
+    if (htmlFileInputRef.current) htmlFileInputRef.current.value = "";
+  }
+
   function handleVoiceRecord() {
     setSendError(null);
     void toggleVoiceRecording();
@@ -349,6 +426,12 @@ function defaultLinkTitle(linkUrl: string): string {
   }
 }
 
+function defaultHtmlTitle(draft: HtmlDraft): string {
+  if (draft.source === "url" && draft.linkUrl.trim()) return defaultLinkTitle(draft.linkUrl.trim());
+  if (draft.source === "file" && draft.file?.name) return draft.file.name;
+  return "HTML 页面";
+}
+
   return {
     messageText,
     setMessageText,
@@ -362,6 +445,11 @@ function defaultLinkTitle(linkUrl: string): string {
     closeLinkForm,
     linkDraft,
     setLinkDraft,
+    showHtmlForm,
+    setShowHtmlForm,
+    closeHtmlForm,
+    htmlDraft,
+    setHtmlDraft,
     sending,
     parsingLink,
     pendingAttachments,
@@ -373,10 +461,12 @@ function defaultLinkTitle(linkUrl: string): string {
     videoInputRef,
     videoThumbInputRef,
     linkThumbInputRef,
+    htmlFileInputRef,
     fileInputRef,
     handleSendMedia,
     handleVoiceRecord,
     handleSendLink,
+    handleSendHtml,
     handleParseLink,
     handleSendVideo,
     removePendingAttachment,

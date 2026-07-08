@@ -1,11 +1,12 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { BadRequestException, Body, Controller, Get, Headers, Param, Post, Query, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Headers, Optional, Param, Post, Query, UnauthorizedException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
-import { sendRequestSchema } from "@gewehub/contracts";
+import { sendRequestSchema, type SendRequest } from "@gewehub/contracts";
 import { z } from "zod";
 import { getBearerToken } from "../delivery/delivery-utils.js";
 import { GeweClientService } from "../gewe/gewe-client.service.js";
+import { HtmlPagesService, type ResolveHtmlForSendResult } from "../html-pages/html-pages.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { mapSendRequestToGewe } from "./send-utils.js";
 
@@ -14,12 +15,45 @@ const DEFAULT_TAKE = 100;
 const MAX_TAKE = 200;
 const LINK_PREVIEW_MAX_HTML_BYTES = 512 * 1024;
 const LINK_PREVIEW_MAX_REDIRECTS = 2;
+const sendRequestListSelect = {
+  id: true,
+  appId: true,
+  accountId: true,
+  conversationId: true,
+  idempotencyKey: true,
+  type: true,
+  status: true,
+  errorMessage: true,
+  resultMsgId: true,
+  resultNewMsgId: true,
+  resultCreateTime: true,
+  createdAt: true,
+  updatedAt: true,
+  conversation: {
+    select: {
+      id: true,
+      peerWxid: true,
+      type: true,
+      name: true,
+      avatarUrl: true,
+      platformRemark: true
+    }
+  },
+  app: {
+    select: {
+      id: true,
+      name: true,
+      status: true
+    }
+  }
+} satisfies Prisma.SendRequestSelect;
 
 @Controller()
 export class SendController {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly gewe: GeweClientService
+    private readonly gewe: GeweClientService,
+    @Optional() private readonly htmlPages?: HtmlPagesService
   ) {}
 
   @Post("/api/send")
@@ -36,7 +70,6 @@ export class SendController {
       include: { account: true }
     });
     const idempotencyKey = normalizeIdempotencyKey(body.idempotencyKey ?? body.requestId);
-    const requestPayload = idempotencyKey ? { ...body, idempotencyKey } : body;
     if (app?.id && idempotencyKey) {
       const existing = await this.prisma.sendRequest.findFirst({
         where: {
@@ -46,8 +79,10 @@ export class SendController {
         },
         orderBy: { createdAt: "desc" }
       });
-      if (existing) return existing;
+      if (existing) return sendResponse(existing);
     }
+    const htmlInfo = body.type === "html" ? await this.resolveHtmlSend(body, conversation, app?.id ?? null) : undefined;
+    const requestPayload = buildRequestPayload(body, idempotencyKey, htmlInfo);
     const mapped = mapSendRequestToGewe({
       appId: conversation.account.appId,
       peerWxid: conversation.peerWxid,
@@ -64,7 +99,7 @@ export class SendController {
       thumbFileName: body.thumbFileName,
       title: body.title,
       desc: body.desc,
-      linkUrl: body.linkUrl,
+      linkUrl: htmlInfo?.htmlPublicUrl ?? body.linkUrl,
       durationMs: body.durationMs,
       mentions: body.mentions
     });
@@ -76,11 +111,14 @@ export class SendController {
         conversationId: conversation.id,
         idempotencyKey: idempotencyKey ?? null,
         type: body.type,
-        requestPayload: requestPayload as unknown as Prisma.InputJsonValue,
+        requestPayload: requestPayload as Prisma.InputJsonValue,
         geweRequest: mapped as unknown as Prisma.InputJsonValue,
         status: "pending"
       }
     });
+    if (htmlInfo?.htmlPageId && htmlInfo.htmlHosted) {
+      await this.htmlPages?.bindSendRequest(htmlInfo.htmlPageId, sendRequest.id);
+    }
     await this.prisma.outboxTask.create({
       data: {
         taskType: "send",
@@ -90,7 +128,26 @@ export class SendController {
         priority: 40
       }
     });
-    return sendRequest;
+    return sendResponse(sendRequest, htmlInfo);
+  }
+
+  private async resolveHtmlSend(
+    body: SendRequest,
+    conversation: { id: string; accountId: string },
+    appId: string | null
+  ): Promise<ResolveHtmlForSendResult> {
+    if (!this.htmlPages) throw new BadRequestException("HTML 页面服务未初始化");
+    return this.htmlPages.resolveForSend({
+      accountId: conversation.accountId,
+      conversationId: conversation.id,
+      appId,
+      title: body.title,
+      desc: body.desc,
+      htmlContent: body.htmlContent,
+      htmlContentBase64: body.htmlContentBase64,
+      htmlFileName: body.htmlFileName,
+      linkUrl: body.linkUrl
+    });
   }
 
   @Post("/api/send/:id/revoke")
@@ -179,7 +236,7 @@ export class SendController {
 
     return this.prisma.sendRequest.findMany({
       where,
-      include: { conversation: true, app: true },
+      select: sendRequestListSelect,
       orderBy: { createdAt: "desc" },
       take: parseTake(rawTake),
       skip: parseSkip(rawSkip)
@@ -209,6 +266,69 @@ export class SendController {
 function normalizeIdempotencyKey(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized || undefined;
+}
+
+function buildRequestPayload(
+  body: SendRequest,
+  idempotencyKey: string | undefined,
+  htmlInfo: ResolveHtmlForSendResult | undefined
+): Record<string, unknown> {
+  if (body.type !== "html") {
+    return idempotencyKey ? { ...body, idempotencyKey } : body;
+  }
+
+  return compactUndefined({
+    conversationId: body.conversationId,
+    type: body.type,
+    title: body.title,
+    desc: body.desc,
+    linkUrl: body.linkUrl,
+    htmlFileName: body.htmlFileName,
+    thumbUrl: body.thumbUrl,
+    thumbContentBase64: body.thumbContentBase64,
+    thumbMimeType: body.thumbMimeType,
+    thumbFileName: body.thumbFileName,
+    requestId: body.requestId,
+    idempotencyKey,
+    htmlPublicUrl: htmlInfo?.htmlPublicUrl,
+    htmlPageId: htmlInfo?.htmlPageId,
+    htmlHosted: htmlInfo?.htmlHosted
+  });
+}
+
+function sendResponse(
+  sendRequest: { id: string; status: string; messageId?: string | null; requestPayload?: Prisma.JsonValue },
+  htmlInfo?: ResolveHtmlForSendResult
+) {
+  const payload = asRecord(sendRequest.requestPayload);
+  const htmlPublicUrl = htmlInfo?.htmlPublicUrl ?? asString(payload?.htmlPublicUrl);
+  const htmlPageId = htmlInfo ? htmlInfo.htmlPageId : (asString(payload?.htmlPageId) ?? null);
+  const htmlHosted = htmlInfo?.htmlHosted ?? asBoolean(payload?.htmlHosted);
+  return compactUndefined({
+    id: sendRequest.id,
+    status: sendRequest.status,
+    messageId: sendRequest.messageId ?? undefined,
+    htmlPublicUrl,
+    htmlPageId: htmlPublicUrl ? htmlPageId : undefined,
+    htmlHosted: htmlPublicUrl ? htmlHosted : undefined
+  });
+}
+
+function compactUndefined(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
 }
 
 function mapSendRequestStatus(status: string): NonNullable<Prisma.SendRequestWhereInput["status"]> {

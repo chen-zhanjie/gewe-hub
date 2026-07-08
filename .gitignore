@@ -18,6 +18,7 @@ storage/
 uploads/
 logs/
 *.log
+plugins/hermes-agent/state/
 
 # Environment
 .env

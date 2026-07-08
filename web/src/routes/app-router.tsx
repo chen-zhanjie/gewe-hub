@@ -34,12 +34,14 @@ const searchPageSizeSchema = z.coerce.number().int().refine((value) => value ===
 
 const DELIVERY_ROUTE_STATUSES = ["all", "success", "failed", "in_progress", "queued", "delivering", "delivered", "acked"] as const;
 const SEND_REQUEST_ROUTE_STATUSES = ["success", "failed", "in_progress", "pending", "sent", "unknown"] as const;
+const HTML_PAGE_ROUTE_STATUSES = ["active", "archived", "deleted"] as const;
 
 type DeliveryRouteStatus = (typeof DELIVERY_ROUTE_STATUSES)[number];
 type SendRequestRouteStatus = (typeof SEND_REQUEST_ROUTE_STATUSES)[number];
 type WorkbenchRouteSearch = z.infer<typeof workbenchSearchSchema>;
 type DeliveryRouteSearch = z.infer<typeof deliveriesSearchSchema>;
 type SendRequestRouteSearch = z.infer<typeof sendRequestsSearchSchema>;
+type HtmlPageRouteSearch = z.infer<typeof htmlPagesSearchSchema>;
 
 const deliveriesSearchSchema = z.object({
   status: searchStatusSchema(DELIVERY_ROUTE_STATUSES),
@@ -59,6 +61,12 @@ const sendRequestsSearchSchema = z.object({
   pageSize: searchPageSizeSchema,
 });
 
+const htmlPagesSearchSchema = z.object({
+  status: searchStatusSchema(HTML_PAGE_ROUTE_STATUSES),
+  page: searchPageSchema,
+  pageSize: searchPageSizeSchema,
+});
+
 const adminRoutes: AdminRouteConfig[] = [
   { key: "workbench", path: pageRoutes.workbench, validateSearch: workbenchSearchSchema, component: WorkbenchPageRoute },
   { key: "apps", path: pageRoutes.apps, component: () => <AdminPageRoute page="apps" /> },
@@ -74,6 +82,12 @@ const adminRoutes: AdminRouteConfig[] = [
     path: pageRoutes.sendRequests,
     validateSearch: sendRequestsSearchSchema,
     component: SendRequestPageRoute,
+  },
+  {
+    key: "htmlPages",
+    path: pageRoutes.htmlPages,
+    validateSearch: htmlPagesSearchSchema,
+    component: HtmlPagesPageRoute,
   },
   { key: "observability", path: pageRoutes.observability, component: () => <AdminPageRoute page="observability" /> },
   { key: "settings", path: pageRoutes.settings, component: () => <AdminPageRoute page="settings" /> },
@@ -220,6 +234,33 @@ function SendRequestPageRoute() {
   );
 }
 
+function HtmlPagesPageRoute() {
+  const search = useSearch({ strict: false }) as HtmlPageRouteSearch;
+  const navigate = useNavigate({ from: pageRoutes.htmlPages });
+
+  return (
+    <Suspense fallback={<RouteChunkLoading />}>
+      <LazyAdminPage
+        page="htmlPages"
+        htmlPageFilters={{
+          status: asHtmlPageRouteStatus(search.status),
+          page: typeof search.page === "number" ? search.page : 1,
+          pageSize: search.pageSize === 50 ? 50 : 20,
+        }}
+        onHtmlPageFiltersChange={(filters) => {
+          void navigate({
+            search: {
+              status: filters.status || undefined,
+              page: filters.page > 1 ? filters.page : undefined,
+              pageSize: filters.pageSize !== 20 ? filters.pageSize : undefined,
+            },
+          });
+        }}
+      />
+    </Suspense>
+  );
+}
+
 function asDeliveryFilterStatus(value: unknown): "" | "success" | "failed" | "in_progress" {
   if (value === "all") return "";
   if (value === "delivered" || value === "acked") return "success";
@@ -232,6 +273,11 @@ function asSendRequestRouteStatus(value: unknown): "" | "success" | "failed" | "
   if (value === "sent") return "success";
   if (value === "pending") return "in_progress";
   if (value === "success" || value === "failed" || value === "in_progress" || value === "unknown") return value;
+  return "";
+}
+
+function asHtmlPageRouteStatus(value: unknown): "" | "active" | "archived" | "deleted" {
+  if (value === "active" || value === "archived" || value === "deleted") return value;
   return "";
 }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import sys
@@ -23,6 +24,7 @@ def test_plugin_manifest_and_required_files():
         "__init__.py",
         "plugin.yaml",
         "adapter.py",
+        "cli.py",
         "client.py",
         "normalizer.py",
         "dedupe.py",
@@ -317,6 +319,218 @@ async def test_client_sse_ack_and_send_use_bearer_token(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_client_send_html_sources_use_html_payload(tmp_path):
+    client_mod = _load_module("gewehub_client_html_test", PLUGIN_DIR / "client.py")
+    html_file = tmp_path / "report.html"
+    html_file.write_text("<!doctype html><html>file</html>", encoding="utf-8")
+    requests = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": f"send_{len(requests)}",
+                "status": "pending",
+                "htmlPublicUrl": f"https://gewehub.yunzxu.com/h/{len(requests)}",
+                "htmlPageId": f"html_{len(requests)}",
+                "htmlHosted": True,
+            },
+        )
+
+    client = client_mod.GeWeHubClient(
+        "https://hub.example.test",
+        app_token="app_token",
+        transport=httpx.MockTransport(handler),
+    )
+
+    content_result = await client.send_html(
+        "cvs_1",
+        title="日报",
+        desc="今日 AI 日报",
+        html_content="<html>content</html>",
+        idempotency_key="html_content_1",
+    )
+    file_result = await client.send_html(
+        "cvs_1",
+        title="文件报告",
+        desc="本地 HTML 文件",
+        html_file_path=str(html_file),
+    )
+    url_result = await client.send_html(
+        "cvs_1",
+        title="外部报告",
+        desc="外部托管",
+        link_url="https://example.com/report.html",
+    )
+    await client.aclose()
+
+    assert content_result["htmlPublicUrl"] == "https://gewehub.yunzxu.com/h/1"
+    assert file_result["htmlPublicUrl"] == "https://gewehub.yunzxu.com/h/2"
+    assert url_result["htmlPublicUrl"] == "https://gewehub.yunzxu.com/h/3"
+    assert requests == [
+        {
+            "conversationId": "cvs_1",
+            "type": "html",
+            "title": "日报",
+            "desc": "今日 AI 日报",
+            "htmlContent": "<html>content</html>",
+            "idempotencyKey": "html_content_1",
+        },
+        {
+            "conversationId": "cvs_1",
+            "type": "html",
+            "title": "文件报告",
+            "desc": "本地 HTML 文件",
+            "htmlContentBase64": "PCFkb2N0eXBlIGh0bWw+PGh0bWw+ZmlsZTwvaHRtbD4=",
+            "htmlFileName": "report.html",
+        },
+        {
+            "conversationId": "cvs_1",
+            "type": "html",
+            "title": "外部报告",
+            "desc": "外部托管",
+            "linkUrl": "https://example.com/report.html",
+        },
+    ]
+
+
+def test_cli_send_html_file_outputs_public_url(monkeypatch, tmp_path, capsys):
+    cli_mod = _load_module("gewehub_cli_file_test", PLUGIN_DIR / "cli.py")
+    html_file = tmp_path / "report.html"
+    html_file.write_text("<!doctype html><html>cli</html>", encoding="utf-8")
+    sent = []
+
+    class FakeClient:
+        def __init__(self, base_url, *, app_token):
+            self.base_url = base_url
+            self.app_token = app_token
+
+        async def send_html(self, conversation_id, **kwargs):
+            sent.append({"conversation_id": conversation_id, **kwargs})
+            return {
+                "id": "send_html_file",
+                "status": "pending",
+                "messageId": "msg_html",
+                "htmlPublicUrl": "https://gewehub.yunzxu.com/h/html_cli",
+                "htmlPageId": "html_cli",
+                "htmlHosted": True,
+            }
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(cli_mod, "GeWeHubClient", FakeClient)
+
+    exit_code = _run_async(
+        cli_mod.run(
+            [
+                "send-html",
+                "--base-url",
+                "https://hub.example.test",
+                "--app-key",
+                "app_token",
+                "--conversation-id",
+                "cvs_1",
+                "--title",
+                "CLI 报告",
+                "--desc",
+                "本地文件",
+                "--file",
+                str(html_file),
+            ]
+        )
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert sent == [
+        {
+            "conversation_id": "cvs_1",
+            "title": "CLI 报告",
+            "desc": "本地文件",
+            "html_content_base64": "PCFkb2N0eXBlIGh0bWw+PGh0bWw+Y2xpPC9odG1sPg==",
+            "html_file_name": "report.html",
+            "idempotency_key": None,
+        }
+    ]
+    assert output == {
+        "success": True,
+        "message_id": "msg_html",
+        "send_request_id": "send_html_file",
+        "status": "pending",
+        "html_public_url": "https://gewehub.yunzxu.com/h/html_cli",
+        "html_page_id": "html_cli",
+        "html_hosted": True,
+        "raw_response": {
+            "id": "send_html_file",
+            "status": "pending",
+            "messageId": "msg_html",
+            "htmlPublicUrl": "https://gewehub.yunzxu.com/h/html_cli",
+            "htmlPageId": "html_cli",
+            "htmlHosted": True,
+        },
+    }
+
+
+def test_cli_send_html_stdin_outputs_public_url(monkeypatch, capsys):
+    cli_mod = _load_module("gewehub_cli_stdin_test", PLUGIN_DIR / "cli.py")
+    sent = []
+
+    class FakeClient:
+        def __init__(self, base_url, *, app_token):
+            self.base_url = base_url
+            self.app_token = app_token
+
+        async def send_html(self, conversation_id, **kwargs):
+            sent.append({"conversation_id": conversation_id, **kwargs})
+            return {
+                "id": "send_html_stdin",
+                "status": "pending",
+                "htmlPublicUrl": "https://gewehub.yunzxu.com/h/html_stdin",
+                "htmlPageId": "html_stdin",
+                "htmlHosted": True,
+            }
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(cli_mod, "GeWeHubClient", FakeClient)
+    monkeypatch.setattr(cli_mod.sys, "stdin", io.StringIO("<html>stdin</html>"))
+
+    exit_code = _run_async(
+        cli_mod.run(
+            [
+                "send-html",
+                "--base-url",
+                "https://hub.example.test",
+                "--app-key",
+                "app_token",
+                "--conversation-id",
+                "cvs_1",
+                "--title",
+                "STDIN 报告",
+                "--stdin",
+            ]
+        )
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert sent == [
+        {
+            "conversation_id": "cvs_1",
+            "title": "STDIN 报告",
+            "desc": "",
+            "html_content": "<html>stdin</html>",
+            "idempotency_key": None,
+        }
+    ]
+    assert output["html_public_url"] == "https://gewehub.yunzxu.com/h/html_stdin"
+    assert output["send_request_id"] == "send_html_stdin"
+
+
+@pytest.mark.asyncio
 async def test_adapter_batches_plain_text_and_acks_after_flush(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     _install_gateway_stubs()
@@ -401,7 +615,7 @@ async def test_adapter_flushes_pending_text_before_media_event(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_adapter_ack_failure_does_not_interrupt_dispatch_or_cursor(tmp_path, monkeypatch, caplog):
+async def test_adapter_ack_failure_does_not_interrupt_dispatch_or_advance_cursor(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     _install_gateway_stubs()
     package = _load_plugin_package()
@@ -417,7 +631,7 @@ async def test_adapter_ack_failure_does_not_interrupt_dispatch_or_cursor(tmp_pat
     assert result is True
     assert [event.text for event in adapter.handled_messages] == ["hello"]
     assert adapter._client.acked == [["evt_1"]]
-    assert adapter._state_store.load_last_event_id() == "evt_1"
+    assert adapter._state_store.load_last_event_id() is None
     assert "ACK failed" in caplog.text
 
 

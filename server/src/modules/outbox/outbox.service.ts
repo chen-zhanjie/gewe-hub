@@ -277,6 +277,9 @@ export class OutboxService implements OnModuleInit {
     if (sendRequest.type === "link" && mapped.path === "/gewe/v2/api/message/postLink") {
       return this.prepareOutboundLinkSend(sendRequest, mapped);
     }
+    if (sendRequest.type === "html" && mapped.path === "/gewe/v2/api/message/postLink") {
+      return this.prepareOutboundHtmlSend(sendRequest, mapped);
+    }
     return { mapped };
   }
 
@@ -417,6 +420,51 @@ export class OutboxService implements OnModuleInit {
       localContent: {
         type: "link",
         text: `[链接] ${title}`,
+        link: {
+          title,
+          desc,
+          url: linkUrl,
+          thumbnailUrl: thumbUrl,
+        }
+      }
+    };
+  }
+
+  private async prepareOutboundHtmlSend(
+    sendRequest: {
+      accountId: string;
+      conversationId: string;
+      requestPayload: Prisma.JsonValue;
+    },
+    mapped: { path: string; body: unknown }
+  ): Promise<{ mapped: { path: string; body: unknown }; localContent: MessageNode }> {
+    const body = asRecord(mapped.body);
+    const payload = asRecord(sendRequest.requestPayload);
+    const linkUrl = asString(payload?.htmlPublicUrl);
+    if (!linkUrl) throw new Error("HTML 发送缺少公网访问链接");
+    const title = asString(body?.title) || asString(payload?.title) || "HTML 页面";
+    const desc = asString(body?.desc) || asString(payload?.desc) || linkUrl;
+    const thumbUrl = await this.prepareOutboundThumbnailUrl(
+      sendRequest,
+      body,
+      asString(body?.thumbUrl),
+    );
+    const geweBody = {
+      appId: asString(body?.appId),
+      toWxid: asString(body?.toWxid),
+      title,
+      desc,
+      linkUrl,
+      ...(thumbUrl ? { thumbUrl } : {}),
+    };
+    return {
+      mapped: {
+        path: mapped.path,
+        body: geweBody
+      },
+      localContent: {
+        type: "html",
+        text: `[HTML] ${title}`,
         link: {
           title,
           desc,

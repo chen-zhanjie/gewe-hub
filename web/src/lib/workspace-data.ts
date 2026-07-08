@@ -52,7 +52,7 @@ export interface MessageItem {
   deliveries: unknown[];
   localSend?: {
     conversationId: string;
-    type: "text" | "image" | "file" | "voice" | "video" | "link";
+    type: "text" | "image" | "file" | "voice" | "video" | "link" | "html";
     text: string;
     label: string;
     status: "pending" | "failed";
@@ -63,7 +63,7 @@ export interface MessageItem {
 }
 
 export interface LocalSendPayload {
-  type: "image" | "file" | "voice" | "video" | "link";
+  type: "image" | "file" | "voice" | "video" | "link" | "html";
   contentBase64?: string;
   mimeType?: string;
   fileName?: string;
@@ -75,6 +75,10 @@ export interface LocalSendPayload {
   title?: string;
   desc?: string;
   linkUrl?: string;
+  htmlContent?: string;
+  htmlContentBase64?: string;
+  htmlFileName?: string;
+  htmlPublicUrl?: string;
 }
 
 export interface BackendSendRequest {

@@ -206,6 +206,28 @@ describe("send 工具", () => {
     });
   });
 
+  it("将 HTML 发送请求映射为 GeWe 链接请求", () => {
+    const result = mapSendRequestToGewe({
+      appId: "wx_app",
+      peerWxid: "wxid_target",
+      type: "html",
+      title: "HTML 标题",
+      desc: "HTML 描述",
+      linkUrl: "https://gewehub.yunzxu.com/h/html_token",
+      thumbUrl: "https://example.com/thumb.jpg"
+    });
+
+    expect(result.path).toBe("/gewe/v2/api/message/postLink");
+    expect(result.body).toEqual({
+      appId: "wx_app",
+      toWxid: "wxid_target",
+      title: "HTML 标题",
+      desc: "HTML 描述",
+      linkUrl: "https://gewehub.yunzxu.com/h/html_token",
+      thumbUrl: "https://example.com/thumb.jpg"
+    });
+  });
+
   it("发送成功后生成本地 hub_send 标准消息", () => {
     const message = buildLocalHubSendMessage({
       accountWxid: "wxid_bot",

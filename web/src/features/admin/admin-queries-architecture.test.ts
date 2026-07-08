@@ -69,6 +69,16 @@ describe("admin query architecture", () => {
     expect(adminSource).not.toContain("/api/send/");
   });
 
+  it("HTML 页面页拆出独立页面模块，AdminPages 只负责路由分发", () => {
+    const adminSource = readFileSync(resolve(__dirname, "AdminPages.tsx"), "utf8");
+    const htmlPagesPath = resolve(__dirname, "html-pages/HtmlPagesPage.tsx");
+
+    expect(existsSync(htmlPagesPath)).toBe(true);
+    expect(adminSource).toContain('from "./html-pages/HtmlPagesPage"');
+    expect(adminSource).not.toContain("function HtmlPagesPage(");
+    expect(adminSource).not.toContain("/api/html-pages");
+  });
+
   it("应用页拆出独立页面模块，AdminPages 不再承载 token 和绑定会话逻辑", () => {
     const adminSource = readFileSync(resolve(__dirname, "AdminPages.tsx"), "utf8");
     const appsPath = resolve(__dirname, "apps/AppsPage.tsx");

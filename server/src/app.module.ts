@@ -10,6 +10,7 @@ import { ConversationsModule } from "./modules/conversations/conversations.modul
 import { DeliveryModule } from "./modules/delivery/delivery.module.js";
 import { GeweModule } from "./modules/gewe/gewe.module.js";
 import { HealthModule } from "./modules/health/health.module.js";
+import { HtmlPagesModule } from "./modules/html-pages/html-pages.module.js";
 import { MediaModule } from "./modules/media/media.module.js";
 import { MessagesModule } from "./modules/messages/messages.module.js";
 import { ObservabilityModule } from "./modules/observability/observability.module.js";
@@ -28,6 +29,7 @@ import { SendModule } from "./modules/send/send.module.js";
     ContactsModule,
     ConversationsModule,
     MessagesModule,
+    HtmlPagesModule,
     MediaModule,
     GeweModule,
     DeliveryModule,

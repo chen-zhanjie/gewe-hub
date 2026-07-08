@@ -17,6 +17,7 @@ export class DeliveryService {
     isAtMe: boolean;
     payload: Prisma.JsonValue;
     conversation: {
+      id: string;
       appId: string | null;
       peerWxid: string;
       type: "private" | "group";
@@ -66,6 +67,7 @@ export class DeliveryService {
       senderWxid: string;
       payload: Prisma.JsonValue;
       conversation: {
+        id: string;
         appId: string | null;
         peerWxid: string;
         type: "private" | "group";
@@ -84,6 +86,7 @@ export class DeliveryService {
     senderWxid: string;
     payload: Prisma.JsonValue;
     conversation: {
+      id: string;
       appId: string | null;
       peerWxid: string;
       type: "private" | "group";
@@ -106,6 +109,7 @@ export class DeliveryService {
       },
       conversation: {
         ...payload.conversation,
+        id: message.conversation.id,
         ...(conversationRemark ? { remark: conversationRemark } : {})
       },
       sender: {

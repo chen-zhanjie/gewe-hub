@@ -178,6 +178,7 @@ function messageForCreateDelivery() {
     isAtMe: true,
     payload: messagePayload("msg_created"),
     conversation: {
+      id: "conversation_1",
       appId: "app_1",
       peerWxid: "wxid_sender",
       type: "private",

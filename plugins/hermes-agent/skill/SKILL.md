@@ -52,8 +52,46 @@ plugins:
 - 图片、文件、视频公网 URL：插件把 URL 交给 Hub，Hub/GeWe 可直接访问时不需要再上传文件。
 - 语音：Hub 负责转换 Silk 并补齐 GeWe 发送参数。
 - 视频：插件不要求传封面或时长；本地视频文件进入 Hub 后可由 Hub 生成封面并补默认时长，公网 `http(s)` 视频 URL 可直接交给 GeWe。
+- HTML 页面：使用 `type=html` 语义发送，Hub 托管后实际以链接卡片投递到 GeWe。成功响应里会返回公网访问链接。
 
 不要把 Hermes 机器上的本地文件路径当作 URL 发给 GeWe；本地路径必须通过插件文件发送接口进入 Hub。
+
+## 发送 HTML
+
+当 Agent、Codex 或工具需要发送 HTML 页面时，首选 CLI 的本地文件路径模式：先把单个 HTML 页面写入本地 `.html` 文件，再调用 `send-html --file`。CLI 会读取文件并转换为 `htmlContentBase64/htmlFileName`，服务端不会收到本地路径。
+
+```bash
+python /Users/agent/project/GeWeHub/plugins/hermes-agent/cli.py send-html \
+  --base-url "${GEWEHUB_BASE_URL:-https://gewehub.yunzxu.com}" \
+  --app-key "$GEWEHUB_APP_TOKEN" \
+  --conversation-id conv_xxx \
+  --title "日报" \
+  --desc "今日 AI 工程日报" \
+  --file ./report.html
+```
+
+也支持从标准输入发送：
+
+```bash
+cat report.html | python /Users/agent/project/GeWeHub/plugins/hermes-agent/cli.py send-html \
+  --base-url "${GEWEHUB_BASE_URL:-https://gewehub.yunzxu.com}" \
+  --app-key "$GEWEHUB_APP_TOKEN" \
+  --conversation-id conv_xxx \
+  --title "日报" \
+  --stdin
+```
+
+成功输出是 JSON。后续需要引用页面时，直接读取顶层 `html_public_url` 字段；不要从 `raw_response` 里二次解析。
+
+```json
+{
+  "success": true,
+  "send_request_id": "send_xxx",
+  "html_public_url": "https://gewehub.yunzxu.com/h/xxx",
+  "html_hosted": true,
+  "raw_response": {}
+}
+```
 
 ## 本地验证
 

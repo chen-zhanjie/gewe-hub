@@ -48,4 +48,10 @@ describe("deploy docker-compose", () => {
     expect(source).toContain("caddy-data:");
     expect(source).toContain("caddy-config:");
   });
+
+  it("Caddy 反代托管 HTML 页面公开入口", () => {
+    const caddyfile = readFileSync(resolve(process.cwd(), "../deploy/Caddyfile"), "utf8");
+
+    expect(caddyfile).toContain("reverse_proxy /h/* server:3000");
+  });
 });

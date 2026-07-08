@@ -56,6 +56,30 @@ describe("DeliveryService", () => {
     );
   });
 
+  it("投递给 Hermes 的 conversation.id 使用数据库会话主键，便于回复回写 /api/send", async () => {
+    const prisma = prismaForCreateForMessage();
+    const service = new DeliveryService(prisma as never);
+
+    await service.createForMessage(messageForDelivery({
+      payloadConversationId: "cvs_wxid_bot_wxid_sender",
+      conversation: {
+        id: "conversation_db_1",
+      },
+    }) as never);
+
+    expect(prisma.delivery.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          payload: expect.objectContaining({
+            conversation: expect.objectContaining({
+              id: "conversation_db_1",
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
   it("创建群聊投递时 sender.remark 来自群成员平台备注", async () => {
     const prisma = prismaForCreateForMessage({
       groupMember: { platformRemark: "平台备注-群成员张三" },
@@ -157,7 +181,9 @@ describe("DeliveryService", () => {
 function messageForDelivery(overrides: {
   isAtMe?: boolean;
   isSelf?: boolean;
+  payloadConversationId?: string;
   conversation?: Partial<{
+    id: string;
     type: "private" | "group";
     peerWxid: string;
     platformRemark: string | null;
@@ -185,7 +211,7 @@ function messageForDelivery(overrides: {
       isAtMe,
       account: { wxid: "wxid_bot" },
       conversation: {
-        id: "conversation_1",
+        id: overrides.payloadConversationId ?? "conversation_1",
         type: overrides.conversation?.type ?? "private",
         wxid: overrides.conversation?.peerWxid ?? "wxid_sender",
       },
@@ -197,6 +223,7 @@ function messageForDelivery(overrides: {
       sentAt: "2026-07-06T00:00:00.000Z",
     },
     conversation: {
+      id: overrides.conversation?.id ?? "conversation_1",
       appId: "app_1",
       peerWxid: overrides.conversation?.peerWxid ?? "wxid_sender",
       type: overrides.conversation?.type ?? "private",

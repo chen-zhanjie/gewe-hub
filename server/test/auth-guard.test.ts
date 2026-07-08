@@ -38,6 +38,7 @@ describe("AdminAuthGuard", () => {
     expect(guard.canActivate(contextFor("GET", "/api/health"))).toBe(true);
     expect(guard.canActivate(contextFor("POST", "/api/auth/login"))).toBe(true);
     expect(guard.canActivate(contextFor("POST", "/webhook/gewe/secret"))).toBe(true);
+    expect(guard.canActivate(contextFor("GET", "/h/html_token"))).toBe(true);
   });
 
   it("SSE 应用 token 接口不走管理员会话", () => {
