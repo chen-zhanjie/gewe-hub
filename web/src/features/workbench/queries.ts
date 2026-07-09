@@ -126,6 +126,11 @@ export interface WorkbenchSendResponse {
   htmlHosted?: boolean;
 }
 
+export interface SendTextOptions {
+  mentions?: string[];
+  replyToMessageId?: string;
+}
+
 export interface WorkbenchOutboxTaskResponse {
   id: string;
   status?: string;
@@ -242,10 +247,20 @@ export async function fetchWorkbenchContactProfile(accountId: string, wxid: stri
   return apiFetch<ContactProfileResponse>(`/api/contacts/${encodeURIComponent(wxid)}/profile?${params.toString()}`);
 }
 
-export async function sendWorkbenchText(conversationId: string, text: string): Promise<WorkbenchSendResponse> {
+export async function sendWorkbenchText(
+  conversationId: string,
+  text: string,
+  options: SendTextOptions = {},
+): Promise<WorkbenchSendResponse> {
   return apiFetch<WorkbenchSendResponse>("/api/send", {
     method: "POST",
-    body: JSON.stringify({ conversationId, type: "text", text }),
+    body: JSON.stringify(compactUndefined({
+      conversationId,
+      type: "text",
+      text,
+      mentions: options.mentions?.length ? options.mentions : undefined,
+      replyToMessageId: options.replyToMessageId,
+    })),
   });
 }
 
@@ -339,6 +354,10 @@ export async function markWorkbenchConversationRead(conversationId: string): Pro
   return apiFetch(`/api/conversations/${conversationId}/read`, {
     method: "POST",
   });
+}
+
+function compactUndefined<T extends Record<string, unknown>>(value: T): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
 
 export async function updateWorkbenchGroupMember(groupId: string, memberId: string, payload: UpdateGroupMemberRequest): Promise<unknown> {

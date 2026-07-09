@@ -30,6 +30,12 @@ describe("production deploy assets", () => {
     const nginx = readDeployFile("deploy/nginx.conf");
 
     expect(nginx).toContain("root /app/web");
+    expect(nginx).toContain("location = /api/apps/events");
+    expect(nginx).toContain("proxy_set_header Connection \"\"");
+    expect(nginx).toContain("proxy_cache off");
+    expect(nginx).toContain("gzip off");
+    expect(nginx).toContain("proxy_read_timeout 3700s");
+    expect(nginx).toContain("add_header X-Accel-Buffering no always");
     expect(nginx).toContain("location ~ ^/(api|webhook|files|h)/");
     expect(nginx).toContain("proxy_pass http://127.0.0.1:3000");
     expect(nginx).toContain("proxy_buffering off");
@@ -59,6 +65,10 @@ describe("production deploy assets", () => {
     expect(script).toContain("scp");
     expect(script).toContain("docker load -i");
     expect(script).toContain("docker compose -f docker-compose.prod.yml --env-file .env.production up -d");
+    expect(script).toContain("/opt/1panel/www/sites/gewehub.yunzxu.com/proxy/gewehub-sse.conf");
+    expect(script).toContain("proxy_buffering off;");
+    expect(script).toContain("proxy_read_timeout 3700s;");
+    expect(script).toContain("docker exec 1Panel-openresty-Qju3 nginx -s reload");
     expect(script).toContain("https://gewehub.yunzxu.com");
     expect(script).toContain('MYSQL_PASSWORD="${MYSQL_PASSWORD:-${GEWEHUB_DATABASE_PASSWORD:-}}"');
     expect(script).not.toMatch(/MYSQL_PASSWORD="\$\{MYSQL_PASSWORD:-[^$}][^}]*}"/);

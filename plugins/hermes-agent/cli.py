@@ -11,8 +11,10 @@ from typing import Any
 
 try:
     from .client import GeWeHubClient
+    from .config import resolve_gewehub_connection
 except ImportError:
     from client import GeWeHubClient
+    from config import resolve_gewehub_connection
 
 
 async def run(argv: list[str] | None = None) -> int:
@@ -33,8 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands = parser.add_subparsers(dest="command")
 
     send_html = subcommands.add_parser("send-html")
-    send_html.add_argument("--base-url", default=os.getenv("GEWEHUB_BASE_URL", ""))
-    send_html.add_argument("--app-key", "--app-token", dest="app_key", default=os.getenv("GEWEHUB_APP_TOKEN", ""))
+    send_html.add_argument("--base-url", default="")
+    send_html.add_argument("--app-key", "--app-token", dest="app_key", default="")
     send_html.add_argument("--conversation-id", required=True)
     send_html.add_argument("--title", required=True)
     send_html.add_argument("--desc", default="")
@@ -52,12 +54,13 @@ def build_parser() -> argparse.ArgumentParser:
 async def run_send_html(args: argparse.Namespace) -> int:
     client: GeWeHubClient | None = None
     try:
-        base_url = str(args.base_url or "").rstrip("/")
-        app_key = str(args.app_key or "")
+        connection = resolve_gewehub_connection(base_url=args.base_url, app_token=args.app_key)
+        base_url = connection["base_url"]
+        app_key = connection["app_token"]
         if not base_url:
-            raise RuntimeError("missing --base-url or GEWEHUB_BASE_URL")
+            raise RuntimeError("missing --base-url, GEWEHUB_BASE_URL, or platforms.gewehub.extra.base_url in Hermes config")
         if not app_key:
-            raise RuntimeError("missing --app-key or GEWEHUB_APP_TOKEN")
+            raise RuntimeError("missing --app-key, GEWEHUB_APP_TOKEN, or platforms.gewehub.extra.app_token in Hermes config")
 
         kwargs: dict[str, Any] = {
             "title": args.title,

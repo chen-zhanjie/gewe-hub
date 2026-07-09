@@ -2,6 +2,7 @@ import {
   AlertCircle,
   Clock3,
   Info,
+  MessageSquareQuote,
   Trash2,
   Undo2,
 } from "lucide-react";
@@ -20,6 +21,7 @@ export function MessageBubble({
   onRetryLocalSend,
   onDeleteLocalSend,
   onRequestRevoke,
+  onQuoteMessage,
 }: {
   message: MessageItem;
   startsGroup: boolean;
@@ -28,6 +30,7 @@ export function MessageBubble({
   onRetryLocalSend: (message: MessageItem) => void;
   onDeleteLocalSend: (message: MessageItem) => void;
   onRequestRevoke: (message: MessageItem) => void;
+  onQuoteMessage: (message: MessageItem) => void;
 }) {
   const revokable = useMessageRevokable(message);
 
@@ -74,6 +77,17 @@ export function MessageBubble({
       {!localSend ? (
         <button
           type="button"
+          aria-label={`引用消息 ${message.messageId}`}
+          onClick={() => onQuoteMessage(message)}
+          className="inline-flex min-w-[56px] shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-md px-2 py-1 hover:bg-muted"
+        >
+          <MessageSquareQuote className="size-3" />
+          引用
+        </button>
+      ) : null}
+      {!localSend ? (
+        <button
+          type="button"
           aria-label={`查看消息详情 ${message.messageId}`}
           onClick={() => onShowDetail(message)}
           className="inline-flex min-w-[56px] shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-md px-2 py-1 hover:bg-muted"
@@ -115,7 +129,7 @@ export function MessageBubble({
           <div className="w-8 shrink-0" aria-hidden="true" />
         )
       ) : null}
-      <div className={cn("message-bubble flex flex-col gap-1", message.isSelf && "items-end")}>
+      <div className={cn("message-bubble flex max-w-[calc(100%_-_200px)] min-w-0 flex-col gap-1", message.isSelf && "items-end")}>
         {showSenderName ? <div className="text-xs text-muted-foreground">{message.senderName}</div> : null}
         <div data-message-content-shell="true" className="relative inline-block max-w-full">
           {localSend?.status === "failed" ? (

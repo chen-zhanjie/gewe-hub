@@ -112,6 +112,115 @@ describe("OutboxService 发送任务", () => {
     expect(delivery.createForMessage).not.toHaveBeenCalled();
   });
 
+  it("分发文本引用 send 任务：生成带 quote 的 hub_send 本地消息", async () => {
+    const prisma = {
+      outboxTask: {
+        findFirst: vi.fn(async () => ({
+          id: "task_quote",
+          taskType: "send",
+          refId: "send_quote",
+          payload: { sendRequestId: "send_quote" },
+          retryCount: 0,
+          maxRetry: 5
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      sendRequest: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "send_quote",
+          accountId: "account_1",
+          conversationId: "conversation_1",
+          type: "text",
+          requestPayload: {
+            conversationId: "conversation_1",
+            type: "text",
+            text: "这个我看过了",
+            replyToMessageId: "msg_478238581151300365",
+            quote: {
+              messageId: "msg_478238581151300365",
+              rawMessageId: "478238581151300365",
+              senderWxid: "wxid_sender",
+              senderName: "陈可乐",
+              sentAt: "2026-07-09T10:11:12.000Z",
+              content: {
+                type: "file",
+                text: "[文件] mapping_app.txt",
+                media: {
+                  status: "ready",
+                  fileName: "mapping_app.txt"
+                }
+              },
+              rawContent: "<msg><appmsg><title>mapping_app.txt</title><type>6</type></appmsg></msg>"
+            }
+          },
+          geweRequest: {
+            path: "/gewe/v2/api/message/postAppMsg",
+            body: {
+              appId: "wx_app",
+              toWxid: "wxid_target",
+              appmsg: "<appmsg><type>57</type></appmsg>"
+            }
+          },
+          conversation: {
+            id: "conversation_1",
+            peerWxid: "wxid_target",
+            account: {
+              wxid: "wxid_bot"
+            }
+          }
+        })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      message: {
+        findUnique: vi.fn(async () => null),
+        upsert: vi.fn(async (_args: unknown) => ({}))
+      },
+      conversation: {
+        update: vi.fn(async () => ({}))
+      }
+    };
+    const gewe = {
+      sendByMappedRequest: vi.fn(async () => ({
+        data: {
+          newMsgId: "9154866412345699",
+          msgId: "123499",
+          createTime: "1782932724299"
+        }
+      }))
+    };
+    const service = new OutboxService(
+      prisma as never,
+      { createForMessage: vi.fn() } as never,
+      { syncContacts: vi.fn(), syncGroupMembers: vi.fn() } as never,
+      undefined,
+      gewe as never
+    );
+
+    await service.tick();
+
+    expect(prisma.message.upsert).toHaveBeenCalledWith({
+      where: { sendRequestId: "send_quote" },
+      create: expect.objectContaining({
+        type: "text",
+        renderedText: "这个我看过了: [文件] mapping_app.txt",
+        payload: expect.objectContaining({
+          content: { type: "text", text: "这个我看过了" },
+          quote: expect.objectContaining({
+            type: "file",
+            text: "[文件] mapping_app.txt",
+            senderName: "陈可乐",
+            sourceMessageId: "msg_478238581151300365",
+            sentAt: "2026-07-09T10:11:12.000Z"
+          })
+        })
+      }),
+      update: expect.objectContaining({
+        renderedText: "这个我看过了: [文件] mapping_app.txt"
+      })
+    });
+  });
+
   it("发送语音前将上传音频转为 Silk，并调用 GeWe postVoice", async () => {
     const prisma = {
       outboxTask: {
@@ -1197,7 +1306,7 @@ describe("OutboxService 发送任务", () => {
     });
   });
 
-  it("发送 HTML 时调用 GeWe postLink，并生成本地 HTML 消息", async () => {
+  it("发送 HTML 时调用 GeWe postLink，并补默认缩略图生成本地 HTML 消息", async () => {
     const prisma = {
       outboxTask: {
         findFirst: vi.fn(async () => ({
@@ -1263,16 +1372,34 @@ describe("OutboxService 发送任务", () => {
         }
       }))
     };
+    const media = {
+      prepareOutboundFile: vi.fn(async () => ({
+        url: "http://localhost:8090/files/outbound/out_link_thumb?exp=1893456000&sig=test",
+        mimeType: "image/png",
+        fileName: "link-thumbnail.png",
+        size: 1413
+      }))
+    };
     const service = new OutboxService(
       prisma as never,
       { createForMessage: vi.fn() } as never,
       { syncContacts: vi.fn(), syncGroupMembers: vi.fn() } as never,
-      undefined,
+      media as never,
       gewe as never
     );
 
     await service.tick();
 
+    expect(media.prepareOutboundFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "account_1",
+        conversationId: "conversation_1",
+        kind: "image",
+        mimeType: "image/jpeg",
+        fileName: "link-thumbnail.jpg",
+        purpose: "thumbnail"
+      })
+    );
     expect(gewe.sendByMappedRequest).toHaveBeenCalledWith({
       path: "/gewe/v2/api/message/postLink",
       body: {
@@ -1280,7 +1407,8 @@ describe("OutboxService 发送任务", () => {
         toWxid: "wxid_target",
         title: "HTML 标题",
         desc: "HTML 描述",
-        linkUrl: "https://gewehub.yunzxu.com/h/html_token"
+        linkUrl: "https://gewehub.yunzxu.com/h/html_token",
+        thumbUrl: "http://localhost:8090/files/outbound/out_link_thumb?exp=1893456000&sig=test"
       }
     });
     expect(prisma.message.upsert).toHaveBeenCalledWith({
@@ -1296,7 +1424,7 @@ describe("OutboxService 发送任务", () => {
               title: "HTML 标题",
               desc: "HTML 描述",
               url: "https://gewehub.yunzxu.com/h/html_token",
-              thumbnailUrl: undefined
+              thumbnailUrl: "http://localhost:8090/files/outbound/out_link_thumb?exp=1893456000&sig=test"
             }
           })
         })

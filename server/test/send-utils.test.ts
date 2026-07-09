@@ -36,6 +36,81 @@ describe("send 工具", () => {
     });
   });
 
+  it("文本引用任意消息时映射为 GeWe appmsg 引用消息", () => {
+    const result = mapSendRequestToGewe({
+      appId: "wx_app",
+      peerWxid: "wxid_target",
+      type: "text",
+      text: "@陈可乐 这个我看过了",
+      quote: {
+        messageId: "msg_478238581151300365",
+        rawMessageId: "478238581151300365",
+        senderWxid: "wxid_sender",
+        senderName: "陈可乐",
+        sentAt: "2026-07-09T10:11:12.000Z",
+        content: {
+          type: "file",
+          text: "[文件] mapping_app.txt",
+          media: {
+            status: "ready",
+            url: "https://hub.example.test/files/asset_file",
+            fileName: "mapping_app.txt",
+            size: 2732
+          }
+        }
+      }
+    });
+
+    expect(result.path).toBe("/gewe/v2/api/message/postAppMsg");
+    expect(result.body).toMatchObject({
+      appId: "wx_app",
+      toWxid: "wxid_target"
+    });
+    const appmsg = String((result.body as { appmsg: string }).appmsg);
+    expect(appmsg).toContain("<title>@陈可乐 这个我看过了</title>");
+    expect(appmsg).toContain("<type>57</type>");
+    expect(appmsg).toContain("<refermsg>");
+    expect(appmsg).toContain("<type>49</type>");
+    expect(appmsg).toContain("<svrid>478238581151300365</svrid>");
+    expect(appmsg).toContain("<fromusr>wxid_target</fromusr>");
+    expect(appmsg).toContain("<chatusr>wxid_sender</chatusr>");
+    expect(appmsg).toContain("<displayname>陈可乐</displayname>");
+    expect(appmsg).not.toContain("<referdesc>");
+    expect(appmsg).toContain("&lt;msg&gt;&lt;appmsg");
+  });
+
+  it("发送成功后生成带 quote 的本地引用消息", () => {
+    const local = buildLocalHubSendMessage({
+      accountWxid: "wxid_bot",
+      conversationId: "cvs_1",
+      conversationWxid: "room@chatroom",
+      senderWxid: "wxid_bot",
+      text: "这个我看过了",
+      newMsgId: "9154866412345678",
+      createTime: "1782932724220",
+      quote: {
+        type: "image",
+        text: "[图片]",
+        senderName: "陈可乐",
+        sourceMessageId: "msg_123"
+      }
+    });
+
+    expect(local.payload.content).toEqual({ type: "text", text: "这个我看过了" });
+    expect(local.payload.quote).toEqual({
+      type: "image",
+      text: "[图片]",
+      senderName: "陈可乐",
+      sourceMessageId: "msg_123"
+    });
+    expect(local.renderedText).toBe("这个我看过了: [图片]");
+    expect(local.payload.renderedMd).toContain("[上下文]");
+    expect(local.payload.renderedMd).toContain("消息ID: msg_9154866412345678");
+    expect(local.payload.renderedMd).toContain("[引用]");
+    expect(local.payload.renderedMd).toContain("> 引用 陈可乐（消息ID: msg_123）：");
+    expect(local.payload.renderedMd).toContain("[正文]\n这个我看过了");
+  });
+
   it("将语音发送请求映射为待 Silk 转换的 GeWe 语音请求", () => {
     const result = mapSendRequestToGewe({
       appId: "wx_app",
@@ -267,6 +342,7 @@ describe("send 工具", () => {
 
     expect(message.sentAt.toISOString()).toBe("2026-07-08T02:05:00.000Z");
     expect(message.payload.sentAt).toBe("2026-07-08T02:05:00.000Z");
+    expect(message.payload.renderedMd).toContain("[图片](http://localhost:8090/files/outbound/image?exp=1893456000&sig=test)");
   });
 
   it("语音发送成功后生成本地 hub_send 语音标准消息，保留可播放 URL", () => {

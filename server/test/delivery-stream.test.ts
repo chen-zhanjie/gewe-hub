@@ -25,12 +25,15 @@ describe("DeliveryStreamService", () => {
     });
 
     expect(reply.raw.ended).toBe(false);
+    expect(reply.raw.body()).toContain(": connected\n\n");
     expect(reply.raw.body()).toContain("id: del_1\n");
-    expect(prisma.delivery.update).toHaveBeenCalledWith({
-      where: { id: "row_1" },
+    expect(prisma.delivery.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "row_1",
+        status: { not: "acked" },
+      },
       data: {
-        status: "delivered",
-        deliveredAt: expect.any(Date),
+        status: "delivering",
         attempts: { increment: 1 },
       },
     });
@@ -42,6 +45,58 @@ describe("DeliveryStreamService", () => {
 
     expect(reply.raw.body()).toContain("id: del_2\n");
     expect(reply.raw.ended).toBe(false);
+  });
+
+  it("SSE 写出后只把仍未 ack 的 delivery 标记为 delivering，避免把 socket write 误判为客户端确认", async () => {
+    const prisma = prismaWithDeliveries([
+      deliveryRow("row_1", "del_1", "queued"),
+    ]);
+    const stream = new DeliveryStreamService(prisma as never);
+    const reply = fakeReply();
+
+    await stream.open({
+      appId: "app_1",
+      lastEventId: undefined,
+      reply: reply as never,
+    });
+
+    expect(reply.raw.body()).toContain("id: del_1\n");
+    expect(prisma.delivery.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "row_1",
+        status: { not: "acked" },
+      },
+      data: {
+        status: "delivering",
+        attempts: { increment: 1 },
+      },
+    });
+    expect(prisma.delivery.update).not.toHaveBeenCalled();
+  });
+
+  it("同一连接里已经写出的旧事件不会等待 ACK 阻塞后续同会话事件", async () => {
+    const rows = [
+      deliveryRow("row_1", "del_1", "queued", "conversation_1"),
+      deliveryRow("row_2", "del_2", "queued", "conversation_1"),
+    ];
+    const prisma = prismaWithDeliveries(rows);
+    const stream = new DeliveryStreamService(prisma as never);
+    const reply = fakeReply();
+
+    await stream.open({
+      appId: "app_1",
+      lastEventId: undefined,
+      reply: reply as never,
+    });
+
+    expect(reply.raw.body()).toContain("id: del_1\n");
+    expect(reply.raw.body()).not.toContain("id: del_2\n");
+
+    rows[0].status = "delivering";
+    prisma.delivery.findMany.mockResolvedValueOnce(rows);
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(reply.raw.body()).toContain("id: del_2\n");
   });
 
   it("心跳每 15 秒发送一次注释帧", async () => {
@@ -77,6 +132,48 @@ describe("DeliveryStreamService", () => {
 
     expect(reply.raw.body()).not.toContain("id: del_1\n");
     expect(reply.raw.body()).toContain("id: del_2\n");
+  });
+
+  it("Last-Event-ID 会把游标及之前的未 ACK 事件标记为 delivered，表示客户端已读到", async () => {
+    const prisma = prismaWithDeliveries([
+      deliveryRow("row_1", "del_1", "delivering", "conversation_1", {
+        sentAt: "2026-07-06T00:00:01.000Z",
+      }),
+      deliveryRow("row_2", "del_2", "delivering", "conversation_1", {
+        sentAt: "2026-07-06T00:00:02.000Z",
+      }),
+      deliveryRow("row_3", "del_3", "queued", "conversation_1", {
+        sentAt: "2026-07-06T00:00:03.000Z",
+      }),
+    ]);
+    prisma.delivery.findUnique.mockResolvedValueOnce(
+      deliveryRow("row_2", "del_2", "delivering", "conversation_1", {
+        sentAt: "2026-07-06T00:00:02.000Z",
+      }),
+    );
+    const stream = new DeliveryStreamService(prisma as never);
+    const reply = fakeReply();
+
+    await stream.open({
+      appId: "app_1",
+      lastEventId: "del_2",
+      reply: reply as never,
+    });
+
+    expect(prisma.delivery.updateMany).toHaveBeenCalledWith({
+      where: {
+        appId: "app_1",
+        eventId: { in: ["del_1", "del_2"] },
+        status: { in: ["queued", "delivering"] },
+      },
+      data: {
+        status: "delivered",
+        deliveredAt: expect.any(Date),
+      },
+    });
+    expect(reply.raw.body()).not.toContain("id: del_1\n");
+    expect(reply.raw.body()).not.toContain("id: del_2\n");
+    expect(reply.raw.body()).toContain("id: del_3\n");
   });
 
   it("Last-Event-ID 已 ack 不在未 ack 队列时，仍只补发 cursor 之后的断线事件", async () => {
@@ -141,14 +238,14 @@ describe("DeliveryStreamService", () => {
     expect(reply.raw.body()).toContain("id: del_1\n");
     expect(reply.raw.body()).not.toContain("id: del_2\n");
     expect(reply.raw.body()).toContain("id: del_3\n");
-    expect(prisma.delivery.update).not.toHaveBeenCalledWith(
+    expect(prisma.delivery.updateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "row_2" },
+        where: expect.objectContaining({ id: "row_2" }),
       }),
     );
-    expect(prisma.delivery.update).toHaveBeenCalledWith(
+    expect(prisma.delivery.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "row_3" },
+        where: expect.objectContaining({ id: "row_3" }),
       }),
     );
   });
@@ -175,14 +272,14 @@ describe("DeliveryStreamService", () => {
 
     expect(reply.raw.body()).toContain("id: del_early\n");
     expect(reply.raw.body()).not.toContain("id: del_late\n");
-    expect(prisma.delivery.update).toHaveBeenCalledWith(
+    expect(prisma.delivery.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "row_early" },
+        where: expect.objectContaining({ id: "row_early" }),
       }),
     );
-    expect(prisma.delivery.update).not.toHaveBeenCalledWith(
+    expect(prisma.delivery.updateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "row_late" },
+        where: expect.objectContaining({ id: "row_late" }),
       }),
     );
   });
@@ -205,15 +302,15 @@ describe("DeliveryStreamService", () => {
     });
 
     expect(reply.raw.body()).not.toContain("id: del_late\n");
-    expect(prisma.delivery.update).not.toHaveBeenCalledWith(
+    expect(prisma.delivery.updateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "row_late" },
+        where: expect.objectContaining({ id: "row_late" }),
       }),
     );
     expect(prisma.delivery.count).toHaveBeenCalledWith({
       where: {
         appId: "app_1",
-        status: { notIn: ["delivered", "acked"] },
+        status: { notIn: ["delivering", "delivered", "acked"] },
         message: {
           conversationId: "conversation_1",
           sentAt: {
@@ -323,6 +420,7 @@ function prismaWithDeliveries(initialRows: ReturnType<typeof deliveryRow>[]) {
       findUnique: vi.fn<() => Promise<ReturnType<typeof deliveryRow> | null>>(async () => null),
       count: vi.fn(async () => 0),
       update: vi.fn(async () => ({})),
+      updateMany: vi.fn(async () => ({ count: 1 })),
     },
   };
 }

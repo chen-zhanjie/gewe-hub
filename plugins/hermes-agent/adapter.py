@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import hashlib
+import importlib.util
 import json
 import logging
 import mimetypes
@@ -92,6 +94,7 @@ try:
         reply_context,
     )
     from .state import GeWeHubStateStore
+    from .tools import send_payload_from_args
 except ImportError:
     from client import GeWeHubAuthError, GeWeHubClient, GeWeHubError, GeWeHubPermissionError
     from dedupe import BoundedTTLSet
@@ -106,6 +109,14 @@ except ImportError:
         reply_context,
     )
     from state import GeWeHubStateStore
+
+    _tools_path = Path(__file__).with_name("tools.py")
+    _tools_spec = importlib.util.spec_from_file_location("gewehub_plugin_tools_for_adapter", _tools_path)
+    if _tools_spec is None or _tools_spec.loader is None:
+        raise
+    _tools_module = importlib.util.module_from_spec(_tools_spec)
+    _tools_spec.loader.exec_module(_tools_module)
+    send_payload_from_args = _tools_module.send_payload_from_args
 
 
 logger = logging.getLogger(__name__)
@@ -186,6 +197,8 @@ class GeWeHubAdapter(BasePlatformAdapter):
         self._conversation_locks: dict[str, asyncio.Lock] = {}
         self._pending_batches: dict[str, _PendingBatch] = {}
         self._pending_dedupe_keys: set[str] = set()
+        self._ack_tasks: set[asyncio.Task] = set()
+        self._ack_retry_delays = (1.0, 2.0, 5.0)
         self._sse_task: asyncio.Task | None = None
 
     @property
@@ -227,6 +240,7 @@ class GeWeHubAdapter(BasePlatformAdapter):
                 pass
         self._sse_task = None
         await self.flush_pending_batches()
+        await self._drain_ack_tasks(timeout=2.0)
         if self._client:
             await self._client.aclose()
             self._client = None
@@ -239,11 +253,32 @@ class GeWeHubAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         try:
-            response = await self._ensure_client().send_text(
-                chat_id,
-                content,
-                idempotency_key=_idempotency_key_from_metadata(metadata),
-            )
+            html_payload = _html_send_payload_from_metadata(metadata, fallback_title=content)
+            if html_payload is not None:
+                client = self._ensure_client()
+                response = await client.send_html(chat_id, **html_payload)
+            else:
+                client = self._ensure_client()
+                final_envelope = _final_json_envelope_from_content(content, chat_id) if _is_gateway_final_text(metadata) else None
+                if final_envelope is not None:
+                    if final_envelope.get("send") is False:
+                        raw_response = {"suppressed": True, "reason": "gewehub_final_json_send_false"}
+                        content = _clean_string(final_envelope.get("content"))
+                        if content:
+                            raw_response["content"] = content
+                        return SendResult(success=True, raw_response=raw_response)
+                    error = _clean_string(final_envelope.get("error"))
+                    if error:
+                        return SendResult(success=False, error=error)
+                    response = await client.send_message_payload(final_envelope["payload"])
+                else:
+                    response = await client.send_text(
+                        chat_id,
+                        content,
+                        idempotency_key=_idempotency_key_from_metadata(metadata),
+                        mentions=_mentions_from_metadata(metadata),
+                        reply_to_message_id=_reply_to_message_id_from_metadata(metadata),
+                    )
             return SendResult(success=True, message_id=_response_message_id(response), raw_response=response)
         except Exception as exc:
             return SendResult(success=False, error=self._redact(str(exc)))
@@ -360,9 +395,10 @@ class GeWeHubAdapter(BasePlatformAdapter):
 
     async def _sse_loop(self) -> None:
         backoff = 1.0
-        while self.is_connected and self._client is not None:
+        while self.is_connected:
+            client = GeWeHubClient(self.base_url, app_token=self.app_token)
             try:
-                async for sse_event in self._client.iter_sse_events(last_event_id=self._last_event_id):
+                async for sse_event in client.iter_sse_events(last_event_id=self._last_event_id):
                     await self._handle_sse_event(sse_event)
                     backoff = 1.0
             except asyncio.CancelledError:
@@ -372,12 +408,15 @@ class GeWeHubAdapter(BasePlatformAdapter):
                 await self._notify_fatal_error()
                 return
             except Exception as exc:
-                logger.warning("GeWeHub SSE loop error: %s", self._redact(str(exc)))
+                logger.warning("GeWeHub SSE loop error: %s", self._redact(str(exc) or exc.__class__.__name__))
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
+            finally:
+                await client.aclose()
 
     async def _handle_sse_event(self, sse_event: dict[str, Any]) -> bool:
         event_type = str(sse_event.get("event") or "")
+        logger.info("GeWeHub SSE event received: id=%s type=%s", _sse_event_id(sse_event), event_type or "message")
         if event_type == "error":
             raise GeWeHubError(f"GeWeHub SSE error: {_sse_error_message(sse_event)}")
         try:
@@ -395,21 +434,19 @@ class GeWeHubAdapter(BasePlatformAdapter):
             raw_event["eventType"] = event_type
 
         normalized = normalize_event(raw_event)
+        await self._ack_event_ids([_event_id_for_ack(sse_event, normalized)])
         conversation_id = _conversation_id(normalized)
         if not conversation_id:
             logger.warning("GeWeHub skipped message without conversation.id")
-            await self._ack_event_ids([_event_id_for_ack(sse_event, normalized)])
             return False
 
         async with self._conversation_lock(conversation_id):
             if self._seen_before(normalized):
-                await self._ack_event_ids([_event_id_for_ack(sse_event, normalized)])
                 return False
             if _is_revoked_event(normalized):
                 await self._flush_batch_locked(conversation_id)
                 logger.info("GeWeHub message revoked: %s", normalized.message_id or normalized.event_id or "")
                 self._mark_seen(normalized)
-                await self._ack_event_ids([_event_id_for_ack(sse_event, normalized)])
                 return True
 
             event = await self._build_message_event(normalized, raw_event)
@@ -459,7 +496,6 @@ class GeWeHubAdapter(BasePlatformAdapter):
     async def _dispatch_built_event(self, event: MessageEvent, normalized, sse_event: dict[str, Any]) -> None:
         await self.handle_message(event)
         self._mark_seen(normalized)
-        await self._ack_event_ids([_event_id_for_ack(sse_event, normalized)])
 
     def _should_batch_event(self, normalized, event: MessageEvent) -> bool:
         debounce_ms, _ = debounce_config(
@@ -539,7 +575,6 @@ class GeWeHubAdapter(BasePlatformAdapter):
             key = dedupe_key_for_event(normalized)
             if key:
                 self._pending_dedupe_keys.discard(key)
-        await self._ack_event_ids(batch.event_ids)
 
     def _batch_delay(self, batch: _PendingBatch, now: float) -> float:
         debounce_seconds = max(0.0, batch.debounce_ms / 1000.0)
@@ -563,15 +598,41 @@ class GeWeHubAdapter(BasePlatformAdapter):
         clean = [str(event_id).strip() for event_id in event_ids if str(event_id or "").strip()]
         if not clean:
             return
-        client = self._client
-        if client is not None:
-            try:
-                await client.ack_events(clean)
-            except Exception as exc:
-                logger.warning("GeWeHub SSE ACK failed for %s: %s", clean[-1], self._redact(str(exc)))
-                return
+        logger.info("GeWeHub SSE ACK scheduled: %s", clean[-1])
         self._last_event_id = clean[-1]
         self._state_store.save_last_event_id(clean[-1])
+        client = self._client
+        if client is None:
+            return
+        task = asyncio.create_task(self._send_ack_event_ids(client, clean))
+        self._ack_tasks.add(task)
+        task.add_done_callback(self._ack_tasks.discard)
+
+    async def _send_ack_event_ids(self, client: GeWeHubClient, event_ids: list[str]) -> None:
+        delays = (0.0, *self._ack_retry_delays)
+        last_error: Exception | None = None
+        for delay in delays:
+            if delay > 0:
+                await asyncio.sleep(delay)
+            try:
+                await client.ack_events(event_ids)
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                last_error = exc
+        if last_error is not None:
+            logger.warning("GeWeHub SSE ACK failed for %s: %s", event_ids[-1], self._redact(str(last_error)))
+
+    async def _drain_ack_tasks(self, *, timeout: float) -> None:
+        if not self._ack_tasks:
+            return
+        done, pending = await asyncio.wait(set(self._ack_tasks), timeout=timeout)
+        for task in done:
+            with contextlib.suppress(Exception):
+                task.result()
+        for task in pending:
+            task.cancel()
 
     async def _download_media(self, normalized) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
@@ -803,6 +864,110 @@ def _idempotency_key_from_metadata(metadata: dict[str, Any] | None) -> str | Non
     return None
 
 
+def _reply_to_message_id_from_metadata(metadata: dict[str, Any] | None) -> str | None:
+    return _metadata_string(metadata, None, "replyToMessageId", "reply_to_message_id")
+
+
+def _mentions_from_metadata(metadata: dict[str, Any] | None) -> list[str] | None:
+    if not isinstance(metadata, dict):
+        return None
+    for source in (metadata, metadata.get("gewehub")):
+        if not isinstance(source, dict):
+            continue
+        value = source.get("mentions")
+        if not isinstance(value, list):
+            continue
+        clean = [str(item).strip() for item in value if str(item or "").strip()]
+        if clean:
+            return clean
+    return None
+
+
+def _is_gateway_final_text(metadata: dict[str, Any] | None) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    if bool(metadata.get("non_conversational")):
+        return False
+    gewehub = metadata.get("gewehub")
+    if isinstance(gewehub, dict) and bool(gewehub.get("system")):
+        return False
+    return bool(metadata.get("notify") or metadata.get("expect_edits"))
+
+
+def _final_json_envelope_from_content(content: str, conversation_id: str) -> dict[str, Any] | None:
+    raw = str(content or "").strip()
+    if not (raw.startswith("{") and raw.endswith("}")):
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    if _final_json_send_disabled(parsed):
+        return {"send": False, "content": _clean_string(parsed.get("content"))}
+
+    payload_args = dict(parsed)
+    for control_key in ("send", "sendMessage", "shouldSend"):
+        payload_args.pop(control_key, None)
+    payload = send_payload_from_args(payload_args, default_conversation_id=conversation_id)
+    if "error" in payload:
+        return {"send": True, "error": payload["error"]}
+    return {"send": True, "payload": payload}
+
+
+def _final_json_send_disabled(payload: dict[str, Any]) -> bool:
+    for key in ("send", "sendMessage", "shouldSend"):
+        if key in payload and _is_false_flag(payload.get(key)):
+            return True
+    return False
+
+
+def _is_false_flag(value: Any) -> bool:
+    if value is False:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"false", "0", "no", "off"}
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value == 0
+    return False
+
+
+def _html_send_payload_from_metadata(metadata: dict[str, Any] | None, *, fallback_title: str) -> dict[str, Any] | None:
+    gewehub = _gewehub_metadata(metadata)
+    if not gewehub:
+        return None
+    send_type = _first_metadata_value(gewehub, ("sendType", "send_type", "type"))
+    if not send_type or send_type.lower() != "html":
+        return None
+
+    payload: dict[str, Any] = {
+        "title": _first_metadata_value(gewehub, ("title",)) or _clean_string(fallback_title) or "HTML 页面",
+        "desc": _first_metadata_value(gewehub, ("desc", "description")) or "",
+        "idempotency_key": _idempotency_key_from_metadata(metadata),
+    }
+    optional_fields = {
+        "link_url": ("linkUrl", "link_url", "url"),
+        "html_content": ("htmlContent", "html_content"),
+        "html_content_base64": ("htmlContentBase64", "html_content_base64"),
+        "html_file_path": ("htmlFilePath", "html_file_path", "filePath", "path"),
+        "html_file_name": ("htmlFileName", "html_file_name", "fileName", "file_name"),
+        "thumb_url": ("thumbUrl", "thumb_url"),
+    }
+    for payload_key, metadata_keys in optional_fields.items():
+        value = _first_metadata_value(gewehub, metadata_keys)
+        if value:
+            payload[payload_key] = value
+    return payload
+
+
+def _gewehub_metadata(metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(metadata, dict):
+        return None
+    gewehub = metadata.get("gewehub")
+    return gewehub if isinstance(gewehub, dict) else None
+
+
 def _derived_idempotency_key(idempotency_key: str | None, suffix: str) -> str | None:
     if not idempotency_key:
         return None
@@ -984,6 +1149,19 @@ def _generated_idempotency_key(*parts: Any) -> str:
 
 
 def register(ctx) -> None:
+    try:
+        from .tools import GEWEHUB_SEND_MESSAGE_SCHEMA, check_gewehub_tool_available, handle_gewehub_send_message
+    except ImportError:
+        tools_path = Path(__file__).with_name("tools.py")
+        spec = importlib.util.spec_from_file_location("gewehub_plugin_tools", tools_path)
+        if spec is None or spec.loader is None:
+            raise
+        tools_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tools_module)
+        GEWEHUB_SEND_MESSAGE_SCHEMA = tools_module.GEWEHUB_SEND_MESSAGE_SCHEMA
+        check_gewehub_tool_available = tools_module.check_gewehub_tool_available
+        handle_gewehub_send_message = tools_module.handle_gewehub_send_message
+
     ctx.register_platform(
         name=_GEWEHUB_PLATFORM_NAME,
         label="GeWeHub",
@@ -1003,6 +1181,34 @@ def register(ctx) -> None:
         pii_safe=True,
         platform_hint=(
             "You are chatting via GeWeHub, which bridges WeChat conversations to Hermes. "
-            "You can receive standardized messages with media paths and reply with text."
+            "You can receive standardized messages with ids, media paths, quote context, and sender "
+            "metadata. For message sending, prefer gewehub_send_message over normal final text replies; "
+            "the tool call itself is the user-visible message, including quoted text replies. "
+            'If you already called gewehub_send_message for the visible answer, make the final response {"send": false, "content": "<brief internal completion note>"} unless an additional user-visible message is truly needed. '
+            "For one final user-visible send, the final response may be a raw JSON object matching "
+            "GeWeHub /api/send fields such as conversationId, type, text, title, desc, mentions, "
+            "and replyToMessageId. Output only the JSON object, with no Markdown fence or explanation. "
+            'Use {"send": false, "content": "<brief internal completion note>"} when the final turn should intentionally send nothing; content is for internal final output and is not sent to WeChat. '
+            "If the final response is not JSON, GeWeHub sends it as ordinary text. "
+            "Use GeWeHub's native capabilities for text, media, link cards, HTML link cards, mentions, "
+            "and quoted replies. Do not simulate platform capabilities with plain text or Markdown. "
+            "HTML link cards should usually not be followed by duplicate text. If the user asks to "
+            "quote/reply to a specific message, use replyToMessageId through gewehub_send_message, "
+            "final JSON, or explicit GeWeHub metadata; do not simulate quotes with Markdown quote blocks. "
+            "Only include replyToMessageId when you intentionally want a quoted reply. "
+            "No replyToMessageId means no quote. Do not use quote=true or infer a quote target automatically. "
+            "For long-running tasks, send a very short status message first, such as '我看看。' or "
+            "'稍等，我处理一下。', then continue working."
         ),
     )
+    if hasattr(ctx, "register_tool"):
+        ctx.register_tool(
+            name="gewehub_send_message",
+            toolset="gewehub",
+            schema=GEWEHUB_SEND_MESSAGE_SCHEMA,
+            handler=handle_gewehub_send_message,
+            check_fn=check_gewehub_tool_available,
+            is_async=True,
+            description="Send a standard GeWeHub message through /api/send.",
+            emoji="GH",
+        )

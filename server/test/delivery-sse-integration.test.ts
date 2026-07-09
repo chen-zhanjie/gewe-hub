@@ -134,10 +134,10 @@ function prismaForIntegration(deliveries: ReturnType<typeof deliveryRow>[]) {
         Object.assign(delivery, materializeUpdate(data));
         return delivery;
       }),
-      updateMany: vi.fn(async ({ where, data }: { where: { appId: string; eventId: { in: string[] }; status: string }; data: Record<string, unknown> }) => {
+      updateMany: vi.fn(async ({ where, data }: { where: DeliveryUpdateManyWhere; data: Record<string, unknown> }) => {
         let count = 0;
         for (const delivery of deliveries) {
-          if (delivery.appId === where.appId && where.eventId.in.includes(delivery.eventId) && delivery.status === where.status) {
+          if (matchesDeliveryWhere(delivery, where)) {
             Object.assign(delivery, materializeUpdate(data));
             count += 1;
           }
@@ -166,6 +166,30 @@ function prismaForIntegration(deliveries: ReturnType<typeof deliveryRow>[]) {
       }),
     },
   };
+}
+
+type IntegrationDelivery = ReturnType<typeof deliveryRow>;
+
+type DeliveryUpdateManyWhere =
+  | {
+      appId: string;
+      eventId: { in: string[] };
+      status: { in: string[] };
+    }
+  | {
+      id: string;
+      status: { not: string };
+    };
+
+function matchesDeliveryWhere(delivery: IntegrationDelivery, where: DeliveryUpdateManyWhere): boolean {
+  if ("id" in where) {
+    return delivery.id === where.id && delivery.status !== where.status.not;
+  }
+  return (
+    delivery.appId === where.appId &&
+    where.eventId.in.includes(delivery.eventId) &&
+    where.status.in.includes(delivery.status)
+  );
 }
 
 function messageForCreateDelivery() {
@@ -245,6 +269,7 @@ function parseSseEvents(raw: string) {
     .trim()
     .split("\n\n")
     .filter(Boolean)
+    .filter((chunk) => chunk.split("\n").some((line) => line.startsWith("id: ")))
     .map((chunk) => {
       const lines = chunk.split("\n");
       return {

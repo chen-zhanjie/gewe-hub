@@ -191,7 +191,7 @@ export class DeliveryService {
       where: {
         appId: app.id,
         eventId: { in: eventIds },
-        status: "delivered"
+        status: { in: ["queued", "delivering", "delivered"] }
       },
       data: {
         status: "acked",

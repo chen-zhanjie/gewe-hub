@@ -8,6 +8,24 @@ describe("MessageBubble", () => {
     vi.useRealTimers();
   });
 
+  it("消息气泡为浮动操作区预留固定宽度", () => {
+    const { container } = render(
+      <MessageBubble
+        message={buildSelfMessage("2026-07-07T09:59:00.000Z")}
+        startsGroup
+        onShowDetail={() => undefined}
+        onOpenContact={() => undefined}
+        onRetryLocalSend={() => undefined}
+        onDeleteLocalSend={() => undefined}
+        onRequestRevoke={() => undefined}
+        onQuoteMessage={() => undefined}
+      />,
+    );
+
+    const bubble = container.querySelector(".message-bubble");
+    expect(bubble).toHaveClass("max-w-[calc(100%_-_200px)]", "min-w-0");
+  });
+
   it("2 分钟撤回窗口到期后自动隐藏撤回按钮", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-07T10:00:00.000Z"));
@@ -22,6 +40,7 @@ describe("MessageBubble", () => {
         onRetryLocalSend={() => undefined}
         onDeleteLocalSend={() => undefined}
         onRequestRevoke={() => undefined}
+        onQuoteMessage={() => undefined}
       />,
     );
 

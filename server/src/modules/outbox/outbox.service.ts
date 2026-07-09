@@ -175,6 +175,7 @@ export class OutboxService implements OnModuleInit {
       const geweResponse = await this.gewe!.sendByMappedRequest(prepared.mapped);
       const result = extractSendResult(geweResponse, sendRequest.id);
       const text = prepared.localContent?.text ?? extractRenderedText(sendRequest.requestPayload, sendRequest.type);
+      const quote = extractQuoteMessageNode(sendRequest.requestPayload);
       const localMessage = buildLocalHubSendMessage({
         accountWxid: sendRequest.conversation.account.wxid,
         conversationId: sendRequest.conversation.id,
@@ -183,7 +184,8 @@ export class OutboxService implements OnModuleInit {
         text,
         newMsgId: result.newMsgId,
         createTime: result.createTime,
-        content: prepared.localContent
+        content: prepared.localContent,
+        quote
       });
       const existingMessage = await this.prisma.message.findUnique({
         where: { sendRequestId: sendRequest.id }
@@ -448,6 +450,7 @@ export class OutboxService implements OnModuleInit {
       sendRequest,
       body,
       asString(body?.thumbUrl),
+      defaultLinkThumbnailSource(),
     );
     const geweBody = {
       appId: asString(body?.appId),
@@ -1006,6 +1009,19 @@ function extractRenderedText(requestPayload: Prisma.JsonValue, type: string): st
   return `[${type}]`;
 }
 
+function extractQuoteMessageNode(requestPayload: Prisma.JsonValue): MessageNode | null {
+  const record = asRecord(requestPayload);
+  const quote = asRecord(record?.quote);
+  const content = asMessageNode(quote?.content);
+  if (!quote || !content) return null;
+  return {
+    ...content,
+    senderName: asString(quote.senderName) ?? content.senderName,
+    sourceMessageId: asString(quote.messageId) ?? content.sourceMessageId,
+    sentAt: asString(quote.sentAt) ?? content.sentAt
+  };
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
@@ -1014,6 +1030,13 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 function asString(value: unknown): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   return String(value);
+}
+
+function asMessageNode(value: unknown): MessageNode | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  if (!asString(record.type) || typeof record.text !== "string") return undefined;
+  return record as unknown as MessageNode;
 }
 
 function asNumber(value: unknown): number | undefined {

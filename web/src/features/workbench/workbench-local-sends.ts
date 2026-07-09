@@ -8,6 +8,9 @@ export interface LocalSend {
   conversationId: string;
   type: LocalSendType;
   text: string;
+  mentions?: string[];
+  replyToMessageId?: string;
+  quotePreview?: MessageNode;
   label?: string;
   fileName?: string;
   mimeType?: string;
@@ -59,6 +62,9 @@ export function mapLocalSendToMessageItem(send: LocalSend, account?: AccountSumm
     status: send.status,
     sendRequestId: send.sendRequestId ?? null,
     sendPayload: send.sendPayload,
+    mentions: send.mentions,
+    replyToMessageId: send.replyToMessageId,
+    quotePreview: send.quotePreview,
   };
 
   return {
@@ -87,6 +93,9 @@ export function mapLocalSendToMessageItem(send: LocalSend, account?: AccountSumm
       type: send.type,
       text: send.text,
       label,
+      mentions: send.mentions,
+      replyToMessageId: send.replyToMessageId,
+      quotePreview: send.quotePreview,
       status: send.status,
       errorMessage: send.errorMessage,
       sendRequestId: send.sendRequestId ?? null,
@@ -106,12 +115,23 @@ export function compareMessagesBySentAt(left: MessageItem, right: MessageItem): 
   return 0;
 }
 
-export function createLocalTextSend(conversationId: string, text: string): LocalTextSend {
+export function createLocalTextSend(
+  conversationId: string,
+  text: string,
+  options: {
+    mentions?: string[];
+    replyToMessageId?: string;
+    quotePreview?: MessageNode;
+  } = {},
+): LocalTextSend {
   return {
     id: createLocalSendId("text"),
     conversationId,
     type: "text",
     text,
+    mentions: options.mentions,
+    replyToMessageId: options.replyToMessageId,
+    quotePreview: options.quotePreview,
     label: text,
     status: "pending",
     createdAtIso: new Date().toISOString(),
@@ -172,7 +192,13 @@ export function attachPayloadToLocalSend(send: LocalSend, payload: LocalSendPayl
 }
 
 function localSendContent(send: LocalSend): MessageNode {
-  if (send.type === "text") return { type: "text", text: send.text };
+  if (send.type === "text") {
+    return {
+      type: "text",
+      text: send.text,
+      ...(send.quotePreview ? { quote: send.quotePreview } : {}),
+    };
+  }
   if (send.type === "link") {
     return {
       type: "link",

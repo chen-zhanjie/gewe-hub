@@ -69,6 +69,11 @@ describe("消息引用本地回查", () => {
     expect(merged.quote?.senderName).toBe("陈可乐");
     expect(merged.quote?.sourceMessageId).toBe("msg_8103115687525853092");
     expect(merged.renderedText).toBe("引用: [聊天记录] 群聊的聊天记录");
+    expect(merged.renderedMd).toContain("[引用]");
+    expect(merged.renderedMd).toContain(
+      "> 引用 陈可乐（消息ID: msg_8103115687525853092）：",
+    );
+    expect(merged.renderedMd).toContain("[聊天记录] 群聊的聊天记录");
   });
 
   it("quote 中媒体仍是 pending 时使用本地已下载媒体快照补全", () => {
@@ -201,6 +206,10 @@ describe("消息引用本地回查", () => {
     expect(hydrated.renderedText).toBe(
       "[语音]: Cronjob Response: 每日热点推送到微信和Wiki",
     );
+    expect(hydrated.renderedMd).toContain("[引用]");
+    expect(hydrated.renderedMd).toContain(
+      "Cronjob Response: 每日热点推送到微信和Wiki",
+    );
   });
 
   it("chat_record 条目引用本地已下载语音时回填 MP3 媒体", async () => {
@@ -263,5 +272,8 @@ describe("消息引用本地回查", () => {
       size: 6935,
       durationMs: 5314,
     });
+    expect(hydrated.renderedMd).toContain(
+      "[语音 5.3s](http://localhost:3000/files/asset_voice?exp=1783922854&sig=test)",
+    );
   });
 });

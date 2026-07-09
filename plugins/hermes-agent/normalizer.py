@@ -34,7 +34,7 @@ def normalize_event(event: dict[str, Any]) -> NormalizedEvent:
     metadata = _dict(payload.get("metadata"))
     quote = payload.get("quote") if isinstance(payload.get("quote"), dict) else None
     mentions = payload.get("mentions") if isinstance(payload.get("mentions"), list) else []
-    rendered_text = str(payload.get("renderedText") or content.get("text") or "").strip()
+    rendered_text = str(payload.get("renderedMd") or payload.get("renderedText") or content.get("text") or "").strip()
     return NormalizedEvent(
         raw_event=event,
         payload=payload,

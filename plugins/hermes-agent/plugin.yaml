@@ -6,6 +6,8 @@ description: >
   Official Hermes Agent adapter for GeWeHub. Consumes GeWeHub application SSE
   events and sends replies through the GeWeHub standard send API.
 author: GeWeHub
+provides_tools:
+  - gewehub_send_message
 requires_env:
   - name: GEWEHUB_BASE_URL
     description: "GeWeHub base URL, for example https://gewehub.example.com"

@@ -101,6 +101,7 @@ export type MessageNode = {
   items?: MessageNode[];
   quote?: MessageNode;
   senderName?: string;
+  senderWxid?: string;
   sourceMessageId?: string;
   sentAt?: string;
   rawType?: string;
@@ -121,6 +122,7 @@ export const messageNodeSchema: z.ZodType<MessageNode> = z.lazy(() =>
       items: z.array(messageNodeSchema).optional(),
       quote: messageNodeSchema.optional(),
       senderName: z.string().optional(),
+      senderWxid: z.string().optional(),
       sourceMessageId: z.string().optional(),
       sentAt: z.string().optional(),
       rawType: z.string().optional()
@@ -180,6 +182,7 @@ export const messageEnvelopeSchema = z
     content: messageNodeSchema,
     quote: messageNodeSchema.nullable(),
     renderedText: z.string(),
+    renderedMd: z.string().optional(),
     sentAt: z.string(),
     revokedAt: z.string().optional(),
     metadata: z.record(z.unknown()).optional()

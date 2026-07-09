@@ -28,6 +28,7 @@ interface MessagePanelProps {
   onRetryLocalSend: (message: MessageItem) => void;
   onDeleteLocalSend: (message: MessageItem) => void;
   onRequestRevoke: (message: MessageItem) => void;
+  onQuoteMessage: (message: MessageItem) => void;
   children: ReactNode;
 }
 
@@ -53,6 +54,7 @@ export function MessagePanel({
   onRetryLocalSend,
   onDeleteLocalSend,
   onRequestRevoke,
+  onQuoteMessage,
   children,
 }: MessagePanelProps) {
   const messageTimeline = buildMessageTimeline(visibleMessages);
@@ -135,6 +137,7 @@ export function MessagePanel({
                       onRetryLocalSend={onRetryLocalSend}
                       onDeleteLocalSend={onDeleteLocalSend}
                       onRequestRevoke={onRequestRevoke}
+                      onQuoteMessage={onQuoteMessage}
                     />
                   )}
                 </div>

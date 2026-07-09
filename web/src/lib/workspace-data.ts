@@ -55,6 +55,9 @@ export interface MessageItem {
     type: "text" | "image" | "file" | "voice" | "video" | "link" | "html";
     text: string;
     label: string;
+    mentions?: string[];
+    replyToMessageId?: string;
+    quotePreview?: MessageNode;
     status: "pending" | "failed";
     errorMessage?: string;
     sendRequestId?: string | null;

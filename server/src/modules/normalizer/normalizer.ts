@@ -1,6 +1,10 @@
 import { XMLParser } from "fast-xml-parser";
 import type { MessageEnvelope, MessageNode } from "@gewehub/contracts";
 import { normalizeWebhookPayload } from "../gewe/webhook-utils.js";
+import {
+  renderMessageMarkdown,
+  renderMessageSummary,
+} from "../messages/message-rendering.js";
 import { getMessageParser } from "./parsers/registry.js";
 import type { MessageParserContext } from "./parsers/types.js";
 
@@ -79,7 +83,7 @@ export function normalizeGewePayload(
       ? normalizeQuote(payload)
       : normalizeExtCommonQuote(payload);
 
-  return {
+  const envelope: MessageEnvelope = {
     schemaVersion: 1,
     eventType: "message.created",
     messageId: `msg_${asString(payload.newMsgId ?? payload.msgId) ?? "unknown"}`,
@@ -107,11 +111,15 @@ export function normalizeGewePayload(
     ),
     content,
     quote,
-    renderedText: renderNode(content, quote),
+    renderedText: renderMessageSummary(content, quote),
     sentAt,
     metadata: {
       gewe: buildGeweMetadata(payload),
     },
+  };
+  return {
+    ...envelope,
+    renderedMd: renderMessageMarkdown(envelope),
   };
 }
 
@@ -356,6 +364,8 @@ function attachQuoteMetadata(
   return {
     ...node,
     senderName: displayName ?? node.senderName,
+    senderWxid:
+      firstString(refermsg.chatusr ?? refermsg.fromusr) ?? node.senderWxid,
     sourceMessageId: sourceId ? `msg_${sourceId}` : node.sourceMessageId,
     sentAt: createTime ? secondsToIsoString(createTime) : node.sentAt,
   };
@@ -760,15 +770,6 @@ function extractSenderName(
   const match = pushContent.match(/^(.+?)\s:\s/);
   const name = match?.[1];
   return name?.trim() || undefined;
-}
-
-function renderNode(node: MessageNode, quote?: MessageNode | null): string {
-  if (quote) {
-    const quoteText = renderNode(quote);
-    return quoteText ? `${node.text}: ${quoteText}` : node.text;
-  }
-  if (node.type === "chat_record") return `[聊天记录] ${node.text}`;
-  return node.text;
 }
 
 function toIsoString(value: unknown): string {

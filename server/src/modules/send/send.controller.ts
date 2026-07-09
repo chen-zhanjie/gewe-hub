@@ -2,13 +2,14 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { BadRequestException, Body, Controller, Get, Headers, Optional, Param, Post, Query, UnauthorizedException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
-import { sendRequestSchema, type SendRequest } from "@gewehub/contracts";
+import { sendRequestSchema, type MessageNode, type SendRequest } from "@gewehub/contracts";
 import { z } from "zod";
 import { getBearerToken } from "../delivery/delivery-utils.js";
 import { GeweClientService } from "../gewe/gewe-client.service.js";
+import { normalizeWebhookPayload } from "../gewe/webhook-utils.js";
 import { HtmlPagesService, type ResolveHtmlForSendResult } from "../html-pages/html-pages.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
-import { mapSendRequestToGewe } from "./send-utils.js";
+import { mapSendRequestToGewe, type QuotedSendContext } from "./send-utils.js";
 
 const sendRequestStatusSchema = z.enum(["success", "failed", "in_progress", "pending", "sent", "unknown"]);
 const DEFAULT_TAKE = 100;
@@ -65,10 +66,7 @@ export class SendController {
     }
 
     const body = sendRequestSchema.parse(rawBody);
-    const conversation = await this.prisma.conversation.findUniqueOrThrow({
-      where: { id: body.conversationId },
-      include: { account: true }
-    });
+    const conversation = await this.resolveSendConversation(body.conversationId);
     const idempotencyKey = normalizeIdempotencyKey(body.idempotencyKey ?? body.requestId);
     if (app?.id && idempotencyKey) {
       const existing = await this.prisma.sendRequest.findFirst({
@@ -81,9 +79,10 @@ export class SendController {
       });
       if (existing) return sendResponse(existing);
     }
+    const quote = await this.resolveQuoteSendContext(body, conversation.id);
     const htmlInfo = body.type === "html" ? await this.resolveHtmlSend(body, conversation, app?.id ?? null) : undefined;
     const htmlPresentation = resolveHtmlPresentation(body, htmlInfo);
-    const requestPayload = buildRequestPayload(body, idempotencyKey, htmlInfo, htmlPresentation);
+    const requestPayload = buildRequestPayload(body, idempotencyKey, htmlInfo, htmlPresentation, quote);
     const mapped = mapSendRequestToGewe({
       appId: conversation.account.appId,
       peerWxid: conversation.peerWxid,
@@ -102,7 +101,8 @@ export class SendController {
       desc: htmlPresentation?.desc ?? body.desc,
       linkUrl: htmlInfo?.htmlPublicUrl ?? body.linkUrl,
       durationMs: body.durationMs,
-      mentions: body.mentions
+      mentions: body.mentions,
+      quote
     });
 
     const sendRequest = await this.prisma.sendRequest.create({
@@ -130,6 +130,97 @@ export class SendController {
       }
     });
     return sendResponse(sendRequest, htmlInfo);
+  }
+
+  private async resolveSendConversation(conversationId: string) {
+    try {
+      return await this.prisma.conversation.findUniqueOrThrow({
+        where: { id: conversationId },
+        include: { account: true }
+      });
+    } catch (error) {
+      if (!isPrismaNotFound(error) || !conversationId.startsWith("cvs_")) {
+        throw error;
+      }
+    }
+
+    const externalConversation = await this.findConversationByStandardId(conversationId);
+    if (externalConversation) return externalConversation;
+    return this.prisma.conversation.findUniqueOrThrow({
+      where: { id: conversationId },
+      include: { account: true }
+    });
+  }
+
+  private async findConversationByStandardId(conversationId: string) {
+    const body = conversationId.slice("cvs_".length);
+    const accounts = await this.prisma.wechatAccount.findMany({
+      select: {
+        id: true,
+        wxid: true
+      }
+    });
+    for (const account of accounts) {
+      const prefix = `${account.wxid}_`;
+      if (!body.startsWith(prefix)) continue;
+      const peerWxid = body.slice(prefix.length).trim();
+      if (!peerWxid) continue;
+      const conversation = await this.prisma.conversation.findUnique({
+        where: {
+          accountId_peerWxid: {
+            accountId: account.id,
+            peerWxid
+          }
+        },
+        include: { account: true }
+      });
+      if (conversation) return conversation;
+    }
+    return null;
+  }
+
+  private async resolveQuoteSendContext(body: SendRequest, conversationId: string): Promise<QuotedSendContext | undefined> {
+    const replyToMessageId = body.replyToMessageId?.trim();
+    if (!replyToMessageId) return undefined;
+    if (body.type !== "text") {
+      throw new BadRequestException("第一版引用发送仅支持文本回复");
+    }
+
+    const rawMessageId = replyToMessageId.startsWith("msg_") ? replyToMessageId.slice(4) : replyToMessageId;
+    const message = await this.prisma.message.findFirst({
+      where: {
+        conversationId,
+        OR: [
+          { messageId: replyToMessageId },
+          { rawMessageId }
+        ]
+      },
+      include: {
+        webhookEvent: {
+          select: { rawPayload: true }
+        }
+      }
+    });
+    if (!message) {
+      throw new BadRequestException("引用消息不存在或不属于当前会话");
+    }
+
+    const payload = asRecord(message.payload);
+    const sender = asRecord(payload?.sender);
+    const content = asMessageNode(payload?.content) ?? {
+      type: mapStandardMessageType(message.type),
+      text: message.renderedText ?? "[消息]"
+    };
+
+    return {
+      messageId: message.messageId,
+      rawMessageId: message.rawMessageId,
+      senderWxid: message.senderWxid,
+      senderName: asString(sender?.name) ?? asString(sender?.remark) ?? message.senderWxid,
+      sentAt: message.sentAt.toISOString(),
+      content,
+      rawContent: extractRawMessageContent(message.webhookEvent?.rawPayload)
+    };
   }
 
   private async resolveHtmlSend(
@@ -278,10 +369,15 @@ function buildRequestPayload(
   body: SendRequest,
   idempotencyKey: string | undefined,
   htmlInfo: ResolveHtmlForSendResult | undefined,
-  htmlPresentation: HtmlPresentation | undefined
+  htmlPresentation: HtmlPresentation | undefined,
+  quote: QuotedSendContext | undefined
 ): Record<string, unknown> {
   if (body.type !== "html") {
-    return idempotencyKey ? { ...body, idempotencyKey } : body;
+    return compactUndefined({
+      ...body,
+      idempotencyKey,
+      quote
+    });
   }
 
   return compactUndefined({
@@ -299,7 +395,8 @@ function buildRequestPayload(
     idempotencyKey,
     htmlPublicUrl: htmlInfo?.htmlPublicUrl,
     htmlPageId: htmlInfo?.htmlPageId,
-    htmlHosted: htmlInfo?.htmlHosted
+    htmlHosted: htmlInfo?.htmlHosted,
+    quote
   });
 }
 
@@ -344,6 +441,52 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function asMessageNode(value: unknown): MessageNode | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  if (!asString(record.type) || typeof record.text !== "string") return undefined;
+  return record as unknown as MessageNode;
+}
+
+function extractRawMessageContent(rawPayload: Prisma.JsonValue | undefined): string | undefined {
+  const payload = asRecord(rawPayload);
+  if (!payload) return undefined;
+  const normalized = normalizeWebhookPayload(payload);
+  const data = asRecord(payload.Data);
+  return (
+    asString(normalized.content) ??
+    asString(normalized.rawContent) ??
+    asString(payload.content) ??
+    asString(payload.Content) ??
+    asString(data?.Content) ??
+    asString(data?.content)
+  );
+}
+
+function mapStandardMessageType(type: string): MessageNode["type"] {
+  switch (type) {
+    case "text":
+    case "image":
+    case "voice":
+    case "video":
+    case "file":
+    case "emoji":
+    case "link":
+    case "html":
+    case "mini_program":
+    case "chat_record":
+    case "location":
+    case "card":
+    case "transfer":
+    case "red_packet":
+    case "system":
+    case "unsupported":
+      return type;
+    default:
+      return "unsupported";
+  }
 }
 
 function asBoolean(value: unknown): boolean | undefined {
@@ -609,4 +752,8 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
+}
+
+function isPrismaNotFound(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "P2025";
 }

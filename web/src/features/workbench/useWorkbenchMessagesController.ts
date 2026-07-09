@@ -1,4 +1,5 @@
 import type { QueryObserverResult } from "@tanstack/react-query";
+import type { MessageNode } from "@gewehub/contracts";
 import type { RefObject } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -36,9 +37,15 @@ interface WorkbenchMessagesControllerOptions {
   messageListRef: RefObject<HTMLDivElement | null>;
   loadOlderMessages: (conversationId: string, beforeMessageId: string) => Promise<BackendMessage[]>;
   refreshMessages: (conversationId: string) => Promise<BackendMessage[]>;
-  sendText: (conversationId: string, text: string) => Promise<{ id: string }>;
+  sendText: (conversationId: string, text: string, options?: SendTextOptions) => Promise<{ id: string }>;
   sendPayload: (conversationId: string, payload: LocalSendPayload) => Promise<{ id: string }>;
   fetchSendRequest: (sendRequestId: string) => Promise<BackendSendRequest>;
+}
+
+export interface SendTextOptions {
+  mentions?: string[];
+  replyToMessageId?: string;
+  quotePreview?: MessageNode;
 }
 
 export function useWorkbenchMessagesController({
@@ -160,11 +167,15 @@ export function useWorkbenchMessagesController({
     }
   }
 
-  async function handleSendText(text: string) {
+  async function handleSendText(text: string, options: SendTextOptions = {}) {
     const trimmedText = text.trim();
     if (!selectedConversation || !trimmedText) return false;
 
-    const localSend = createLocalTextSend(selectedConversation.id, trimmedText);
+    const localSend = createLocalTextSend(selectedConversation.id, trimmedText, {
+      mentions: options.mentions?.length ? options.mentions : undefined,
+      replyToMessageId: options.replyToMessageId,
+      quotePreview: options.quotePreview,
+    });
     updateLocalSends((currentSends) => [...currentSends, localSend]);
     scheduleScrollMessageListToBottom();
     void submitLocalSend(localSend);
@@ -235,7 +246,10 @@ export function useWorkbenchMessagesController({
     try {
       const response =
         localSend.type === "text"
-          ? await sendText(localSend.conversationId, localSend.text)
+          ? await sendText(localSend.conversationId, localSend.text, {
+              mentions: localSend.mentions,
+              replyToMessageId: localSend.replyToMessageId,
+            })
           : await sendPayload(localSend.conversationId, readLocalSendPayload(localSend));
       updateLocalSends((currentSends) =>
         currentSends.map((send) =>
@@ -313,6 +327,9 @@ export function useWorkbenchMessagesController({
       conversationId: localSend.conversationId,
       type: localSend.type,
       text: localSend.text,
+      mentions: localSend.mentions,
+      replyToMessageId: localSend.replyToMessageId,
+      quotePreview: localSend.quotePreview,
       label: localSend.label,
       fileName: localSend.sendPayload?.fileName,
       mimeType: localSend.sendPayload?.mimeType,

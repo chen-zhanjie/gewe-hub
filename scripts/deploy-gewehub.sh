@@ -111,5 +111,30 @@ ssh "$REMOTE_HOST" "cd '$REMOTE_DIR' && \
   for i in \$(seq 1 40); do curl -fsS http://127.0.0.1:${HOST_PORT}/api/health >/dev/null && exit 0; sleep 3; done; \
   docker logs --tail 120 gewehub; exit 1"
 
+ssh "$REMOTE_HOST" "set -e; cat > /opt/1panel/www/sites/gewehub.yunzxu.com/proxy/gewehub-sse.conf <<'NGINX'
+location = /api/apps/events {
+    proxy_pass http://127.0.0.1:${HOST_PORT};
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header REMOTE-HOST \$remote_addr;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_set_header X-Forwarded-Port \$server_port;
+    proxy_http_version 1.1;
+    proxy_set_header Connection \"\";
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_request_buffering off;
+    gzip off;
+    proxy_read_timeout 3700s;
+    proxy_send_timeout 3700s;
+    add_header X-Accel-Buffering no always;
+    add_header Cache-Control \"no-cache\" always;
+    add_header Strict-Transport-Security \"max-age=31536000\";
+}
+NGINX
+docker exec 1Panel-openresty-Qju3 nginx -t
+docker exec 1Panel-openresty-Qju3 nginx -s reload"
+
 curl -fsS "$PUBLIC_BASE_URL/api/health" >/dev/null
 printf 'GeWeHub deployed: %s\n' "$PUBLIC_BASE_URL"

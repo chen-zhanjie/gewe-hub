@@ -109,6 +109,174 @@ describe("SendController", () => {
     });
   });
 
+  it("支持使用标准消息里的 cvs 会话 ID 创建发送请求", async () => {
+    const notFound = Object.assign(new Error("conversation not found"), { code: "P2025" });
+    const prisma = {
+      hubApp: {
+        findUnique: vi.fn(async () => ({ id: "app_1", status: "active" }))
+      },
+      conversation: {
+        findUniqueOrThrow: vi.fn(async () => {
+          throw notFound;
+        }),
+        findUnique: vi.fn(async () => ({
+          id: "conversation_1",
+          accountId: "account_1",
+          peerWxid: "wxid_lnop8pc2ivre22",
+          account: {
+            appId: "wx_app",
+            wxid: "wxid_mngndogkpyms22"
+          }
+        }))
+      },
+      wechatAccount: {
+        findMany: vi.fn(async () => [{ id: "account_1", wxid: "wxid_mngndogkpyms22" }])
+      },
+      sendRequest: {
+        findFirst: vi.fn(async () => null),
+        create: vi.fn(async () => ({
+          id: "send_1",
+          status: "pending"
+        }))
+      },
+      outboxTask: {
+        create: vi.fn(async () => ({ id: "task_1" }))
+      }
+    };
+    const controller = new SendController(prisma as never, {} as never);
+
+    const result = await controller.send("Bearer app_token", {
+      conversationId: "cvs_wxid_mngndogkpyms22_wxid_lnop8pc2ivre22",
+      type: "text",
+      text: "hello"
+    });
+
+    expect(result).toEqual({ id: "send_1", status: "pending" });
+    expect(prisma.wechatAccount.findMany).toHaveBeenCalledWith({
+      select: {
+        id: true,
+        wxid: true
+      }
+    });
+    expect(prisma.conversation.findUnique).toHaveBeenCalledWith({
+      where: {
+        accountId_peerWxid: {
+          accountId: "account_1",
+          peerWxid: "wxid_lnop8pc2ivre22"
+        }
+      },
+      include: { account: true }
+    });
+    expect(prisma.sendRequest.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        accountId: "account_1",
+        conversationId: "conversation_1",
+        type: "text",
+        geweRequest: {
+          path: "/gewe/v2/api/message/postText",
+          body: {
+            appId: "wx_app",
+            toWxid: "wxid_lnop8pc2ivre22",
+            content: "hello"
+          }
+        }
+      })
+    });
+  });
+
+  it("创建文本引用发送请求时查同会话原消息并生成 GeWe appmsg", async () => {
+    const rawContent = "<msg><appmsg><title>mapping_app.txt</title><type>6</type></appmsg></msg>";
+    const prisma = {
+      hubApp: {
+        findUnique: vi.fn()
+      },
+      conversation: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "conversation_1",
+          accountId: "account_1",
+          peerWxid: "wxid_target",
+          account: {
+            appId: "wx_app",
+            wxid: "wxid_bot"
+          }
+        }))
+      },
+      message: {
+        findFirst: vi.fn(async () => ({
+          messageId: "msg_478238581151300365",
+          rawMessageId: "478238581151300365",
+          senderWxid: "wxid_sender",
+          sentAt: new Date("2026-07-09T10:11:12.000Z"),
+          payload: {
+            sender: { wxid: "wxid_sender", name: "陈可乐" },
+            content: {
+              type: "file",
+              text: "[文件] mapping_app.txt",
+              media: { status: "ready", fileName: "mapping_app.txt" }
+            }
+          },
+          webhookEvent: {
+            rawPayload: {
+              Data: {
+                Content: rawContent
+              }
+            }
+          }
+        }))
+      },
+      sendRequest: {
+        create: vi.fn(async () => ({
+          id: "send_quote",
+          status: "pending"
+        }))
+      },
+      outboxTask: {
+        create: vi.fn(async () => ({ id: "task_quote" }))
+      }
+    };
+    const controller = new SendController(prisma as never, {} as never);
+
+    await controller.send(undefined, {
+      conversationId: "conversation_1",
+      type: "text",
+      text: "这个我看过了",
+      replyToMessageId: "msg_478238581151300365"
+    });
+
+    expect(prisma.message.findFirst).toHaveBeenCalledWith({
+      where: {
+        conversationId: "conversation_1",
+        OR: [
+          { messageId: "msg_478238581151300365" },
+          { rawMessageId: "478238581151300365" }
+        ]
+      },
+      include: {
+        webhookEvent: {
+          select: { rawPayload: true }
+        }
+      }
+    });
+    expect(prisma.sendRequest.create).toHaveBeenCalled();
+    const createArg = (prisma.sendRequest.create.mock.calls as unknown as Array<[{
+      data: {
+        requestPayload: unknown;
+        geweRequest: { path: string; body: { appmsg: string } };
+      };
+    }]>)[0][0];
+    expect(createArg.data.requestPayload).toMatchObject({
+      replyToMessageId: "msg_478238581151300365",
+      quote: {
+        messageId: "msg_478238581151300365",
+        rawMessageId: "478238581151300365",
+        senderName: "陈可乐",
+        rawContent
+      }
+    });
+    expect(createArg.data.geweRequest.path).toBe("/gewe/v2/api/message/postAppMsg");
+    expect(createArg.data.geweRequest.body.appmsg).toContain("&lt;msg&gt;&lt;appmsg&gt;&lt;title&gt;mapping_app.txt");
+  });
+
   it("应用发送请求携带幂等键时复用已有发送记录，不重复排入 outbox", async () => {
     const prisma = {
       hubApp: {

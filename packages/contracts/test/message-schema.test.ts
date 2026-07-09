@@ -42,6 +42,8 @@ describe("标准消息契约", () => {
       content: { type: "text", text: "@机器人 看看这个" },
       quote: null,
       renderedText: "@机器人 看看这个",
+      renderedMd:
+        "[上下文]\n消息ID: msg_9154866412345678\n\n[正文]\n@机器人 看看这个",
       sentAt: "2026-07-05T20:49:00.000+08:00",
       metadata: {
         debounceMs: 2000,
@@ -57,6 +59,30 @@ describe("标准消息契约", () => {
     expect(() =>
       messageNodeSchema.parse({ type: "photo", text: "[图片]" })
     ).toThrow();
+  });
+
+  it("接受合并转发条目的真实 senderWxid，但仍不要求每个条目都有 wxid", () => {
+    const parsed = messageNodeSchema.parse({
+      type: "chat_record",
+      text: "客户群的聊天记录",
+      items: [
+        {
+          type: "text",
+          text: "收到",
+          senderName: "陈可乐",
+          senderWxid: "wxid_abc",
+          sourceMessageId: "msg_1"
+        },
+        {
+          type: "text",
+          text: "只有昵称",
+          senderName: "张三"
+        }
+      ]
+    });
+
+    expect(parsed.items?.[0]?.senderWxid).toBe("wxid_abc");
+    expect(parsed.items?.[1]?.senderWxid).toBeUndefined();
   });
 
   it("接受 message.revoked 事件最小载荷", () => {
@@ -88,10 +114,12 @@ describe("标准消息契约", () => {
         conversationId: "cvs_1",
         type: "text",
         text: "你好",
+        mentions: ["wxid_a", "notify@all"],
+        replyToMessageId: "msg_9154866412345678",
         idempotencyKey: "idem_1",
         requestId: "req_1"
-      }).idempotencyKey
-    ).toBe("idem_1");
+      }).replyToMessageId
+    ).toBe("msg_9154866412345678");
     expect(
       sendRequestSchema.parse({
         conversationId: "cvs_1",

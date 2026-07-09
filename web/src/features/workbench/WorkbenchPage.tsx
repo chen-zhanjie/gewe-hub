@@ -26,13 +26,12 @@ import { useWorkbenchComposerController } from "@/features/workbench/useWorkbenc
 import { useWorkbenchConversationSurfaceController } from "@/features/workbench/useWorkbenchConversationSurfaceController";
 import { useWorkbenchMessageRevokeController } from "@/features/workbench/useWorkbenchMessageRevokeController";
 import { useWorkbenchMessagesController } from "@/features/workbench/useWorkbenchMessagesController";
+import { filterConversationsForAccount } from "@/features/workbench/workbench-conversation-filter";
 import { readStoredSelectedAccountId, storeSelectedAccountId } from "@/features/workbench/workbench-selection-storage";
 import { readQueryError } from "@/features/workbench/workbench-helpers";
 import {
   mapAccountSummary,
   mapConversationSummary,
-  type AccountSummary,
-  type ConversationSummary,
   type MessageItem,
 } from "@/lib/workspace-data";
 
@@ -59,6 +58,7 @@ export function WorkbenchPage({
   const [debugMessageId, setDebugMessageId] = useState<string | null>(null);
   const [managementConversationId, setManagementConversationId] = useState<string | null>(null);
   const [contactProfileWxid, setContactProfileWxid] = useState<string | null>(null);
+  const [quotedMessage, setQuotedMessage] = useState<MessageItem | null>(null);
   const [eventSourceStatus, setEventSourceStatus] = useState<AdminEventSourceStatusDetail["status"]>("connected");
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const workspaceQuery = useWorkbenchWorkspaceQuery();
@@ -209,15 +209,10 @@ export function WorkbenchPage({
     setSelectedConversationId(initialConversationId ?? null);
   }, [initialAccountId, initialConversationId]);
 
-  const composer = useWorkbenchComposerController({
-    selectedConversation,
-    onSendText: messageState.handleSendText,
-    onSendPayload: messageState.handleSendPayload,
-    parseLinkPreview: parseWorkbenchLinkPreview,
-    createLocalSendPlaceholder: messageState.createLocalSendPlaceholder,
-    submitLocalSendPayload: messageState.submitLocalSendPayload,
-    failLocalSend: messageState.failLocalSend,
-  });
+  useEffect(() => {
+    setQuotedMessage(null);
+  }, [effectiveConversationId]);
+
   const conversationSurface = useWorkbenchConversationSurfaceController({
     selectedConversation,
     apps,
@@ -225,6 +220,18 @@ export function WorkbenchPage({
     refreshGroupMembers,
     searchGroupMembers,
     loadMoreGroupMembers,
+  });
+  const composer = useWorkbenchComposerController({
+    selectedConversation,
+    quotedMessage,
+    groupMembers: conversationSurface.groupMembersQuery.data?.members ?? [],
+    onClearQuotedMessage: () => setQuotedMessage(null),
+    onSendText: messageState.handleSendText,
+    onSendPayload: messageState.handleSendPayload,
+    parseLinkPreview: parseWorkbenchLinkPreview,
+    createLocalSendPlaceholder: messageState.createLocalSendPlaceholder,
+    submitLocalSendPayload: messageState.submitLocalSendPayload,
+    failLocalSend: messageState.failLocalSend,
   });
   const managementConversationSurface = useWorkbenchConversationSurfaceController({
     selectedConversation: managementConversation,
@@ -317,6 +324,7 @@ export function WorkbenchPage({
           onRetryLocalSend={messageState.retryLocalSend}
           onDeleteLocalSend={messageState.deleteLocalSend}
           onRequestRevoke={messageRevoke.requestRevokeMessage}
+          onQuoteMessage={setQuotedMessage}
         >
           <WorkbenchComposerOutlet selected={Boolean(selectedConversation)} composer={composer} />
         </MessagePanel>
@@ -385,12 +393,4 @@ export function WorkbenchPage({
       </div>
     </div>
   );
-}
-
-function filterConversationsForAccount(conversations: ConversationSummary[], accountId: AccountSummary["id"] | null) {
-  return conversations.filter((conversation) => {
-    if (conversation.raw.isHidden) return false;
-    if (!accountId) return true;
-    return !conversation.raw.accountId || conversation.raw.accountId === accountId;
-  });
 }

@@ -1,3 +1,4 @@
+import type { MessageNode } from "@gewehub/contracts";
 import type { ClipboardEvent, DragEvent } from "react";
 import { useRef, useState } from "react";
 import type { PendingAttachment } from "@/features/workbench/MessageComposer";
@@ -12,9 +13,9 @@ import {
   readVideoFrameThumbnailPayload,
   type ThumbnailPayload,
 } from "@/features/workbench/message-media-utils";
-import type { WorkbenchMediaSendType } from "@/features/workbench/queries";
+import type { WorkbenchGroupMember, WorkbenchMediaSendType } from "@/features/workbench/queries";
 import { useVoiceRecorder } from "@/features/workbench/useVoiceRecorder";
-import type { ConversationSummary, LocalSendPayload } from "@/lib/workspace-data";
+import type { ConversationSummary, LocalSendPayload, MessageItem } from "@/lib/workspace-data";
 
 type MediaSendType = WorkbenchMediaSendType;
 
@@ -43,7 +44,17 @@ interface VideoDraft {
 
 interface WorkbenchComposerControllerOptions {
   selectedConversation?: ConversationSummary;
-  onSendText: (text: string) => Promise<boolean>;
+  quotedMessage: MessageItem | null;
+  groupMembers: WorkbenchGroupMember[];
+  onClearQuotedMessage: () => void;
+  onSendText: (
+    text: string,
+    options?: {
+      mentions?: string[];
+      replyToMessageId?: string;
+      quotePreview?: MessageNode;
+    },
+  ) => Promise<boolean>;
   onSendPayload: (payload: LocalSendPayload) => boolean;
   parseLinkPreview: (linkUrl: string) => Promise<{ title?: string; desc?: string; linkUrl: string; thumbUrl?: string }>;
   createLocalSendPlaceholder: (
@@ -55,6 +66,9 @@ interface WorkbenchComposerControllerOptions {
 
 export function useWorkbenchComposerController({
   selectedConversation,
+  quotedMessage,
+  groupMembers,
+  onClearQuotedMessage,
   onSendText,
   onSendPayload,
   parseLinkPreview,
@@ -89,6 +103,7 @@ export function useWorkbenchComposerController({
   const [sending, setSending] = useState(false);
   const [parsingLink, setParsingLink] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [selectedMentionWxids, setSelectedMentionWxids] = useState<string[]>([]);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -110,7 +125,23 @@ export function useWorkbenchComposerController({
 
     setSendError(null);
     setMessageText("");
-    await onSendText(text);
+    const sent = await onSendText(text, {
+      mentions: selectedMentionWxids,
+      replyToMessageId: quotedMessage?.messageId,
+      quotePreview: quotedMessage ? buildQuotePreview(quotedMessage) : undefined,
+    });
+    if (!sent) {
+      setMessageText(text);
+      return;
+    }
+    setSelectedMentionWxids([]);
+    onClearQuotedMessage();
+  }
+
+  function toggleMention(wxid: string) {
+    setSelectedMentionWxids((current) =>
+      current.includes(wxid) ? current.filter((item) => item !== wxid) : [...current, wxid],
+    );
   }
 
   async function handleSendMedia(file: File | undefined, type: MediaSendType, options?: { durationMs?: number }) {
@@ -459,6 +490,9 @@ function defaultHtmlTitle(draft: HtmlDraft): string {
     sending,
     parsingLink,
     pendingAttachments,
+    mentionMembers: selectedConversation?.type === "group" ? groupMembers : [],
+    selectedMentionWxids,
+    quotedMessageLabel: quotedMessage ? formatQuotedMessageLabel(quotedMessage) : null,
     attachmentDragActive,
     sendError,
     voiceRecording,
@@ -476,6 +510,8 @@ function defaultHtmlTitle(draft: HtmlDraft): string {
     handleParseLink,
     handleSendVideo,
     removePendingAttachment,
+    toggleMention,
+    clearQuotedMessage: onClearQuotedMessage,
     handleSendPendingAttachments,
     handleAttachmentPaste,
     handleAttachmentDragEnter,
@@ -484,4 +520,18 @@ function defaultHtmlTitle(draft: HtmlDraft): string {
     handleAttachmentDrop,
     handleSendText,
   };
+}
+
+function buildQuotePreview(message: MessageItem): MessageNode {
+  return {
+    ...message.content,
+    quote: undefined,
+    senderName: message.senderName,
+    sourceMessageId: message.messageId,
+    sentAt: message.sentAtIso,
+  };
+}
+
+function formatQuotedMessageLabel(message: MessageItem): string {
+  return `${message.content.text || message.messageId}`;
 }

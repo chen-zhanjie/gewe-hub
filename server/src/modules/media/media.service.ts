@@ -16,6 +16,10 @@ import {
   type DownloadMediaParams,
 } from "../gewe/gewe-client.service.js";
 import { normalizeWebhookPayload } from "../gewe/webhook-utils.js";
+import {
+  renderMessageMarkdown,
+  renderMessageSummary,
+} from "../messages/message-rendering.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { AudioTranscodeService } from "./audio-transcode.service.js";
 import { signFileUrl, signOutboundFileUrl } from "./media-url.js";
@@ -1040,7 +1044,13 @@ function updateNodeMedia(
     ...payload,
     content,
     quote,
-    renderedText: renderEnvelopeText(content, quote),
+    renderedText: renderMessageSummary(content, quote),
+    renderedMd: renderMessageMarkdown({
+      ...payload,
+      content,
+      quote,
+      renderedText: renderMessageSummary(content, quote),
+    }),
   };
 }
 
@@ -1089,18 +1099,6 @@ function updateNodeMediaAtPath(
     };
   }
   return next;
-}
-
-function renderEnvelopeText(content: MessageNode, quote?: MessageNode | null): string {
-  const contentText = renderNodeText(content);
-  if (!quote) return contentText;
-  const quoteText = renderNodeText(quote);
-  return quoteText ? `${contentText}: ${quoteText}` : contentText;
-}
-
-function renderNodeText(node: MessageNode): string {
-  if (node.type === "chat_record") return `[聊天记录] ${node.text}`;
-  return node.text;
 }
 
 function failedMediaText(node: MessageNode): string {

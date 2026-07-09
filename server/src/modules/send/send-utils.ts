@@ -1,4 +1,8 @@
 import type { MessageEnvelope, MessageNode } from "@gewehub/contracts";
+import {
+  renderMessageMarkdown,
+  renderMessageSummary,
+} from "../messages/message-rendering.js";
 
 export interface SendMappingInput {
   appId: string;
@@ -19,10 +23,21 @@ export interface SendMappingInput {
   linkUrl?: string;
   durationMs?: number;
   mentions?: string[];
+  quote?: QuotedSendContext;
 }
 
 export function mapSendRequestToGewe(input: SendMappingInput) {
   if (input.type === "text") {
+    if (input.quote) {
+      return {
+        path: "/gewe/v2/api/message/postAppMsg",
+        body: {
+          appId: input.appId,
+          toWxid: input.peerWxid,
+          appmsg: buildQuoteAppMsg(input.text ?? "", input.quote, input.peerWxid)
+        }
+      };
+    }
     return {
       path: "/gewe/v2/api/message/postText",
       body: compactRecord({
@@ -140,6 +155,7 @@ export interface LocalHubSendInput {
   newMsgId: string;
   createTime: string;
   content?: MessageNode;
+  quote?: MessageNode | null;
 }
 
 export function buildLocalHubSendMessage(input: LocalHubSendInput) {
@@ -148,6 +164,7 @@ export function buildLocalHubSendMessage(input: LocalHubSendInput) {
     type: "text" as const,
     text: input.text
   };
+  const renderedText = renderMessageSummary(content, input.quote);
   const payload: MessageEnvelope = {
     schemaVersion: 1,
     eventType: "message.created",
@@ -169,10 +186,11 @@ export function buildLocalHubSendMessage(input: LocalHubSendInput) {
     },
     mentions: [],
     content,
-    quote: null,
-    renderedText: input.text,
+    quote: input.quote ?? null,
+    renderedText,
     sentAt
   };
+  payload.renderedMd = renderMessageMarkdown(payload);
 
   return {
     source: "hub_send" as const,
@@ -186,9 +204,136 @@ export function buildLocalHubSendMessage(input: LocalHubSendInput) {
     isAtMe: false,
     sentAt: new Date(sentAt),
     payload,
-    renderedText: input.text,
+    renderedText: payload.renderedText,
     payloadVersion: 1
   };
+}
+
+export interface QuotedSendContext {
+  messageId: string;
+  rawMessageId?: string | null;
+  senderWxid?: string | null;
+  senderName?: string | null;
+  sentAt?: string | null;
+  content: MessageNode;
+  rawContent?: string | null;
+}
+
+function buildQuoteAppMsg(text: string, quote: QuotedSendContext, conversationWxid: string): string {
+  const referType = quoteReferType(quote.content, quote.rawContent);
+  const rawMessageId = quote.rawMessageId || stripMessagePrefix(quote.messageId);
+  const displayName = quote.senderName || quote.senderWxid || "";
+  const referContent = quote.rawContent || fallbackReferContent(quote.content);
+  const createTime = quote.sentAt ? Math.floor(new Date(quote.sentAt).getTime() / 1000) : undefined;
+  return [
+    '<appmsg appid="" sdkver="0">',
+    `  <title>${escapeXml(text)}</title>`,
+    "  <des />",
+    "  <action />",
+    "  <type>57</type>",
+    "  <showtype>0</showtype>",
+    "  <soundtype>0</soundtype>",
+    "  <mediatagname />",
+    "  <messageext />",
+    "  <messageaction />",
+    "  <content />",
+    "  <contentattr>0</contentattr>",
+    "  <url />",
+    "  <lowurl />",
+    "  <dataurl />",
+    "  <lowdataurl />",
+    "  <appattach>",
+    "    <totallen>0</totallen>",
+    "    <attachid />",
+    "    <emoticonmd5 />",
+    "    <fileext />",
+    "  </appattach>",
+    "  <extinfo />",
+    "  <sourceusername />",
+    "  <sourcedisplayname />",
+    "  <thumburl />",
+    "  <md5 />",
+    "  <statextstr />",
+    "  <refermsg>",
+    `    <type>${escapeXml(referType)}</type>`,
+    `    <svrid>${escapeXml(rawMessageId)}</svrid>`,
+    `    <fromusr>${escapeXml(conversationWxid)}</fromusr>`,
+    quote.senderWxid ? `    <chatusr>${escapeXml(quote.senderWxid)}</chatusr>` : undefined,
+    `    <displayname>${escapeXml(displayName)}</displayname>`,
+    createTime ? `    <createtime>${createTime}</createtime>` : undefined,
+    `    <content>${escapeXml(referContent)}</content>`,
+    "  </refermsg>",
+    "</appmsg>"
+  ].filter((line): line is string => Boolean(line)).join("\n");
+}
+
+function quoteReferType(content: MessageNode, rawContent?: string | null): string {
+  if (rawContent && /<appmsg[\s>]/.test(rawContent)) return "49";
+  switch (content.type) {
+    case "text":
+      return "1";
+    case "image":
+      return "3";
+    case "voice":
+      return "34";
+    case "card":
+      return "42";
+    case "video":
+      return "43";
+    case "emoji":
+      return "47";
+    case "location":
+      return "48";
+    case "file":
+    case "link":
+    case "html":
+    case "mini_program":
+    case "chat_record":
+    case "transfer":
+    case "red_packet":
+      return "49";
+    default:
+      return "1";
+  }
+}
+
+function fallbackReferContent(content: MessageNode): string {
+  const appType = fallbackAppMsgType(content);
+  if (!appType) return content.text || "[消息]";
+  return `<msg><appmsg><title>${escapeXml(content.text || "[消息]")}</title><type>${appType}</type></appmsg></msg>`;
+}
+
+function fallbackAppMsgType(content: MessageNode): string | undefined {
+  switch (content.type) {
+    case "file":
+      return "6";
+    case "link":
+    case "html":
+      return "5";
+    case "mini_program":
+      return "33";
+    case "chat_record":
+      return "19";
+    case "transfer":
+      return "2000";
+    case "red_packet":
+      return "2001";
+    default:
+      return undefined;
+  }
+}
+
+function stripMessagePrefix(messageId: string): string {
+  return messageId.startsWith("msg_") ? messageId.slice(4) : messageId;
+}
+
+function escapeXml(value: string): string {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 function normalizeGeweCreateTimeMs(createTime: string): number {

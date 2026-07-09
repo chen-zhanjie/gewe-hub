@@ -80,8 +80,23 @@ class GeWeHubClient:
             return {"ok": True, "acked": 0}
         return await self._request("POST", "/api/apps/events/ack", json={"eventIds": clean})
 
-    async def send_text(self, conversation_id: str, text: str, idempotency_key: str | None = None) -> dict[str, Any]:
+    async def send_message_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._request("POST", "/api/send", json=payload)
+
+    async def send_text(
+        self,
+        conversation_id: str,
+        text: str,
+        idempotency_key: str | None = None,
+        mentions: list[str] | None = None,
+        reply_to_message_id: str | None = None,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {"conversationId": str(conversation_id), "type": "text", "text": text}
+        clean_mentions = [str(item).strip() for item in mentions or [] if str(item or "").strip()]
+        if clean_mentions:
+            payload["mentions"] = clean_mentions
+        if reply_to_message_id:
+            payload["replyToMessageId"] = str(reply_to_message_id)
         if idempotency_key:
             payload["idempotencyKey"] = idempotency_key
         return await self._request(

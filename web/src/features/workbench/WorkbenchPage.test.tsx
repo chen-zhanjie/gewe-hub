@@ -375,6 +375,104 @@ describe("WorkbenchPage", () => {
     ).toHaveLength(2);
   });
 
+  it("引用消息并选择群成员后发送文本时携带 replyToMessageId 和 mentions", async () => {
+    const fetchMock = mockFetch({
+      "/api/accounts": [
+        {
+          id: "acc_1",
+          wxid: "wxid_bot",
+          nickname: "客服主号",
+          onlineStatus: "online",
+        },
+      ],
+      "/api/conversations": [
+        {
+          id: "conv_1",
+          accountId: "acc_1",
+          peerWxid: "room_alpha@chatroom",
+          type: "group",
+          platformRemark: "Alpha 产品群",
+          lastMessageText: "需要确认的文件",
+          lastMessageAt: "2026-07-06T07:16:37.000Z",
+          status: "active",
+        },
+      ],
+      "/api/conversations/conv_1/messages?take=50": [
+        {
+          id: "row_file",
+          messageId: "msg_file",
+          senderWxid: "wxid_sender",
+          isSelf: false,
+          status: "normal",
+          sentAt: "2026-07-06T07:16:37.000Z",
+          renderedText: "[文件] mapping_app.txt",
+          payload: {
+            sender: { wxid: "wxid_sender", name: "陈可乐", isOwner: false },
+            content: {
+              type: "file",
+              text: "[文件] mapping_app.txt",
+              media: { status: "ready", fileName: "mapping_app.txt" },
+            },
+          },
+          webhookEvent: { rawPayload: { TypeName: "AddMsg" } },
+          deliveries: [],
+        },
+      ],
+      "/api/groups?accountId=acc_1&q=room_alpha%40chatroom": [
+        {
+          id: "group_1",
+          accountId: "acc_1",
+          wxid: "room_alpha@chatroom",
+          name: "Alpha 产品群",
+          status: "active",
+        },
+      ],
+      "/api/groups/group_1/members?take=50&skip=0": {
+        items: [
+          {
+            id: "member_kele",
+            wxid: "wxid_kele",
+            nickname: "陈可乐",
+            displayName: "可乐",
+            platformRemark: "负责人",
+            status: "active",
+          },
+        ],
+        total: 1,
+        take: 50,
+        skip: 0,
+        nextSkip: 0,
+        hasMore: false,
+      },
+      "/api/send": { id: "send_quote", status: "pending" },
+    });
+
+    renderWorkbenchPage();
+
+    const messageRegion = screen.getByLabelText("消息区");
+    expect(await within(messageRegion).findByText("mapping_app.txt")).toBeInTheDocument();
+    fireEvent.click(within(messageRegion).getByRole("button", { name: "引用消息 msg_file" }));
+    expect(await screen.findByText("引用 [文件] mapping_app.txt")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "@负责人(可乐)" }));
+
+    const input = screen.getByPlaceholderText("输入消息，Enter 发送，Shift+Enter 换行");
+    fireEvent.change(input, { target: { value: "@负责人 这个我看过了" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const sendCall = fetchMock.mock.calls.find(([input]) => String(input).replace("http://localhost", "") === "/api/send");
+      expect(sendCall).toBeTruthy();
+      expect(JSON.parse(String(sendCall?.[1]?.body))).toEqual({
+        conversationId: "conv_1",
+        type: "text",
+        text: "@负责人 这个我看过了",
+        mentions: ["wxid_kele"],
+        replyToMessageId: "msg_file",
+      });
+    });
+    expect(screen.queryByText("引用 [文件] mapping_app.txt")).not.toBeInTheDocument();
+  });
+
   it("发送文本后立即插入本地发送中气泡并清空输入", async () => {
     let resolveSend: (value: Response) => void = () => undefined;
     const sendPromise = new Promise<Response>((resolve) => {

@@ -360,6 +360,13 @@ describe("GeWe 样本标准化", () => {
       senderName: "🍞",
       sourceMessageId: "msg_374352950798606728",
     });
+    expect(result?.renderedMd).toContain(
+      "1. 大哈 2026-07-06 10:00（消息ID: msg_5034922477837409496）：\n" +
+        "   > 引用 🍞（消息ID: msg_374352950798606728）：\n" +
+        "   > 你偷听梁逸峰 不对 梁文峰开会了？\n" +
+        "\n" +
+        "   他们不是发公告了",
+    );
   });
 
   it("CHAT_RECORD 链接条目用标题渲染并保留 streamweburl", () => {
@@ -578,6 +585,79 @@ describe("GeWe 样本标准化", () => {
       { name: "陳可乐", wxid: "wxid_bot", isMe: true, resolved: true },
       { name: "云知序", wxid: "wxid_other", isMe: false, resolved: true },
     ]);
+  });
+
+  it("生成给 AI 使用的 renderedMd 上下文头，并区分被@对象和可@对象", () => {
+    const result = normalizeGewePayload(
+      addMsgPayload({
+        MsgType: 1,
+        NewMsgId: "5004026754542010999",
+        FromUserName: { string: "48315023241@chatroom" },
+        PushContent: "陈可乐在群聊中@了你",
+        MsgSource: {
+          string:
+            "<msgsource><atuserlist><![CDATA[wxid_bot,wxid_other]]></atuserlist></msgsource>",
+        },
+        Content: {
+          string: "wxid_sender:\n@陳可乐\u2005@云知序\u2005多人艾特测试",
+        },
+      }),
+    );
+
+    expect(result?.renderedText).toBe("@陳可乐\u2005@云知序\u2005多人艾特测试");
+    expect(result?.renderedMd).toContain("[上下文]");
+    expect(result?.renderedMd).toContain("消息ID: msg_5004026754542010999");
+    expect(result?.renderedMd).toContain(
+      "会话: 48315023241@chatroom (group, cvs_wxid_bot_48315023241@chatroom)",
+    );
+    expect(result?.renderedMd).toContain("时间: 2026-07-06 11:29");
+    expect(result?.renderedMd).toContain("发送者: wxid_sender <wxid_sender>");
+    expect(result?.renderedMd).toContain(
+      "被@对象: 陳可乐 <wxid_bot>, 云知序 <wxid_other>",
+    );
+    expect(result?.renderedMd).toContain(
+      "可@对象: wxid_sender <wxid_sender>, 陳可乐 <wxid_bot>, 云知序 <wxid_other>",
+    );
+    expect(result?.renderedMd).toContain("[正文]\n@陳可乐\u2005@云知序\u2005多人艾特测试");
+  });
+
+  it("renderedMd 渲染引用时保留消息ID但不伪造引用发送者 wxid", () => {
+    const result = normalizeGewePayload(
+      addMsgPayload({
+        MsgType: 49,
+        PushContent: "引用",
+        Content: {
+          string:
+            "<msg><appmsg><title>引用</title><type>57</type><refermsg><type>49</type><svrid>478238581151300365</svrid><displayname>陈可乐</displayname><content>&lt;msg&gt;&lt;appmsg&gt;&lt;title&gt;mapping_app.txt&lt;/title&gt;&lt;type&gt;6&lt;/type&gt;&lt;appattach&gt;&lt;totallen&gt;2732&lt;/totallen&gt;&lt;attachid&gt;@cdn_abc&lt;/attachid&gt;&lt;/appattach&gt;&lt;/appmsg&gt;&lt;/msg&gt;</content></refermsg></appmsg></msg>",
+        },
+      }),
+    );
+
+    expect(result?.renderedMd).toContain("[引用]");
+    expect(result?.renderedMd).toContain(
+      "> 引用 陈可乐（消息ID: msg_478238581151300365）：",
+    );
+    expect(result?.renderedMd).not.toContain("陈可乐 <");
+    expect(result?.renderedMd).toContain("[文件] mapping_app.txt");
+  });
+
+  it("renderedMd 渲染合并转发条目时只输出真实 senderWxid 和 sourceMessageId", () => {
+    const result = normalizeGewePayload(
+      addMsgPayload({
+        MsgType: 49,
+        Content: {
+          string:
+            '<msg><appmsg><title>客户群的聊天记录</title><type>19</type><recorditem><![CDATA[<recordinfo><datalist><dataitem datatype="1"><datadesc>第一条</datadesc><sourcename>张三</sourcename><srcMsgCreateTime>1783303226</srcMsgCreateTime><fromnewmsgid>5034922477837409496</fromnewmsgid></dataitem><dataitem datatype="1"><datadesc>第二条</datadesc><sourcename>wxid_lisi</sourcename></dataitem></datalist></recordinfo>]]></recorditem></appmsg></msg>',
+        },
+      }),
+    );
+
+    expect(result?.renderedMd).toContain("[聊天记录] 客户群的聊天记录");
+    expect(result?.renderedMd).toContain("1. 张三 2026-07-06 10:00（消息ID: msg_5034922477837409496）：");
+    expect(result?.renderedMd).toContain("   第一条");
+    expect(result?.renderedMd).toContain("2. wxid_lisi：");
+    expect(result?.renderedMd).not.toContain("张三 <");
+    expect(result?.renderedMd).not.toContain("wxid_lisi <wxid_lisi>");
   });
 
   it("群聊引用消息外层 MsgSource atuserlist 包含当前账号时标记 @ 我", () => {

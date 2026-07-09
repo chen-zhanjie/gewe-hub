@@ -35,6 +35,7 @@ export const sendRequestSchema = z
     htmlFileName: z.string().optional(),
     durationMs: z.number().int().positive().optional(),
     mentions: z.array(z.string()).optional(),
+    replyToMessageId: z.string().optional(),
     requestId: z.string().optional(),
     idempotencyKey: z.string().optional()
   })

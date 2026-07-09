@@ -1,5 +1,9 @@
 import type { MessageEnvelope, MessageNode } from "@gewehub/contracts";
 import type { Prisma } from "@prisma/client";
+import {
+  renderMessageMarkdown,
+  renderMessageSummary,
+} from "./message-rendering.js";
 
 type MessageReader = {
   message: {
@@ -113,10 +117,15 @@ export async function hydrateMessageReferencesFromLocalMessages(
       )
     : envelopeWithQuote.quote;
 
-  return {
+  const nextEnvelope = {
     ...envelopeWithQuote,
     content,
-    quote
+    quote,
+    renderedText: renderMessageSummary(content, quote)
+  };
+  return {
+    ...nextEnvelope,
+    renderedMd: renderMessageMarkdown(nextEnvelope)
   };
 }
 
@@ -217,6 +226,7 @@ function mergeNodeFromReferencedPayload(
   return {
     ...referencedContent,
     senderName: currentNode.senderName ?? referencedContent.senderName,
+    senderWxid: currentNode.senderWxid ?? referencedContent.senderWxid,
     sourceMessageId:
       currentNode.sourceMessageId ?? referencedContent.sourceMessageId,
     sentAt: currentNode.sentAt ?? referencedContent.sentAt,
@@ -234,14 +244,15 @@ export function mergeQuoteFromReferencedPayload(
   const mergedQuote: MessageNode = {
     ...referencedPayload.content,
     senderName: envelope.quote.senderName ?? referencedPayload.content.senderName,
+    senderWxid: envelope.quote.senderWxid ?? referencedPayload.content.senderWxid,
     sourceMessageId: envelope.quote.sourceMessageId ?? referencedPayload.messageId,
     sentAt: envelope.quote.sentAt ?? referencedPayload.sentAt
   };
 
-  return {
+  const nextEnvelope = {
     ...envelope,
     quote: mergedQuote,
-    renderedText: renderEnvelopeText(envelope.content, mergedQuote),
+    renderedText: renderMessageSummary(envelope.content, mergedQuote),
     metadata: options.crossConversationLookup
       ? {
           ...envelope.metadata,
@@ -251,6 +262,10 @@ export function mergeQuoteFromReferencedPayload(
           }
         }
       : envelope.metadata
+  };
+  return {
+    ...nextEnvelope,
+    renderedMd: renderMessageMarkdown(nextEnvelope)
   };
 }
 
@@ -273,16 +288,6 @@ function shouldUseReferencedContent(currentQuote: MessageNode, referencedContent
 function largeIntegerPrefix(rawMessageId: string): string | null {
   if (!/^\d{16,}$/.test(rawMessageId)) return null;
   return rawMessageId.slice(0, 16);
-}
-
-function renderEnvelopeText(content: MessageNode, quote: MessageNode): string {
-  const quoteText = renderNodeText(quote);
-  return quoteText ? `${content.text}: ${quoteText}` : content.text;
-}
-
-function renderNodeText(node: MessageNode): string {
-  if (node.type === "chat_record") return `[聊天记录] ${node.text}`;
-  return node.text;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

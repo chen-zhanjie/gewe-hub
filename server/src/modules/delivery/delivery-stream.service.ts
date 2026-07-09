@@ -85,6 +85,7 @@ export class DeliveryStreamService implements OnModuleDestroy {
     this.streams.set(input.appId, stream);
     input.reply.raw.once("close", () => this.close(input.appId, stream));
 
+    stream.reply.raw.write(": connected\n\n");
     await this.flushPending(stream, input.lastEventId);
   }
 
@@ -131,6 +132,8 @@ export class DeliveryStreamService implements OnModuleDestroy {
       take: 100,
     });
 
+    await this.acknowledgeDeliveredThrough(stream.appId, cursor, cursorDelivery, deliveries);
+
     const blockedConversationIds = new Set<string>();
     for (const item of filterAfterCursor(sortDeliveriesForStreaming(deliveries), cursor, cursorDelivery)) {
       const conversationId = item.message?.conversationId ?? undefined;
@@ -138,7 +141,6 @@ export class DeliveryStreamService implements OnModuleDestroy {
       if (stream.closed) return;
       if (!(await this.ensureStreamOwnership(stream))) return;
       if (stream.sentEventIds.has(item.eventId)) {
-        if (conversationId) blockedConversationIds.add(conversationId);
         continue;
       }
       if (await this.hasEarlierUndeliveredDelivery(stream.appId, item)) {
@@ -167,11 +169,13 @@ export class DeliveryStreamService implements OnModuleDestroy {
         );
         stream.sentEventIds.add(item.eventId);
         if (conversationId) blockedConversationIds.add(conversationId);
-        await this.prisma.delivery.update({
-          where: { id: item.id },
+        await this.prisma.delivery.updateMany({
+          where: {
+            id: item.id,
+            status: { not: "acked" },
+          },
           data: {
-            status: "delivered",
-            deliveredAt: new Date(),
+            status: "delivering",
             attempts: { increment: 1 },
           },
         });
@@ -183,6 +187,36 @@ export class DeliveryStreamService implements OnModuleDestroy {
     }
   }
 
+  private async acknowledgeDeliveredThrough(
+    appId: string,
+    cursor: string | undefined,
+    cursorDelivery: DeliveryCursor | null,
+    deliveries: DeliveryWithConversation[],
+  ): Promise<void> {
+    if (!cursor || !cursorDelivery) return;
+    const cursorSortValue = deliverySortValue(cursorDelivery);
+    const eventIds: string[] = [];
+    for (const item of sortDeliveriesForStreaming(deliveries)) {
+      if (deliverySortValue(item) <= cursorSortValue) {
+        eventIds.push(item.eventId);
+      }
+    }
+    if (!eventIds.includes(cursor)) {
+      eventIds.push(cursor);
+    }
+    await this.prisma.delivery.updateMany({
+      where: {
+        appId,
+        eventId: { in: eventIds },
+        status: { in: ["queued", "delivering"] },
+      },
+      data: {
+        status: "delivered",
+        deliveredAt: new Date(),
+      },
+    });
+  }
+
   private async hasEarlierUndeliveredDelivery(appId: string, item: DeliveryWithConversation): Promise<boolean> {
     const conversationId = item.message?.conversationId;
     const sentAt = item.message?.sentAt;
@@ -191,7 +225,7 @@ export class DeliveryStreamService implements OnModuleDestroy {
     const count = await this.prisma.delivery.count({
       where: {
         appId,
-        status: { notIn: ["delivered", "acked"] },
+        status: { notIn: ["delivering", "delivered", "acked"] },
         message: {
           conversationId,
           sentAt: {

@@ -135,25 +135,25 @@ describe("DeliveryService", () => {
     expect(prisma.delivery.upsert).not.toHaveBeenCalled();
   });
 
-  it("ACK 只确认当前 active app 已 delivered 的事件", async () => {
+  it("ACK 幂等确认当前 active app 的 queued、delivering 和 delivered 事件", async () => {
     const prisma = {
       hubApp: {
         findUniqueOrThrow: vi.fn(async () => ({ id: "app_1", status: "active" })),
       },
       delivery: {
-        updateMany: vi.fn(async () => ({ count: 1 })),
+        updateMany: vi.fn(async () => ({ count: 3 })),
       },
     };
     const service = new DeliveryService(prisma as never);
 
-    const result = await service.ack("token_1", ["delivered_1", "queued_1", "other_app_1"]);
+    const result = await service.ack("token_1", ["delivered_1", "delivering_1", "queued_1", "other_app_1"]);
 
-    expect(result).toEqual({ ok: true, acked: 1 });
+    expect(result).toEqual({ ok: true, acked: 3 });
     expect(prisma.delivery.updateMany).toHaveBeenCalledWith({
       where: {
         appId: "app_1",
-        eventId: { in: ["delivered_1", "queued_1", "other_app_1"] },
-        status: "delivered",
+        eventId: { in: ["delivered_1", "delivering_1", "queued_1", "other_app_1"] },
+        status: { in: ["queued", "delivering", "delivered"] },
       },
       data: {
         status: "acked",

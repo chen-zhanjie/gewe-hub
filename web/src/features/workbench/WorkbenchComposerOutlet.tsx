@@ -23,6 +23,9 @@ export function WorkbenchComposerOutlet({
       showHtmlForm={composer.showHtmlForm}
       htmlDraft={composer.htmlDraft}
       pendingAttachments={composer.pendingAttachments}
+      mentionMembers={composer.mentionMembers}
+      selectedMentionWxids={composer.selectedMentionWxids}
+      quotedMessageLabel={composer.quotedMessageLabel}
       sendError={composer.sendError}
       parsingLink={composer.parsingLink}
       voiceInputRef={composer.voiceInputRef}
@@ -59,6 +62,8 @@ export function WorkbenchComposerOutlet({
         void composer.handleParseLink();
       }}
       onRemovePendingAttachment={composer.removePendingAttachment}
+      onToggleMention={composer.toggleMention}
+      onClearQuotedMessage={composer.clearQuotedMessage}
       onSendPendingAttachments={() => {
         void composer.handleSendPendingAttachments();
       }}
