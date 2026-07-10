@@ -30,6 +30,7 @@ def test_plugin_manifest_and_required_files():
         "config.py",
         "client.py",
         "normalizer.py",
+        "outbound.py",
         "dedupe.py",
         "state.py",
         "tools.py",
@@ -48,24 +49,260 @@ def test_plugin_manifest_and_required_files():
         "GEWEHUB_APP_TOKEN",
     }
     assert "GEWEHUB_HOME_CONVERSATION_ID" in {item["name"] for item in manifest["optional_env"]}
-    assert manifest["provides_tools"] == ["gewehub_send_message"]
+    assert manifest["provides_tools"] == ["gewehub_send_message", "gewehub_revoke_message"]
 
 
-def test_final_json_send_protocol_is_documented():
+def test_delivery_protocol_and_stable_message_ids_are_documented_without_history_notes():
+    canonical = (PLUGIN_DIR / "skill" / "SKILL.md").read_text(encoding="utf-8")
+    supporting_paths = [
+        PLUGIN_DIR / "skill" / "gewehub-messaging-etiquette-v2" / "SKILL.md",
+        PLUGIN_DIR / "skill" / "gewehub-wechat-delivery-patterns" / "SKILL.md",
+        PLUGIN_DIR / "skill" / "chenkele-persona" / "SKILL.md",
+    ]
+    combined = "\n".join(
+        [
+            (PLUGIN_DIR / "README.md").read_text(encoding="utf-8"),
+            canonical,
+            *(path.read_text(encoding="utf-8") for path in supporting_paths),
+        ]
+    )
+
+    assert "deliveryMode" in canonical
+    assert all(value in canonical for value in ("immediate", "discard", "confirm"))
+    assert "executionMode" in canonical and "sync" in canonical and "async" in canonical
+    assert "普通文本 final" in canonical
+    assert "JSON" in canonical
+    assert "稳定消息ID" in canonical
+    assert "gewehub_revoke_message" in canonical
+
+    forbidden_history = (
+        "旧布尔",
+        "布尔 `send`",
+        "removed boolean",
+        "legacy `send`",
+        "旧 `send`",
+        "已删除",
+        "不再兼容",
+        "sendRequestId",
+        "原始 GeWe ID",
+        "传输请求编号",
+        "底层提供方编号",
+        "第一版",
+    )
+    assert not any(term in combined for term in forbidden_history)
+
+    canonical_protocol_heading = "## 投递与执行"
+    assert canonical.count(canonical_protocol_heading) == 1
+    assert all(
+        canonical_protocol_heading not in path.read_text(encoding="utf-8")
+        for path in supporting_paths
+    )
+
+
+def test_platform_hint_is_concise_and_describes_only_current_behavior():
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_platform_hint_test")
+    captured = {}
+    ctx = SimpleNamespace(
+        register_platform=lambda **kwargs: captured.update(kwargs),
+        register_tool=lambda **kwargs: None,
+    )
+
+    package.register(ctx)
+    hint = captured["platform_hint"]
+
+    assert len(hint) <= 1200
+    for required in (
+        "Plain final text",
+        "JSON",
+        "gewehub_send_message",
+        "replyToMessageId",
+        "stable messageId",
+        "gewehub_revoke_message",
+        "deliveryMode",
+        "executionMode",
+    ):
+        assert required in hint
+
+    for forbidden in (
+        "removed",
+        "deprecated",
+        "legacy",
+        "boolean send",
+        "pending",
+        "held",
+        "sendRequestId",
+        "transport request",
+        "raw provider",
+        "queue",
+    ):
+        assert forbidden not in hint
+
+
+def test_ai_facing_guidance_defines_discard_final_mentions_and_is_self_contained():
+    root_skill = (PLUGIN_DIR / "skill" / "SKILL.md").read_text(encoding="utf-8")
+    delivery_skill = (
+        PLUGIN_DIR / "skill" / "gewehub-wechat-delivery-patterns" / "SKILL.md"
+    ).read_text(encoding="utf-8")
     readme = (PLUGIN_DIR / "README.md").read_text(encoding="utf-8")
-    main_skill = (PLUGIN_DIR / "skill" / "SKILL.md").read_text(encoding="utf-8")
-    etiquette_skill = (PLUGIN_DIR / "skill" / "gewehub-messaging-etiquette" / "SKILL.md").read_text(encoding="utf-8")
+    combined = "\n".join((root_skill, delivery_skill, readme))
 
-    combined = "\n".join([readme, main_skill, etiquette_skill])
+    assert '"deliveryMode": "discard"' in root_skill
+    assert '"type": "text"' in root_skill
+    assert '"text":' in root_skill
+    assert "工具已发送完整答复" in root_skill
+    assert "final" in root_skill
+    assert "不发送" in root_skill
+    assert "mentions" in combined
+    assert "正文" in combined
+    assert "@昵称" in combined
+    assert "每个" in combined
+    assert "具体投递工作流见" not in root_skill
 
-    assert "final response 可以" in readme
-    assert '{"send":false,"content":"已通过工具发送，最终不再发送。"}' in readme
-    assert '{"send": false, "content": "已通过工具发送，最终不再发送。"}' in main_skill
-    assert '{"send": false, "content": "HTML 卡片已发送，最终不再发送文本。"}' in etiquette_skill
-    assert "不要使用 `quote: true`" in main_skill
-    assert "Only include `replyToMessageId`" in etiquette_skill
-    assert "不是 GeWeHub/微信消息发送渠道" not in combined
-    assert "降级发送通道" not in combined
+
+def test_discard_final_json_is_a_valid_standard_message():
+    package = _load_plugin_package("gewehub_plugin_discard_final_test")
+
+    assert package.outbound.normalize_final_output(
+        "cvs_1",
+        '{"deliveryMode":"discard","type":"text","text":"本轮已通过工具完成回复"}',
+    ).payload == {
+        "conversationId": "cvs_1",
+        "type": "text",
+        "text": "本轮已通过工具完成回复",
+        "deliveryMode": "discard",
+        "executionMode": "sync",
+    }
+
+
+def test_normalize_final_output_supports_plain_text_and_standard_json():
+    package = _load_plugin_package("gewehub_plugin_outbound_normalizer_test")
+
+    assert package.outbound.normalize_final_output("cvs_1", "普通文本").payload == {
+        "conversationId": "cvs_1",
+        "type": "text",
+        "text": "普通文本",
+        "deliveryMode": "immediate",
+            "executionMode": "sync",
+        "executionMode": "sync",
+    }
+    assert package.outbound.normalize_final_output(
+        "cvs_1", '{"type":"text","text":"标准 JSON"}'
+    ).payload == {
+        "conversationId": "cvs_1",
+        "type": "text",
+        "text": "标准 JSON",
+        "deliveryMode": "immediate",
+            "executionMode": "sync",
+        "executionMode": "sync",
+    }
+    assert package.outbound.normalize_final_output(
+        "cvs_1", '{"deliveryMode":"confirm","executionMode":"async","type":"text","text":"待确认"}'
+    ).payload == {
+        "conversationId": "cvs_1",
+        "type": "text",
+        "text": "待确认",
+        "deliveryMode": "confirm",
+            "executionMode": "sync",
+        "executionMode": "async",
+    }
+
+
+def test_normalize_final_output_treats_legacy_boolean_send_as_plain_text():
+    package = _load_plugin_package("gewehub_plugin_outbound_no_legacy_send_test")
+    raw = '{"send":false,"content":"旧协议"}'
+
+    assert package.outbound.normalize_final_output("cvs_1", raw).payload == {
+        "conversationId": "cvs_1",
+        "type": "text",
+        "text": raw,
+        "deliveryMode": "immediate",
+            "executionMode": "sync",
+        "executionMode": "sync",
+    }
+    assert package.tools.send_payload_from_args(
+        {"conversationId": "cvs_1", "type": "text", "text": "x", "send": False}
+    ) == {"error": "send is not supported; use deliveryMode"}
+
+
+def test_all_outbound_payloads_default_and_validate_execution_mode():
+    package = _load_plugin_package("gewehub_plugin_outbound_execution_mode_test")
+
+    assert package.tools.send_payload_from_args(
+        {"conversationId": "cvs_1", "type": "text", "text": "hello"}
+    )["executionMode"] == "sync"
+    assert package.tools.send_payload_from_args(
+        {"conversationId": "cvs_1", "type": "text", "text": "hello", "executionMode": "async"}
+    )["executionMode"] == "async"
+    assert package.tools.send_payload_from_args(
+        {"conversationId": "cvs_1", "type": "text", "text": "hello", "executionMode": "later"}
+    ) == {"error": "executionMode must be one of sync, async"}
+
+
+@pytest.mark.asyncio
+async def test_dispatch_standard_uses_single_client_entry_and_filters_response():
+    package = _load_plugin_package("gewehub_plugin_outbound_dispatch_test")
+    calls = []
+
+    class Client:
+        async def send_message_payload(self, payload):
+            calls.append(payload)
+            return {
+                "success": True,
+                "messageId": "msg_1",
+                "url": "https://hub.example.test/u/1",
+                "accepted": True,
+                "pending": True,
+                "held": False,
+                "sendRequestId": "req_1",
+                "htmlPageId": "page_1",
+                "htmlHosted": True,
+            }
+
+    payload = {
+        "conversationId": "cvs_1",
+        "type": "text",
+        "text": "hello",
+        "deliveryMode": "immediate",
+            "executionMode": "sync",
+        "executionMode": "sync",
+    }
+    assert await package.outbound.dispatch_standard(Client(), payload) == {
+        "success": True,
+        "messageId": "msg_1",
+        "url": "https://hub.example.test/u/1",
+        "accepted": True,
+    }
+    assert calls == [payload]
+
+
+@pytest.mark.asyncio
+async def test_revoke_tool_posts_stable_message_id_and_returns_standard_response(monkeypatch):
+    package = _load_plugin_package("gewehub_plugin_revoke_tool_test")
+    monkeypatch.setattr(
+        package.tools,
+        "resolve_gewehub_connection",
+        lambda: {"base_url": "https://hub.example.test", "app_token": "app_token"},
+    )
+    calls = []
+
+    class Client:
+        def __init__(self, base_url, *, app_token):
+            assert base_url == "https://hub.example.test"
+            assert app_token == "app_token"
+
+        async def revoke_message(self, message_id):
+            calls.append(message_id)
+            return {"success": True, "messageId": message_id, "accepted": True, "pending": True}
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(package.tools, "GeWeHubClient", Client)
+    result = json.loads(await package.tools.handle_gewehub_revoke_message({"messageId": "msg_stable_1"}))
+
+    assert calls == ["msg_stable_1"]
+    assert result == {"success": True, "messageId": "msg_stable_1", "accepted": True}
 
 
 def test_config_resolver_prefers_hermes_profile_loader(monkeypatch, tmp_path):
@@ -115,6 +352,28 @@ platforms:
     }
 
 
+
+def test_apply_yaml_config_preserves_group_command_allowlist():
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_group_command_config_test")
+
+    extra = package.adapter.apply_yaml_config(
+        {},
+        {
+            "extra": {
+                "base_url": "https://hub.example.test",
+                "app_token": "app_token",
+                "group_command_allowed_users": {"cvs_group": ["wxid_admin", "wxid_operator"]},
+            }
+        },
+    )
+
+    assert extra == {
+        "base_url": "https://hub.example.test",
+        "app_token": "app_token",
+        "group_command_allowed_users": {"cvs_group": ["wxid_admin", "wxid_operator"]},
+    }
+
 def test_adapter_instantiates_with_real_hermes_base():
     hermes_server = Path("/Users/agent/project/hermes-agent-pro/server")
     if not (hermes_server / "gateway/platforms/base.py").is_file():
@@ -159,28 +418,22 @@ def test_register_exposes_hermes_platform_hooks():
     assert captured["allowed_users_env"] == "GEWEHUB_ALLOWED_USERS"
     assert captured["allow_all_env"] == "GEWEHUB_ALLOW_ALL_USERS"
     assert "gewehub_send_message" in captured["platform_hint"]
-    assert "HTML link cards" in captured["platform_hint"]
     assert "replyToMessageId" in captured["platform_hint"]
-    assert "Markdown quote" in captured["platform_hint"]
-    assert "Do not use quote=true" in captured["platform_hint"]
-    assert "Only include replyToMessageId when you intentionally want a quoted reply" in captured["platform_hint"]
-    assert "prefer gewehub_send_message" in captured["platform_hint"]
-    assert "Do not simulate platform capabilities with plain text" in captured["platform_hint"]
-    assert "send a very short status message first" in captured["platform_hint"]
-    assert "final response may be a raw JSON object" in captured["platform_hint"]
-    assert '"send": false' in captured["platform_hint"]
-    assert '"content":' in captured["platform_hint"]
-    assert "If you already called gewehub_send_message" in captured["platform_hint"]
-    assert [tool["name"] for tool in tools] == ["gewehub_send_message"]
+    assert "stable messageId" in captured["platform_hint"]
+    assert "gewehub_revoke_message" in captured["platform_hint"]
+    assert "deliveryMode\":\"discard" in captured["platform_hint"]
+    assert "@nickname" in captured["platform_hint"]
+    assert [tool["name"] for tool in tools] == ["gewehub_send_message", "gewehub_revoke_message"]
     assert all(tool["toolset"] == "gewehub" for tool in tools)
     assert all(tool["is_async"] is True for tool in tools)
-    for tool in tools:
-        assert "base_url" not in tool["schema"]["parameters"]["properties"]
-        assert "app_token" not in tool["schema"]["parameters"]["properties"]
-        assert "Prefer this tool over normal plain text replies" in tool["schema"]["description"]
-        assert "final response JSON envelope" in tool["schema"]["description"]
-        assert "Do not simulate platform capabilities with plain text" in tool["schema"]["description"]
-        assert "Do not simulate quotes with Markdown" in tool["schema"]["parameters"]["properties"]["replyToMessageId"]["description"]
+    send_tool, revoke_tool = tools
+    send_props = send_tool["schema"]["parameters"]["properties"]
+    assert "base_url" not in send_props and "app_token" not in send_props
+    assert "send" not in send_props
+    assert send_props["deliveryMode"]["enum"] == ["immediate", "discard", "confirm"]
+    assert send_props["executionMode"]["enum"] == ["sync", "async"]
+    assert revoke_tool["schema"]["parameters"]["required"] == ["messageId"]
+    assert set(revoke_tool["schema"]["parameters"]["properties"]) == {"messageId"}
 
 
 @pytest.mark.asyncio
@@ -194,17 +447,9 @@ async def test_standalone_sender_uses_config_and_idempotency_key(monkeypatch):
             self.base_url = base_url
             self.app_token = app_token
 
-        async def send_text(self, conversation_id, text, idempotency_key=None):
-            sent.append(
-                {
-                    "base_url": self.base_url,
-                    "app_token": self.app_token,
-                    "conversation_id": conversation_id,
-                    "text": text,
-                    "idempotency_key": idempotency_key,
-                }
-            )
-            return {"id": "send_1", "messageId": "msg_1"}
+        async def send_message_payload(self, payload):
+            sent.append({"base_url": self.base_url, "app_token": self.app_token, **payload})
+            return {"success": True, "messageId": "msg_1"}
 
         async def aclose(self):
             return None
@@ -214,14 +459,122 @@ async def test_standalone_sender_uses_config_and_idempotency_key(monkeypatch):
 
     result = await package.adapter._standalone_send(cfg, "cvs_1", "hello", thread_id="thread_1")
 
-    assert result == {"success": True, "message_id": "msg_1", "raw_response": {"id": "send_1", "messageId": "msg_1"}}
+    assert result == {"success": True, "message_id": "msg_1", "raw_response": {"success": True, "messageId": "msg_1"}}
     assert sent == [
         {
             "base_url": "https://hub.example.test",
             "app_token": "app_token",
-            "conversation_id": "cvs_1",
+            "conversationId": "cvs_1",
+            "type": "text",
             "text": "hello",
-            "idempotency_key": "hermes-gewehub-thread_1-cvs_1-text-8ef6b9c93d0bfed7",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
+            "idempotencyKey": "hermes-gewehub-thread_1-cvs_1-text-8ef6b9c93d0bfed7",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_standalone_sender_cron_wrapped_json_envelope_sends_message_payload(monkeypatch, tmp_path):
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_standalone_cron_json_test")
+    sent_payloads = []
+    html_file = tmp_path / "cron-card.html"
+    html_file.write_bytes(b"<!doctype html>\n")
+
+    class FakeStandaloneClient:
+        def __init__(self, base_url, *, app_token):
+            self.base_url = base_url
+            self.app_token = app_token
+
+        async def send_text(self, conversation_id, text, idempotency_key=None):
+            raise AssertionError("cron JSON should not fall back to send_text")
+
+        async def send_message_payload(self, payload):
+            sent_payloads.append(dict(payload))
+            return {"success": True, "messageId": "msg_payload_1"}
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(package.adapter, "GeWeHubClient", FakeStandaloneClient)
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    wrapped = (
+        "Cronjob Response: one-minute-html-send-test\n"
+        "(job_id: 6e9d2665f233)\n"
+        "-------------\n\n"
+        + json.dumps(
+            {
+                "deliveryMode": "immediate",
+            "executionMode": "sync",
+                "type": "html",
+                "title": "1 分钟测试卡片",
+                "desc": "一个简单好看的移动端 HTML 测试卡片",
+                "file": str(html_file),
+                "idempotencyKey": "test-one-minute-html-card-20260710",
+            },
+            ensure_ascii=False,
+        )
+        + "\n\nTo stop or manage this job, send me a new message (e.g. \"stop reminder one-minute-html-send-test\")."
+    )
+
+    result = await package.adapter._standalone_send(cfg, "cvs_1", wrapped, thread_id="thread_1")
+
+    assert result == {"success": True, "message_id": "msg_payload_1", "raw_response": {"success": True, "messageId": "msg_payload_1"}}
+    assert sent_payloads == [
+        {
+            "conversationId": "cvs_1",
+            "type": "html",
+                "deliveryMode": "immediate",
+            "executionMode": "sync",
+            "title": "1 分钟测试卡片",
+            "desc": "一个简单好看的移动端 HTML 测试卡片",
+            "htmlContentBase64": "PCFkb2N0eXBlIGh0bWw+Cg==",
+            "htmlFileName": "cron-card.html",
+            "idempotencyKey": "test-one-minute-html-card-20260710",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_standalone_sender_strips_cron_wrapper_before_text_send(monkeypatch):
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_standalone_cron_text_test")
+    sent = []
+
+    class FakeStandaloneClient:
+        def __init__(self, base_url, *, app_token):
+            self.base_url = base_url
+            self.app_token = app_token
+
+        async def send_message_payload(self, payload):
+            sent.append(dict(payload))
+            return {"success": True, "messageId": "msg_text_1"}
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(package.adapter, "GeWeHubClient", FakeStandaloneClient)
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    wrapped = (
+        "Cronjob Response: wake-up-reminder-10am\n"
+        "(job_id: d5426c8ea278)\n"
+        "-------------\n\n"
+        "该起床啦～"
+        "\n\nTo stop or manage this job, send me a new message (e.g. \"stop reminder wake-up-reminder-10am\")."
+    )
+
+    result = await package.adapter._standalone_send(cfg, "cvs_1", wrapped, thread_id="thread_1")
+
+    assert result == {"success": True, "message_id": "msg_text_1", "raw_response": {"success": True, "messageId": "msg_text_1"}}
+    assert sent == [
+        {
+            "conversationId": "cvs_1",
+            "type": "text",
+            "text": "该起床啦～",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
+            "idempotencyKey": package.adapter._generated_idempotency_key("thread_1", "cvs_1", "该起床啦～", "text"),
         }
     ]
 
@@ -237,32 +590,9 @@ async def test_standalone_sender_sends_media_files(monkeypatch, tmp_path):
             self.base_url = base_url
             self.app_token = app_token
 
-        async def send_media_file(
-            self,
-            conversation_id,
-            *,
-            media_type,
-            path=None,
-            content_base64=None,
-            file_name=None,
-            mime_type=None,
-            duration_ms=None,
-            idempotency_key=None,
-            **_kwargs,
-        ):
-            sent.append(
-                {
-                    "conversation_id": conversation_id,
-                    "media_type": media_type,
-                    "path": path,
-                    "content_base64": content_base64,
-                    "file_name": file_name,
-                    "mime_type": mime_type,
-                    "duration_ms": duration_ms,
-                    "idempotency_key": idempotency_key,
-                }
-            )
-            return {"id": "send_media_1", "messageId": "msg_media_1"}
+        async def send_message_payload(self, payload):
+            sent.append(dict(payload))
+            return {"success": True, "messageId": "msg_media_1"}
 
         async def aclose(self):
             return None
@@ -274,18 +604,18 @@ async def test_standalone_sender_sends_media_files(monkeypatch, tmp_path):
 
     result = await package.adapter._standalone_send(cfg, "cvs_1", "", thread_id="thread_1", media_files=[(str(image_path), False)])
 
-    assert result == {"success": True, "message_id": "msg_media_1", "raw_response": {"id": "send_media_1", "messageId": "msg_media_1"}}
+    assert result == {"success": True, "message_id": "msg_media_1", "raw_response": {"success": True, "messageId": "msg_media_1"}}
     expected_idempotency_key = package.adapter._generated_idempotency_key("thread_1", "cvs_1", str(image_path), 0, "media")
     assert sent == [
         {
-            "conversation_id": "cvs_1",
-            "media_type": "image",
-            "path": str(image_path),
-            "content_base64": None,
-            "file_name": "result.png",
-            "mime_type": "image/png",
-            "duration_ms": None,
-            "idempotency_key": expected_idempotency_key,
+            "conversationId": "cvs_1",
+            "type": "image",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
+            "contentBase64": "iVBORw0K",
+            "fileName": "result.png",
+            "mimeType": "image/png",
+            "idempotencyKey": expected_idempotency_key,
         }
     ]
 
@@ -407,6 +737,8 @@ async def test_client_sse_ack_and_send_use_bearer_token(tmp_path):
                 "conversationId": "cvs_1",
                 "type": "text",
                 "text": "hi",
+                "deliveryMode": "immediate",
+            "executionMode": "sync",
                 "idempotencyKey": "idem_1",
             }
             return httpx.Response(200, json={"id": "send_1", "status": "sent", "messageId": "msg_send"})
@@ -429,6 +761,27 @@ async def test_client_sse_ack_and_send_use_bearer_token(tmp_path):
     assert await client.ack_events(["evt_1", "evt_2"]) == {"ok": True, "acked": 2}
     assert (await client.send_text("cvs_1", "hi", idempotency_key="idem_1"))["messageId"] == "msg_send"
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_client_revoke_posts_only_stable_message_id_path():
+    client_mod = _load_module("gewehub_client_revoke_test", PLUGIN_DIR / "client.py")
+    requests = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append({"method": request.method, "path": request.url.path, "content": request.content})
+        return httpx.Response(200, json={"success": True, "messageId": "msg_stable_1", "accepted": True})
+
+    client = client_mod.GeWeHubClient(
+        "https://hub.example.test",
+        app_token="app_token",
+        transport=httpx.MockTransport(handler),
+    )
+    result = await client.revoke_message("msg_stable_1")
+    await client.aclose()
+
+    assert result == {"success": True, "messageId": "msg_stable_1", "accepted": True}
+    assert requests == [{"method": "POST", "path": "/api/messages/msg_stable_1/revoke", "content": b""}]
 
 
 @pytest.mark.asyncio
@@ -459,6 +812,8 @@ async def test_client_send_text_includes_mentions_and_reply_to_when_present():
             "conversationId": "cvs_1",
             "type": "text",
             "text": "@Alice hello",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "mentions": ["wxid_alice", "wxid_bob"],
             "replyToMessageId": "msg_quoted",
         }
@@ -485,7 +840,7 @@ async def test_client_send_html_sources_use_html_payload(tmp_path):
             json={
                 "id": f"send_{len(requests)}",
                 "status": "pending",
-                "htmlPublicUrl": f"https://gewehub.yunzxu.com/h/{len(requests)}",
+                "url": f"https://gewehub.yunzxu.com/h/{len(requests)}",
                 "htmlPageId": f"html_{len(requests)}",
                 "htmlHosted": True,
             },
@@ -519,13 +874,15 @@ async def test_client_send_html_sources_use_html_payload(tmp_path):
     )
     await client.aclose()
 
-    assert content_result["htmlPublicUrl"] == "https://gewehub.yunzxu.com/h/1"
-    assert file_result["htmlPublicUrl"] == "https://gewehub.yunzxu.com/h/2"
-    assert url_result["htmlPublicUrl"] == "https://gewehub.yunzxu.com/h/3"
+    assert content_result["url"] == "https://gewehub.yunzxu.com/h/1"
+    assert file_result["url"] == "https://gewehub.yunzxu.com/h/2"
+    assert url_result["url"] == "https://gewehub.yunzxu.com/h/3"
     assert requests == [
         {
             "conversationId": "cvs_1",
             "type": "html",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "title": "日报",
             "desc": "今日 AI 日报",
             "htmlContent": "<html>content</html>",
@@ -535,6 +892,8 @@ async def test_client_send_html_sources_use_html_payload(tmp_path):
         {
             "conversationId": "cvs_1",
             "type": "html",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "title": "文件报告",
             "desc": "本地 HTML 文件",
             "htmlContentBase64": "PCFkb2N0eXBlIGh0bWw+PGh0bWw+ZmlsZTwvaHRtbD4=",
@@ -543,6 +902,8 @@ async def test_client_send_html_sources_use_html_payload(tmp_path):
         {
             "conversationId": "cvs_1",
             "type": "html",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "title": "外部报告",
             "desc": "外部托管",
             "linkUrl": "https://example.com/report.html",
@@ -561,13 +922,13 @@ def test_cli_send_html_file_outputs_public_url(monkeypatch, tmp_path, capsys):
             self.base_url = base_url
             self.app_token = app_token
 
-        async def send_html(self, conversation_id, **kwargs):
-            sent.append({"conversation_id": conversation_id, **kwargs})
+        async def send_message_payload(self, payload):
+            sent.append(dict(payload))
             return {
                 "id": "send_html_file",
                 "status": "pending",
                 "messageId": "msg_html",
-                "htmlPublicUrl": "https://gewehub.yunzxu.com/h/html_cli",
+                "url": "https://gewehub.yunzxu.com/h/html_cli",
                 "htmlPageId": "html_cli",
                 "htmlHosted": True,
             }
@@ -603,31 +964,22 @@ def test_cli_send_html_file_outputs_public_url(monkeypatch, tmp_path, capsys):
     assert exit_code == 0
     assert sent == [
         {
-            "conversation_id": "cvs_1",
+            "conversationId": "cvs_1",
+            "type": "html",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "title": "CLI 报告",
             "desc": "本地文件",
-            "thumb_url": "https://example.com/cover.jpg",
-            "html_content_base64": "PCFkb2N0eXBlIGh0bWw+PGh0bWw+Y2xpPC9odG1sPg==",
-            "html_file_name": "report.html",
-            "idempotency_key": None,
+            "thumbUrl": "https://example.com/cover.jpg",
+            "htmlContentBase64": "PCFkb2N0eXBlIGh0bWw+PGh0bWw+Y2xpPC9odG1sPg==",
+            "htmlFileName": "report.html",
         }
     ]
     assert output == {
         "success": True,
-        "message_id": "msg_html",
-        "send_request_id": "send_html_file",
-        "status": "pending",
-        "html_public_url": "https://gewehub.yunzxu.com/h/html_cli",
-        "html_page_id": "html_cli",
-        "html_hosted": True,
-        "raw_response": {
-            "id": "send_html_file",
-            "status": "pending",
-            "messageId": "msg_html",
-            "htmlPublicUrl": "https://gewehub.yunzxu.com/h/html_cli",
-            "htmlPageId": "html_cli",
-            "htmlHosted": True,
-        },
+        "message_id": 'msg_html',
+        "url": 'https://gewehub.yunzxu.com/h/html_cli',
+        "accepted": None,
     }
 
 
@@ -640,12 +992,12 @@ def test_cli_send_html_stdin_outputs_public_url(monkeypatch, capsys):
             self.base_url = base_url
             self.app_token = app_token
 
-        async def send_html(self, conversation_id, **kwargs):
-            sent.append({"conversation_id": conversation_id, **kwargs})
+        async def send_message_payload(self, payload):
+            sent.append(dict(payload))
             return {
                 "id": "send_html_stdin",
                 "status": "pending",
-                "htmlPublicUrl": "https://gewehub.yunzxu.com/h/html_stdin",
+                "url": "https://gewehub.yunzxu.com/h/html_stdin",
                 "htmlPageId": "html_stdin",
                 "htmlHosted": True,
             }
@@ -677,15 +1029,16 @@ def test_cli_send_html_stdin_outputs_public_url(monkeypatch, capsys):
     assert exit_code == 0
     assert sent == [
         {
-            "conversation_id": "cvs_1",
+            "conversationId": "cvs_1",
+            "type": "html",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "title": "STDIN 报告",
-            "desc": "",
-            "html_content": "<html>stdin</html>",
-            "idempotency_key": None,
+            "htmlContent": "<html>stdin</html>",
         }
     ]
-    assert output["html_public_url"] == "https://gewehub.yunzxu.com/h/html_stdin"
-    assert output["send_request_id"] == "send_html_stdin"
+    assert output["url"] == "https://gewehub.yunzxu.com/h/html_stdin"
+    assert "sendRequestId" not in output
 
 
 def test_cli_send_html_reads_hermes_config_when_auth_args_omitted(monkeypatch, tmp_path, capsys):
@@ -712,11 +1065,11 @@ platforms:
         def __init__(self, base_url, *, app_token):
             clients.append({"base_url": base_url, "app_token": app_token})
 
-        async def send_html(self, conversation_id, **kwargs):
+        async def send_message_payload(self, payload):
             return {
                 "id": "send_html_config",
                 "status": "pending",
-                "htmlPublicUrl": "https://config-hub.example.test/h/html_config",
+                "url": "https://config-hub.example.test/h/html_config",
                 "htmlPageId": "html_config",
                 "htmlHosted": True,
             }
@@ -743,7 +1096,7 @@ platforms:
 
     assert exit_code == 0
     assert clients == [{"base_url": "https://config-hub.example.test", "app_token": "config_app_token"}]
-    assert output["html_public_url"] == "https://config-hub.example.test/h/html_config"
+    assert output["url"] == "https://config-hub.example.test/h/html_config"
 
 
 def test_cli_send_html_explicit_auth_args_override_hermes_config(monkeypatch, tmp_path, capsys):
@@ -769,7 +1122,7 @@ platforms:
         def __init__(self, base_url, *, app_token):
             clients.append({"base_url": base_url, "app_token": app_token})
 
-        async def send_html(self, conversation_id, **kwargs):
+        async def send_message_payload(self, payload):
             return {"id": "send_html_override", "status": "pending"}
 
         async def aclose(self):
@@ -796,7 +1149,7 @@ platforms:
     )
 
     assert exit_code == 0
-    assert json.loads(capsys.readouterr().out)["send_request_id"] == "send_html_override"
+    assert json.loads(capsys.readouterr().out)["success"] is True
     assert clients == [{"base_url": "https://arg-hub.example.test", "app_token": "arg_app_token"}]
 
 
@@ -848,7 +1201,7 @@ async def test_gewehub_send_message_tool_sends_text_with_common_params(monkeypat
     )
 
     assert result["success"] is True
-    assert result["message_id"] == "msg_text_tool"
+    assert result["messageId"] == "msg_text_tool"
     assert sent == [
         {
             "base_url": "https://profile-hub.example.test",
@@ -856,6 +1209,8 @@ async def test_gewehub_send_message_tool_sends_text_with_common_params(monkeypat
             "payload": {
                 "conversationId": "cvs_1",
                 "type": "text",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
                 "text": "@可乐 我引用这条回复",
                 "mentions": ["wxid_kele"],
                 "replyToMessageId": "msg_quoted",
@@ -881,7 +1236,7 @@ async def test_gewehub_send_message_tool_reads_html_file(monkeypatch, tmp_path):
                 "id": "send_html_tool",
                 "status": "pending",
                 "messageId": "msg_html_tool",
-                "htmlPublicUrl": "https://profile-hub.example.test/h/html_tool",
+                "url": "https://profile-hub.example.test/h/html_tool",
                 "htmlPageId": "html_tool",
                 "htmlHosted": True,
             }
@@ -913,11 +1268,13 @@ async def test_gewehub_send_message_tool_reads_html_file(monkeypatch, tmp_path):
     )
 
     assert result["success"] is True
-    assert result["html_public_url"] == "https://profile-hub.example.test/h/html_tool"
+    assert result["url"] == "https://profile-hub.example.test/h/html_tool"
     assert sent == [
         {
             "conversationId": "cvs_1",
             "type": "html",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "title": "工具报告",
             "desc": "高层 tool 发送",
             "htmlContentBase64": "PCFkb2N0eXBlIGh0bWw+PGh0bWw+dG9vbDwvaHRtbD4=",
@@ -971,6 +1328,8 @@ async def test_gewehub_send_message_tool_reads_media_file_with_common_params(mon
         {
             "conversationId": "cvs_1",
             "type": "image",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "contentBase64": "aW1hZ2UtYnl0ZXM=",
             "fileName": "pixel.png",
             "mimeType": "image/png",
@@ -1021,9 +1380,9 @@ async def test_adapter_allows_plain_final_after_status_tool_send(tmp_path, monke
     assert tool_result["success"] is True
     assert final_result.success is True
     assert normal.success is True
-    assert adapter._client.sent == [
-        {"conversation_id": "cvs_1", "text": "最终总结", "idempotency_key": None},
-        {"conversation_id": "cvs_1", "text": "下一轮普通文本", "idempotency_key": None}
+    assert adapter._client.sent_payloads == [
+        {"conversationId": "cvs_1", "type": "text", "text": "最终总结", "deliveryMode": "immediate", "executionMode": "sync"},
+        {"conversationId": "cvs_1", "type": "text", "text": "下一轮普通文本", "deliveryMode": "immediate", "executionMode": "sync"},
     ]
 
 
@@ -1040,7 +1399,8 @@ async def test_adapter_final_json_text_envelope_sends_message_payload(tmp_path, 
         "cvs_1",
         json.dumps(
             {
-                "send": True,
+                "deliveryMode": "immediate",
+            "executionMode": "sync",
                 "type": "text",
                 "text": "@可乐 我引用回复",
                 "mentions": ["wxid_kele"],
@@ -1053,11 +1413,13 @@ async def test_adapter_final_json_text_envelope_sends_message_payload(tmp_path, 
     )
 
     assert result.success is True
-    assert result.message_id == "msg_payload"
+    assert result.message_id in {"msg_text", "msg_html"}
     assert adapter._client.sent_payloads == [
         {
             "conversationId": "cvs_1",
             "type": "text",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "text": "@可乐 我引用回复",
             "mentions": ["wxid_kele"],
             "replyToMessageId": "msg_quoted",
@@ -1067,7 +1429,179 @@ async def test_adapter_final_json_text_envelope_sends_message_payload(tmp_path, 
 
 
 @pytest.mark.asyncio
-async def test_adapter_final_json_send_false_suppresses(tmp_path, monkeypatch):
+async def test_adapter_cron_raw_json_envelope_sends_message_payload(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_cron_raw_json_test")
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+    html_file = tmp_path / "daily-brief.html"
+    html_file.write_bytes(b"<!doctype html>\n")
+
+    result = await adapter.send(
+        "cvs_1",
+        json.dumps(
+            {
+                "deliveryMode": "immediate",
+            "executionMode": "sync",
+                "type": "html",
+                "title": "GitHub 热榜简报 2026-07-10",
+                "desc": "今日 AI / 开发工具 / 知识库方向精选",
+                "file": str(html_file),
+                "idempotencyKey": "github-trending-brief-2026-07-10",
+            },
+            ensure_ascii=False,
+        ),
+        metadata={"job_id": "4873205d1709"},
+    )
+
+    assert result.success is True
+    assert result.message_id in {"msg_text", "msg_html"}
+    assert adapter._client.sent == []
+    assert adapter._client.sent_payloads == [
+        {
+            "conversationId": "cvs_1",
+            "type": "html",
+                "deliveryMode": "immediate",
+            "executionMode": "sync",
+            "title": "GitHub 热榜简报 2026-07-10",
+            "desc": "今日 AI / 开发工具 / 知识库方向精选",
+            "htmlContentBase64": "PCFkb2N0eXBlIGh0bWw+Cg==",
+            "htmlFileName": "daily-brief.html",
+            "idempotencyKey": "github-trending-brief-2026-07-10",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adapter_cron_wrapped_json_envelope_sends_message_payload(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_cron_wrapped_json_test")
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+    html_file = tmp_path / "minute-card.html"
+    html_file.write_bytes(b"<!doctype html>\n")
+    wrapped = (
+        "Cronjob Response: one-minute-html-send-test\n"
+        "(job_id: 6e9d2665f233)\n"
+        "-------------\n\n"
+        + json.dumps(
+            {
+                "deliveryMode": "immediate",
+            "executionMode": "sync",
+                "type": "html",
+                "title": "1 分钟测试卡片",
+                "desc": "一个简单好看的移动端 HTML 测试卡片",
+                "file": str(html_file),
+                "idempotencyKey": "test-one-minute-html-card-20260710",
+            },
+            ensure_ascii=False,
+        )
+        + "\n\nTo stop or manage this job, send me a new message (e.g. \"stop reminder one-minute-html-send-test\")."
+    )
+
+    result = await adapter.send("cvs_1", wrapped, metadata={"job_id": "6e9d2665f233"})
+
+    assert result.success is True
+    assert result.message_id in {"msg_text", "msg_html"}
+    assert adapter._client.sent == []
+    assert adapter._client.sent_payloads == [
+        {
+            "conversationId": "cvs_1",
+            "type": "html",
+                "deliveryMode": "immediate",
+            "executionMode": "sync",
+            "title": "1 分钟测试卡片",
+            "desc": "一个简单好看的移动端 HTML 测试卡片",
+            "htmlContentBase64": "PCFkb2N0eXBlIGh0bWw+Cg==",
+            "htmlFileName": "minute-card.html",
+            "idempotencyKey": "test-one-minute-html-card-20260710",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adapter_cron_wrapped_legacy_send_is_plain_text(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_cron_send_false_test")
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+    wrapped = (
+        "Cronjob Response: one-minute-html-send-test\n"
+        "(job_id: 6e9d2665f233)\n"
+        "-------------\n\n"
+        '{"send": false, "content": "HTML 卡片已发送，最终不再发送文本。"}'
+        "\n\nTo stop or manage this job, send me a new message (e.g. \"stop reminder one-minute-html-send-test\")."
+    )
+
+    result = await adapter.send("cvs_1", wrapped, metadata={"job_id": "6e9d2665f233"})
+
+    assert result.success is True
+    assert adapter._client.sent_payloads == [
+        {
+            "conversationId": "cvs_1",
+            "type": "text",
+            "text": '{"send": false, "content": "HTML 卡片已发送，最终不再发送文本。"}',
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adapter_cron_wrapped_plain_text_strips_wrapper(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_cron_plain_text_test")
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+    wrapped = (
+        "Cronjob Response: wake-up-reminder-10am\n"
+        "(job_id: d5426c8ea278)\n"
+        "-------------\n\n"
+        "该起床啦～"
+        "\n\nTo stop or manage this job, send me a new message (e.g. \"stop reminder wake-up-reminder-10am\")."
+    )
+
+    result = await adapter.send("cvs_1", wrapped, metadata={"job_id": "d5426c8ea278"})
+
+    assert result.success is True
+    assert result.message_id in {"msg_text", "msg_html"}
+    assert adapter._client.sent_payloads == [
+        {"conversationId": "cvs_1", "type": "text", "deliveryMode": "immediate", "text": "该起床啦～", "executionMode": "sync"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adapter_cron_invalid_json_payload_returns_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_cron_invalid_json_test")
+    cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+    wrapped = (
+        "Cronjob Response: one-minute-html-send-test\n"
+        "(job_id: 6e9d2665f233)\n"
+        "-------------\n\n"
+        '{"send": true, "type": "text"}'
+        "\n\nTo stop or manage this job, send me a new message (e.g. \"stop reminder one-minute-html-send-test\")."
+    )
+
+    result = await adapter.send("cvs_1", wrapped, metadata={"job_id": "6e9d2665f233"})
+
+    assert result.success is True
+    assert adapter._client.sent_payloads[-1]["text"] == '{"send": true, "type": "text"}'
+
+
+@pytest.mark.asyncio
+async def test_adapter_final_legacy_send_is_plain_text(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     _install_gateway_stubs()
     package = _load_plugin_package("gewehub_plugin_final_json_send_false_test")
@@ -1075,36 +1609,53 @@ async def test_adapter_final_json_send_false_suppresses(tmp_path, monkeypatch):
     adapter = package.adapter.GeWeHubAdapter(cfg)
     adapter._client = _FakeClient()
 
-    result = await adapter.send("cvs_1", '{"send": false, "content": "已通过工具发送，最终不再发送。"}', metadata={"notify": True})
+    result = await adapter.send(
+        "cvs_1",
+        '{"send": false, "content": "已通过工具发送，最终不再发送。"}',
+        metadata={"notify": True},
+    )
 
     assert result.success is True
-    assert result.raw_response == {
-        "suppressed": True,
-        "reason": "gewehub_final_json_send_false",
-        "content": "已通过工具发送，最终不再发送。",
-    }
-    assert adapter._client.sent == []
-    assert adapter._client.sent_payloads == []
+    assert result.message_id in {"msg_text", "msg_html"}
+    assert adapter._client.sent[-1]["text"] == '{"send": false, "content": "已通过工具发送，最终不再发送。"}'
+    assert adapter._client.sent_payloads == [
+        {
+            "conversationId": "cvs_1",
+            "type": "text",
+            "text": '{"send": false, "content": "已通过工具发送，最终不再发送。"}',
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
+        }
+    ]
 
 
 @pytest.mark.asyncio
-async def test_adapter_final_non_json_text_sends_normally(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "content",
+    [
+        "内部完成说明",
+        '{"type": "text", "text": "缺少 send 字段"}',
+        '{"send": "true", "type": "text", "text": "send 不是布尔值"}',
+    ],
+)
+async def test_adapter_final_without_explicit_boolean_send_is_sent_as_original_text(tmp_path, monkeypatch, content):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     _install_gateway_stubs()
-    package = _load_plugin_package("gewehub_plugin_final_non_json_text_test")
+    package = _load_plugin_package("gewehub_plugin_final_send_whitelist_test")
     cfg = SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
     adapter = package.adapter.GeWeHubAdapter(cfg)
     adapter._client = _FakeClient()
 
-    notify_result = await adapter.send("cvs_1", "普通最终回复", metadata={"notify": True})
-    streaming_result = await adapter.send("cvs_1", "流式最终回复", metadata={"expect_edits": True})
+    result = await adapter.send("cvs_1", content, metadata={"notify": True})
 
-    assert notify_result.success is True
-    assert streaming_result.success is True
-    assert adapter._client.sent == [
-        {"conversation_id": "cvs_1", "text": "普通最终回复", "idempotency_key": None},
-        {"conversation_id": "cvs_1", "text": "流式最终回复", "idempotency_key": None},
-    ]
+    assert result.success is True
+    if '"send"' in content:
+        assert adapter._client.sent[-1]["text"] == content
+        assert adapter._client.sent_payloads[-1]["text"] == content
+    elif content.startswith("{"):
+        assert adapter._client.sent_payloads[-1]["text"] == "缺少 send 字段"
+    else:
+        assert adapter._client.sent_payloads[-1]["text"] == content
 
 
 @pytest.mark.asyncio
@@ -1118,10 +1669,91 @@ async def test_adapter_final_invalid_json_payload_does_not_leak_raw_json(tmp_pat
 
     result = await adapter.send("cvs_1", '{"send": true, "type": "text"}', metadata={"notify": True})
 
-    assert result.success is False
-    assert "text is required" in result.error
-    assert adapter._client.sent == []
-    assert adapter._client.sent_payloads == []
+    assert result.success is True
+    assert adapter._client.sent_payloads[-1]["text"] == '{"send": true, "type": "text"}'
+
+
+@pytest.mark.asyncio
+async def test_adapter_private_slash_command_uses_exact_source_text_and_skips_debounce(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_private_slash_command_test")
+    cfg = SimpleNamespace(
+        extra={
+            "base_url": "https://hub.example.test",
+            "app_token": "app_token",
+            "debounce_ms": 1000,
+            "max_wait_ms": 5000,
+        }
+    )
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+    event = _delivery_event("evt_1", "msg_1", "/approve always\n", debounce_ms=1000)
+    event["payload"]["renderedMd"] = "已渲染的普通消息"
+
+    await adapter._handle_sse_event({"id": "evt_1", "event": "message.created", "data": json.dumps(event)})
+
+    assert [handled.text for handled in adapter.handled_messages] == ["/approve always\n"]
+    assert adapter.handled_messages[0].metadata["gewehub"]["inputMode"] == "slash_command"
+    assert adapter._pending_batches == {}
+
+
+@pytest.mark.asyncio
+async def test_adapter_group_allowlisted_slash_command_uses_exact_source_text(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_group_allowlisted_slash_command_test")
+    cfg = SimpleNamespace(
+        extra={
+            "base_url": "https://hub.example.test",
+            "app_token": "app_token",
+            "debounce_ms": 1000,
+            "max_wait_ms": 5000,
+            "group_command_allowed_users": {"cvs_group": ["wxid_operator"]},
+        }
+    )
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+    event = _delivery_event("evt_1", "msg_1", "/approve always\n", debounce_ms=1000)
+    event["payload"]["conversation"] = {"id": "cvs_group", "type": "group", "wxid": "123@chatroom", "name": "群聊"}
+    event["payload"]["sender"] = {"wxid": "wxid_operator", "name": "操作员", "isOwner": False}
+    event["payload"]["renderedMd"] = "已渲染的普通消息"
+
+    await adapter._handle_sse_event({"id": "evt_1", "event": "message.created", "data": json.dumps(event)})
+
+    assert [handled.text for handled in adapter.handled_messages] == ["/approve always\n"]
+    assert adapter.handled_messages[0].metadata["gewehub"]["inputMode"] == "slash_command"
+    assert adapter._pending_batches == {}
+
+
+@pytest.mark.asyncio
+async def test_adapter_group_non_allowlisted_slash_command_uses_rendered_message_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_group_non_allowlisted_slash_command_test")
+    cfg = SimpleNamespace(
+        extra={
+            "base_url": "https://hub.example.test",
+            "app_token": "app_token",
+            "debounce_ms": 1000,
+            "max_wait_ms": 5000,
+            "group_command_allowed_users": {"cvs_group": ["wxid_operator"]},
+        }
+    )
+    adapter = package.adapter.GeWeHubAdapter(cfg)
+    adapter._client = _FakeClient()
+    event = _delivery_event("evt_1", "msg_1", "/approve always\n", debounce_ms=1000)
+    event["payload"]["conversation"] = {"id": "cvs_group", "type": "group", "wxid": "123@chatroom", "name": "群聊"}
+    event["payload"]["sender"] = {"wxid": "wxid_member", "name": "普通成员", "isOwner": False}
+    event["payload"]["renderedMd"] = "已渲染的普通消息"
+
+    await adapter._handle_sse_event({"id": "evt_1", "event": "message.created", "data": json.dumps(event)})
+
+    assert adapter.handled_messages == []
+    assert len(adapter._pending_batches) == 1
+    await adapter.flush_pending_batches()
+    assert [handled.text for handled in adapter.handled_messages] == ["已渲染的普通消息"]
+    assert "inputMode" not in adapter.handled_messages[0].metadata["gewehub"]
 
 
 @pytest.mark.asyncio
@@ -1324,6 +1956,22 @@ async def test_adapter_sse_loop_uses_fresh_stream_client_after_read_timeout(tmp_
 
 
 @pytest.mark.asyncio
+async def test_adapter_send_forwards_execution_mode_from_metadata(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_adapter_execution_mode_test")
+    adapter = package.adapter.GeWeHubAdapter(
+        SimpleNamespace(extra={"base_url": "https://hub.example.test", "app_token": "app_token"})
+    )
+    adapter._client = _FakeClient()
+
+    result = await adapter.send("cvs_1", "async hello", metadata={"executionMode": "async"})
+
+    assert result.success is True
+    assert adapter._client.sent_payloads[-1]["executionMode"] == "async"
+
+
+@pytest.mark.asyncio
 async def test_adapter_send_uses_metadata_idempotency_key(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     _install_gateway_stubs()
@@ -1335,8 +1983,8 @@ async def test_adapter_send_uses_metadata_idempotency_key(tmp_path, monkeypatch)
     result = await adapter.send("cvs_1", "hello", metadata={"request_id": "req_1"})
 
     assert result.success is True
-    assert adapter._client.sent == [
-        {"conversation_id": "cvs_1", "text": "hello", "idempotency_key": "req_1"},
+    assert adapter._client.sent_payloads == [
+        {"conversationId": "cvs_1", "type": "text", "deliveryMode": "immediate", "text": "hello", "idempotencyKey": "req_1", "executionMode": "sync"},
     ]
 
 
@@ -1363,7 +2011,7 @@ async def test_adapter_send_forwards_mentions_and_reply_target(tmp_path, monkeyp
     await adapter.send(
         "cvs_1",
         "snake metadata reply",
-        metadata={"reply_to_message_id": "msg_reply_snake"},
+        metadata={"replyToMessageId": "msg_reply_snake"},
     )
     await adapter.send(
         "cvs_1",
@@ -1371,32 +2019,41 @@ async def test_adapter_send_forwards_mentions_and_reply_target(tmp_path, monkeyp
         metadata={"gewehub": {"replyToMessageId": "msg_reply_nested", "mentions": ["wxid_nested"]}},
     )
 
-    assert adapter._client.sent == [
+    assert adapter._client.sent_payloads == [
         {
-            "conversation_id": "cvs_1",
+            "conversationId": "cvs_1",
+            "type": "text",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "text": "@Alice hello",
-            "idempotency_key": "req_2",
+            "idempotencyKey": "req_2",
             "mentions": ["wxid_alice", "wxid_bob"],
         },
         {
-            "conversation_id": "cvs_1",
+            "conversationId": "cvs_1",
+            "type": "text",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "text": "metadata reply",
-            "idempotency_key": None,
             "mentions": ["wxid_carol"],
-            "reply_to_message_id": "msg_reply_camel",
+            "replyToMessageId": "msg_reply_camel",
         },
         {
-            "conversation_id": "cvs_1",
+            "conversationId": "cvs_1",
+            "type": "text",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "text": "snake metadata reply",
-            "idempotency_key": None,
-            "reply_to_message_id": "msg_reply_snake",
+            "replyToMessageId": "msg_reply_snake",
         },
         {
-            "conversation_id": "cvs_1",
+            "conversationId": "cvs_1",
+            "type": "text",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "text": "@Nested hello",
-            "idempotency_key": None,
             "mentions": ["wxid_nested"],
-            "reply_to_message_id": "msg_reply_nested",
+            "replyToMessageId": "msg_reply_nested",
         },
     ]
 
@@ -1418,12 +2075,8 @@ async def test_adapter_ignores_hermes_auto_reply_anchor_for_plain_text(tmp_path,
     )
 
     assert result.success is True
-    assert adapter._client.sent == [
-        {
-            "conversation_id": "cvs_1",
-            "text": "普通回复",
-            "idempotency_key": None,
-        }
+    assert adapter._client.sent_payloads == [
+        {"conversationId": "cvs_1", "type": "text", "text": "普通回复", "deliveryMode": "immediate", "executionMode": "sync"}
     ]
 
 
@@ -1444,12 +2097,14 @@ async def test_adapter_uses_explicit_gewehub_reply_target_when_present(tmp_path,
     )
 
     assert result.success is True
-    assert adapter._client.sent == [
+    assert adapter._client.sent_payloads == [
         {
-            "conversation_id": "cvs_1",
+            "conversationId": "cvs_1",
+            "type": "text",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "text": "显式引用回复",
-            "idempotency_key": None,
-            "reply_to_message_id": "msg_explicit_reply",
+            "replyToMessageId": "msg_explicit_reply",
         }
     ]
 
@@ -1481,15 +2136,19 @@ async def test_adapter_send_routes_gewehub_html_metadata_to_send_html(tmp_path, 
     )
 
     assert result.success is True
-    assert adapter._client.sent == []
-    assert adapter._client.html_sent == [
+    assert len(adapter._client.html_sent) == 1
+    assert adapter._client.sent_payloads == [
         {
-            "conversation_id": "cvs_1",
+            "conversationId": "cvs_1",
+            "type": "html",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "title": "日报",
             "desc": "今日内容",
-            "html_file_path": str(html_file),
-            "thumb_url": "https://cdn.example.test/cover.jpg",
-            "idempotency_key": "html_req_1",
+            "htmlContentBase64": "PCFkb2N0eXBlIGh0bWw+PGh0bWw+cmVwb3J0PC9odG1sPg==",
+            "htmlFileName": "report.html",
+            "thumbUrl": "https://cdn.example.test/cover.jpg",
+            "idempotencyKey": "html_req_1",
         }
     ]
 
@@ -1511,11 +2170,14 @@ async def test_adapter_send_keeps_regular_gewehub_metadata_as_text(tmp_path, mon
 
     assert result.success is True
     assert adapter._client.html_sent == []
-    assert adapter._client.sent == [
+    assert adapter._client.sent_payloads == [
         {
-            "conversation_id": "cvs_1",
+            "conversationId": "cvs_1",
+            "type": "text",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "text": "hello",
-            "idempotency_key": "text_req_1",
+            "idempotencyKey": "text_req_1",
             "mentions": ["wxid_alice"],
         }
     ]
@@ -1857,71 +2519,51 @@ class _FakeClient:
             raise self.ack_error
         return {"ok": True, "acked": len(event_ids)}
 
-    async def send_text(self, conversation_id, text, idempotency_key=None, mentions=None, reply_to_message_id=None):
-        payload = {"conversation_id": conversation_id, "text": text, "idempotency_key": idempotency_key}
-        if mentions is not None:
-            payload["mentions"] = mentions
-        if reply_to_message_id is not None:
-            payload["reply_to_message_id"] = reply_to_message_id
-        self.sent.append(payload)
-        return {"id": "send_text", "status": "pending", "messageId": "msg_text"}
-
     async def send_message_payload(self, payload):
-        self.sent_payloads.append(dict(payload))
-        return {"id": "send_payload", "status": "pending", "messageId": "msg_payload"}
-
-    async def send_html(self, conversation_id, **kwargs):
-        self.html_sent.append({"conversation_id": conversation_id, **kwargs})
-        return {
-            "id": "send_html",
-            "status": "pending",
-            "messageId": "msg_html",
-            "htmlPublicUrl": "https://hub.example.test/h/html_1",
-            "htmlHosted": True,
-        }
-
-    async def send_media_url(self, conversation_id, *, media_type, url, file_name=None, idempotency_key=None):
-        self.media_url_sent.append(
-            {
-                "conversation_id": conversation_id,
-                "media_type": media_type,
-                "url": url,
-                "file_name": file_name,
-                "idempotency_key": idempotency_key,
+        clean = dict(payload)
+        self.sent_payloads.append(clean)
+        message_type = clean.get("type")
+        if message_type == "text":
+            item = {
+                "conversation_id": clean.get("conversationId"),
+                "text": clean.get("text"),
+                "idempotency_key": clean.get("idempotencyKey"),
             }
-        )
-        return {"id": "send_media_url", "status": "pending", "messageId": "msg_media_url"}
+            if "mentions" in clean:
+                item["mentions"] = clean["mentions"]
+            if "replyToMessageId" in clean:
+                item["reply_to_message_id"] = clean["replyToMessageId"]
+            self.sent.append(item)
+            message_id = "msg_text"
+        elif message_type == "html":
+            self.html_sent.append(clean)
+            message_id = "msg_html"
+        elif clean.get("contentBase64"):
+            item = {
+                "conversation_id": clean.get("conversationId"),
+                "media_type": message_type,
+                "content_base64": clean.get("contentBase64"),
+                "file_name": clean.get("fileName"),
+                "mime_type": clean.get("mimeType"),
+                "duration_ms": clean.get("durationMs"),
+                "idempotency_key": clean.get("idempotencyKey"),
+            }
+            self.media_sent.append(item)
+            message_id = "msg_media"
+        else:
+            url = clean.get("mediaUrl") or clean.get("fileUrl")
+            self.media_url_sent.append({
+                "conversation_id": clean.get("conversationId"),
+                "media_type": message_type,
+                "url": url,
+                "file_name": clean.get("fileName"),
+                "idempotency_key": clean.get("idempotencyKey"),
+            })
+            message_id = "msg_media_url"
+        return {"success": True, "messageId": message_id, "url": clean.get("linkUrl")}
 
-    async def send_media_file(
-        self,
-        conversation_id,
-        *,
-        media_type,
-        content_base64,
-        file_name=None,
-        mime_type=None,
-        duration_ms=None,
-        thumb_path=None,
-        thumb_content_base64=None,
-        thumb_mime_type=None,
-        thumb_file_name=None,
-        idempotency_key=None,
-    ):
-        payload = {
-            "conversation_id": conversation_id,
-            "media_type": media_type,
-            "content_base64": content_base64,
-            "file_name": file_name,
-            "mime_type": mime_type,
-            "duration_ms": duration_ms,
-            "idempotency_key": idempotency_key,
-        }
-        if thumb_content_base64 is not None:
-            payload["thumb_content_base64"] = thumb_content_base64
-            payload["thumb_mime_type"] = thumb_mime_type
-            payload["thumb_file_name"] = thumb_file_name
-        self.media_sent.append(payload)
-        return {"id": "send_media", "status": "pending", "messageId": "msg_media"}
+    async def revoke_message(self, message_id):
+        return {"success": True, "messageId": message_id, "accepted": True}
 
     async def download_media(self, descriptor):
         return None

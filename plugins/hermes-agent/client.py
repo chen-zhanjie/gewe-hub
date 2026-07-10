@@ -83,6 +83,12 @@ class GeWeHubClient:
     async def send_message_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._request("POST", "/api/send", json=payload)
 
+    async def revoke_message(self, message_id: str) -> dict[str, Any]:
+        stable_id = str(message_id or "").strip()
+        if not stable_id:
+            raise GeWeHubError("messageId is required")
+        return await self._request("POST", f"/api/messages/{stable_id}/revoke")
+
     async def send_text(
         self,
         conversation_id: str,
@@ -91,7 +97,7 @@ class GeWeHubClient:
         mentions: list[str] | None = None,
         reply_to_message_id: str | None = None,
     ) -> dict[str, Any]:
-        payload: dict[str, Any] = {"conversationId": str(conversation_id), "type": "text", "text": text}
+        payload: dict[str, Any] = {"conversationId": str(conversation_id), "type": "text", "text": text, "deliveryMode": "immediate", "executionMode": "sync"}
         clean_mentions = [str(item).strip() for item in mentions or [] if str(item or "").strip()]
         if clean_mentions:
             payload["mentions"] = clean_mentions
@@ -99,11 +105,7 @@ class GeWeHubClient:
             payload["replyToMessageId"] = str(reply_to_message_id)
         if idempotency_key:
             payload["idempotencyKey"] = idempotency_key
-        return await self._request(
-            "POST",
-            "/api/send",
-            json=payload,
-        )
+        return await self.send_message_payload(payload)
 
     async def send_media_url(
         self,
@@ -114,7 +116,7 @@ class GeWeHubClient:
         file_name: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        payload: dict[str, Any] = {"conversationId": str(conversation_id), "type": media_type}
+        payload: dict[str, Any] = {"conversationId": str(conversation_id), "type": media_type, "deliveryMode": "immediate", "executionMode": "sync"}
         if media_type == "image":
             payload["mediaUrl"] = url
         else:
@@ -123,7 +125,7 @@ class GeWeHubClient:
             payload["fileName"] = file_name
         if idempotency_key:
             payload["idempotencyKey"] = idempotency_key
-        return await self._request("POST", "/api/send", json=payload)
+        return await self.send_message_payload(payload)
 
     async def send_media_file(
         self,
@@ -151,6 +153,8 @@ class GeWeHubClient:
         payload: dict[str, Any] = {
             "conversationId": str(conversation_id),
             "type": media_type,
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "contentBase64": content_base64,
             "fileName": resolved_name,
             "mimeType": resolved_mime,
@@ -172,7 +176,7 @@ class GeWeHubClient:
                 payload["thumbFileName"] = thumb_file_name
         if idempotency_key:
             payload["idempotencyKey"] = idempotency_key
-        return await self._request("POST", "/api/send", json=payload)
+        return await self.send_message_payload(payload)
 
     async def send_html(
         self,
@@ -200,6 +204,8 @@ class GeWeHubClient:
         payload: dict[str, Any] = {
             "conversationId": str(conversation_id),
             "type": "html",
+            "deliveryMode": "immediate",
+            "executionMode": "sync",
             "title": str(title or ""),
             "desc": str(desc or ""),
         }
@@ -222,7 +228,7 @@ class GeWeHubClient:
             payload["thumbUrl"] = normalized_thumb_url
         if idempotency_key:
             payload["idempotencyKey"] = idempotency_key
-        return await self._request("POST", "/api/send", json=payload)
+        return await self.send_message_payload(payload)
 
     async def download_media(self, descriptor: dict[str, Any]) -> dict[str, Any]:
         url = str(descriptor.get("url") or "").strip()

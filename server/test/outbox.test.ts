@@ -357,8 +357,10 @@ function buildRevokeOutboxPrisma(
         }),
       },
       message: {
-        findUnique: vi.fn(async () => targetMessage),
-        findFirst: vi.fn(),
+        findUnique: vi.fn(async () => null),
+        findFirst: vi.fn(async ({ where }) =>
+          where.platformNewMsgId === "7704921809887032008" ? targetMessage : null
+        ),
         update: vi.fn(async () => targetMessage),
       },
       delivery: {

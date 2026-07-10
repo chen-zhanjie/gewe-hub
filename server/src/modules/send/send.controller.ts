@@ -1,17 +1,20 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { BadRequestException, Body, Controller, Get, Headers, Optional, Param, Post, Query, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, Body, ConflictException, Controller, Get, Headers, HttpException, HttpStatus, Optional, Param, Post, Query, UnauthorizedException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { sendRequestSchema, type MessageNode, type SendRequest } from "@gewehub/contracts";
 import { z } from "zod";
+import { AdminEventsService } from "../admin-events/admin-events.service.js";
 import { getBearerToken } from "../delivery/delivery-utils.js";
 import { GeweClientService } from "../gewe/gewe-client.service.js";
 import { normalizeWebhookPayload } from "../gewe/webhook-utils.js";
 import { HtmlPagesService, type ResolveHtmlForSendResult } from "../html-pages/html-pages.service.js";
+import { createMessageId } from "../messages/message-id.js";
+import { OutboxService, SendFailedError, SendResultUnknownError } from "../outbox/outbox.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
-import { mapSendRequestToGewe, type QuotedSendContext } from "./send-utils.js";
+import { buildLocalContentFromSendRequest, buildLocalHubSendMessage, mapSendRequestToGewe, type QuotedSendContext } from "./send-utils.js";
 
-const sendRequestStatusSchema = z.enum(["success", "failed", "in_progress", "pending", "sent", "unknown"]);
+const sendRequestStatusSchema = z.enum(["success", "failed", "in_progress", "held", "pending", "sent", "unknown"]);
 const DEFAULT_TAKE = 100;
 const MAX_TAKE = 200;
 const LINK_PREVIEW_MAX_HTML_BYTES = 512 * 1024;
@@ -22,12 +25,11 @@ const sendRequestListSelect = {
   accountId: true,
   conversationId: true,
   idempotencyKey: true,
+  deliveryMode: true,
   type: true,
   status: true,
   errorMessage: true,
-  resultMsgId: true,
-  resultNewMsgId: true,
-  resultCreateTime: true,
+  executionMode: true,
   createdAt: true,
   updatedAt: true,
   conversation: {
@@ -39,6 +41,9 @@ const sendRequestListSelect = {
       avatarUrl: true,
       platformRemark: true
     }
+  },
+  message: {
+    select: { messageId: true }
   },
   app: {
     select: {
@@ -54,7 +59,9 @@ export class SendController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gewe: GeweClientService,
-    @Optional() private readonly htmlPages?: HtmlPagesService
+    @Optional() private readonly htmlPages?: HtmlPagesService,
+    @Optional() private readonly adminEvents?: AdminEventsService,
+    @Optional() private readonly outbox?: OutboxService
   ) {}
 
   @Post("/api/send")
@@ -75,9 +82,22 @@ export class SendController {
           conversationId: conversation.id,
           idempotencyKey
         },
-        orderBy: { createdAt: "desc" }
+        orderBy: { createdAt: "desc" },
+        include: { message: { select: { messageId: true } } }
       });
-      if (existing) return sendResponse(existing);
+      if (existing?.message) {
+        if (existing.status === "failed") {
+          throw new HttpException({ success: false, messageId: existing.message.messageId, error: { code: "SEND_FAILED", message: existing.errorMessage ?? "发送失败" } }, HttpStatus.BAD_GATEWAY);
+        }
+        if (existing.status === "unknown") {
+          throw new HttpException({ success: false, messageId: existing.message.messageId, error: { code: "SEND_RESULT_UNKNOWN", message: existing.errorMessage ?? "发送结果暂时无法确认，请勿自动重试" } }, HttpStatus.GATEWAY_TIMEOUT);
+        }
+        if (existing.status === "pending" && existing.executionMode === "sync" && this.outbox) {
+          const result = await this.outbox.waitForSend(existing.id, 60_000);
+          return sendResponse(existing.message.messageId, undefined, false, result.url);
+        }
+        return sendResponse(existing.message.messageId, undefined, existing.executionMode === "async" && existing.status === "pending");
+      }
     }
     const quote = await this.resolveQuoteSendContext(body, conversation.id);
     const htmlInfo = body.type === "html" ? await this.resolveHtmlSend(body, conversation, app?.id ?? null) : undefined;
@@ -105,31 +125,153 @@ export class SendController {
       quote
     });
 
-    const sendRequest = await this.prisma.sendRequest.create({
-      data: {
-        appId: app?.id ?? null,
-        accountId: conversation.accountId,
+    const messageId = createMessageId();
+    const created = await this.runTransaction(async (tx) => {
+      const sendRequest = await tx.sendRequest.create({
+        data: {
+          appId: app?.id ?? null,
+          accountId: conversation.accountId,
+          conversationId: conversation.id,
+          idempotencyKey: idempotencyKey ?? null,
+          deliveryMode: body.deliveryMode,
+          executionMode: body.executionMode,
+          type: body.type,
+          requestPayload: requestPayload as Prisma.InputJsonValue,
+          geweRequest: mapped as unknown as Prisma.InputJsonValue,
+          status: body.deliveryMode === "immediate" ? "pending" : "held"
+        }
+      });
+      const localMessage = buildLocalHubSendMessage({
+        accountWxid: conversation.account.wxid,
         conversationId: conversation.id,
-        idempotencyKey: idempotencyKey ?? null,
-        type: body.type,
-        requestPayload: requestPayload as Prisma.InputJsonValue,
-        geweRequest: mapped as unknown as Prisma.InputJsonValue,
-        status: "pending"
+        conversationWxid: conversation.peerWxid,
+        senderWxid: conversation.account.wxid,
+        text: body.text ?? "",
+        messageId,
+        createTime: String(Date.now()),
+        content: buildLocalContentFromSendRequest(body, htmlInfo?.htmlPublicUrl),
+        quote: quote ? {
+          ...quote.content,
+          senderName: quote.senderName ?? quote.content.senderName,
+          senderWxid: quote.senderWxid ?? quote.content.senderWxid,
+          sourceMessageId: quote.messageId,
+          sentAt: quote.sentAt ?? quote.content.sentAt
+        } : null,
+        isSent: false,
+        outboundMetadata: { sent: false, deliveryMode: body.deliveryMode }
+      });
+      if (typeof tx.message?.create === "function") await tx.message.create({
+        data: {
+          accountId: conversation.accountId,
+          conversationId: conversation.id,
+          sendRequestId: sendRequest.id,
+          ...localMessage,
+          payload: localMessage.payload as unknown as Prisma.InputJsonValue
+        }
+      });
+      if (body.deliveryMode === "immediate") {
+        await tx.outboxTask.create({
+          data: {
+            taskType: "send",
+            refId: sendRequest.id,
+            payload: { sendRequestId: sendRequest.id },
+            status: "pending",
+            priority: 40
+          }
+        });
       }
+      if (typeof tx.conversation?.update === "function") await tx.conversation.update({
+        where: { id: conversation.id },
+        data: {
+          lastMessageAt: localMessage.sentAt,
+          lastMessageText: localMessage.renderedText.slice(0, 500),
+          messageCount: { increment: 1 },
+          isHidden: false
+        }
+      });
+      return { sendRequest, localMessage };
     });
     if (htmlInfo?.htmlPageId && htmlInfo.htmlHosted) {
-      await this.htmlPages?.bindSendRequest(htmlInfo.htmlPageId, sendRequest.id);
+      await this.htmlPages?.bindSendRequest(htmlInfo.htmlPageId, created.sendRequest.id);
     }
-    await this.prisma.outboxTask.create({
+    this.adminEvents?.publishMessageChanged({
+      eventType: "message.created",
+      conversationId: conversation.id,
+      messageId
+    });
+    if (body.deliveryMode !== "immediate") return sendResponse(messageId, htmlInfo);
+    if (body.executionMode === "async" || !this.outbox) {
+      void this.outbox?.wake();
+      return sendResponse(messageId, htmlInfo, true);
+    }
+    try {
+      const result = await this.outbox.waitForSend(created.sendRequest.id, 60_000);
+      return sendResponse(messageId, htmlInfo, false, result.url);
+    } catch (error) {
+      const code = error instanceof SendResultUnknownError ? "SEND_RESULT_UNKNOWN" : "SEND_FAILED";
+      const status = error instanceof SendResultUnknownError ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
+      const message = error instanceof Error ? error.message : "发送失败";
+      throw new HttpException({ success: false, messageId, error: { code, message } }, status);
+    }
+  }
+
+  private runTransaction<T>(callback: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    if (typeof this.prisma.$transaction === "function") return this.prisma.$transaction(callback);
+    return callback(this.prisma as unknown as Prisma.TransactionClient);
+  }
+
+  @Post("/api/send/:id/dispatch")
+  async dispatch(@Param("id") id: string) {
+    const heldRequest = await this.prisma.sendRequest.findUniqueOrThrow({
+      where: { id },
+      select: { status: true, deliveryMode: true }
+    });
+    if (heldRequest.status !== "held" || !["discard", "confirm"].includes(heldRequest.deliveryMode)) {
+      throw new ConflictException("仅未发送或待确认消息可以发送");
+    }
+    const claimed = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.sendRequest.updateMany({
+        where: { id, status: "held", deliveryMode: heldRequest.deliveryMode },
+        data: { status: "pending", errorMessage: null }
+      });
+      if (updated.count !== 1) return false;
+      await tx.outboxTask.create({
+        data: {
+          taskType: "send",
+          refId: id,
+          payload: { sendRequestId: id },
+          status: "pending",
+          priority: 40
+        }
+      });
+      return true;
+    });
+    if (!claimed) throw new ConflictException("仅未发送或待确认消息可以发送");
+    void this.outbox?.wake();
+    const sendRequest = await this.prisma.sendRequest.findUniqueOrThrow({
+      where: { id },
+      include: { message: { select: { messageId: true, conversationId: true } } }
+    });
+    if (sendRequest.message) {
+      this.adminEvents?.publishMessageChanged({
+        eventType: "message.updated",
+        conversationId: sendRequest.message.conversationId,
+        messageId: sendRequest.message.messageId
+      });
+    }
+    return sendRequest.message ? sendResponse(sendRequest.message.messageId, undefined, true) : { success: true };
+  }
+
+  private async enqueueSendRequest(sendRequestId: string) {
+    return this.prisma.outboxTask.create({
       data: {
         taskType: "send",
-        refId: sendRequest.id,
-        payload: { sendRequestId: sendRequest.id },
+        refId: sendRequestId,
+        payload: { sendRequestId },
         status: "pending",
         priority: 40
       }
     });
-    return sendResponse(sendRequest, htmlInfo);
   }
 
   private async resolveSendConversation(conversationId: string) {
@@ -186,14 +328,10 @@ export class SendController {
       throw new BadRequestException("第一版引用发送仅支持文本回复");
     }
 
-    const rawMessageId = replyToMessageId.startsWith("msg_") ? replyToMessageId.slice(4) : replyToMessageId;
     const message = await this.prisma.message.findFirst({
       where: {
         conversationId,
-        OR: [
-          { messageId: replyToMessageId },
-          { rawMessageId }
-        ]
+        messageId: replyToMessageId
       },
       include: {
         webhookEvent: {
@@ -214,7 +352,7 @@ export class SendController {
 
     return {
       messageId: message.messageId,
-      rawMessageId: message.rawMessageId,
+      platformNewMsgId: message.platformNewMsgId ?? (() => { throw new BadRequestException("引用消息缺少平台消息 ID"); })(),
       senderWxid: message.senderWxid,
       senderName: asString(sender?.name) ?? asString(sender?.remark) ?? message.senderWxid,
       sentAt: message.sentAt.toISOString(),
@@ -242,46 +380,6 @@ export class SendController {
     });
   }
 
-  @Post("/api/send/:id/revoke")
-  async revoke(@Param("id") id: string) {
-    const sendRequest = await this.prisma.sendRequest.findUniqueOrThrow({
-      where: { id },
-      include: {
-        conversation: {
-          include: { account: true }
-        }
-      }
-    });
-    if (sendRequest.status !== "sent") {
-      throw new BadRequestException("只能撤回已发送成功的消息");
-    }
-    if (!sendRequest.resultMsgId || !sendRequest.resultNewMsgId || !sendRequest.resultCreateTime) {
-      throw new BadRequestException("发送记录缺少撤回所需三件套");
-    }
-
-    const revokeResponse = await this.gewe.revokeMessage({
-      appId: sendRequest.conversation.account.appId,
-      toWxid: sendRequest.conversation.peerWxid,
-      msgId: sendRequest.resultMsgId,
-      newMsgId: sendRequest.resultNewMsgId,
-      createTime: sendRequest.resultCreateTime
-    });
-    const revokedAt = new Date();
-    await this.prisma.message.updateMany({
-      where: { sendRequestId: sendRequest.id },
-      data: {
-        status: "revoked",
-        revokedAt
-      }
-    });
-
-    return this.prisma.sendRequest.update({
-      where: { id },
-      data: {
-        geweResponse: mergeRevokeResponse(sendRequest.geweResponse, revokeResponse) as Prisma.InputJsonValue
-      }
-    });
-  }
 
   @Post("/api/send/:id/cancel")
   async cancel(@Param("id") id: string) {
@@ -413,20 +511,16 @@ function resolveHtmlPresentation(body: SendRequest, htmlInfo: ResolveHtmlForSend
 }
 
 function sendResponse(
-  sendRequest: { id: string; status: string; messageId?: string | null; requestPayload?: Prisma.JsonValue },
-  htmlInfo?: ResolveHtmlForSendResult
+  messageId: string,
+  htmlInfo?: ResolveHtmlForSendResult,
+  accepted?: boolean,
+  resolvedUrl?: string
 ) {
-  const payload = asRecord(sendRequest.requestPayload);
-  const htmlPublicUrl = htmlInfo?.htmlPublicUrl ?? asString(payload?.htmlPublicUrl);
-  const htmlPageId = htmlInfo ? htmlInfo.htmlPageId : (asString(payload?.htmlPageId) ?? null);
-  const htmlHosted = htmlInfo?.htmlHosted ?? asBoolean(payload?.htmlHosted);
   return compactUndefined({
-    id: sendRequest.id,
-    status: sendRequest.status,
-    messageId: sendRequest.messageId ?? undefined,
-    htmlPublicUrl,
-    htmlPageId: htmlPublicUrl ? htmlPageId : undefined,
-    htmlHosted: htmlPublicUrl ? htmlHosted : undefined
+    success: true,
+    messageId,
+    url: resolvedUrl ?? htmlInfo?.htmlPublicUrl,
+    accepted: accepted ? true : undefined
   });
 }
 

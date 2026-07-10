@@ -44,9 +44,11 @@ const DEFAULT_SEND_REQUEST_FILTERS: SendRequestFilters = {
 interface BackendSendRequest {
   id: string;
   type: string;
+  deliveryMode?: "immediate" | "discard" | "confirm" | null;
   status: string;
-  resultMsgId?: string | null;
-  resultNewMsgId?: string | null;
+  message?: {
+    messageId: string;
+  } | null;
   updatedAt?: string | Date;
   requestPayload?: unknown;
   geweRequest?: unknown;
@@ -99,13 +101,18 @@ export function SendRequestsPage({
       header: "类型",
     },
     {
+      accessorKey: "deliveryMode",
+      header: "发送策略",
+      cell: ({ row }) => <StatusBadge status={sendDeliveryModeBadgeStatus(row.original.deliveryMode)} />,
+    },
+    {
       accessorKey: "status",
       header: "状态",
       cell: ({ row }) => <StatusBadge status={sendRequestBadgeStatus(row.original.status)} />,
     },
     {
-      accessorKey: "resultMsgId",
-      header: "结果消息",
+      accessorKey: "messageId",
+      header: "消息 ID",
       cell: ({ row }) => sendRequestResultText(row.original),
     },
     {
@@ -136,7 +143,7 @@ export function SendRequestsPage({
             type="button"
             title="撤回"
             aria-label="撤回"
-            disabled={row.original.status !== "sent" || revokingId === row.original.id}
+            disabled={!canRevokeSendRequest(row.original.source) || revokingId === row.original.id}
             onClick={() => {
               setConfirmingRevoke(row.original.source);
               setRevokeError(null);
@@ -169,11 +176,12 @@ export function SendRequestsPage({
   }
 
   async function handleRevoke(row: BackendSendRequest) {
-    if (row.status !== "sent" || revokingId) return;
+    const messageId = row.message?.messageId;
+    if (!canRevokeSendRequest(row) || !messageId || revokingId) return;
     setRevokingId(row.id);
     setRevokeError(null);
     try {
-      await apiFetch(`/api/send/${row.id}/revoke`, { method: "POST" });
+      await apiFetch(`/api/messages/${encodeURIComponent(messageId)}/revoke`, { method: "POST" });
       await reload();
       setConfirmingRevoke(null);
     } catch (error) {
@@ -281,8 +289,8 @@ export function SendRequestsPage({
               <dd className="font-mono text-xs">{confirmingRevoke.id}</dd>
               <dt className="text-xs text-muted-foreground">会话</dt>
               <dd>{getSendRequestConversationName(confirmingRevoke)}</dd>
-              <dt className="text-xs text-muted-foreground">结果消息</dt>
-              <dd className="font-mono text-xs">{confirmingRevoke.resultMsgId || confirmingRevoke.resultNewMsgId || "—"}</dd>
+              <dt className="text-xs text-muted-foreground">消息 ID</dt>
+              <dd className="font-mono text-xs">{confirmingRevoke.message?.messageId || "—"}</dd>
             </dl>
           ) : null}
           <AlertDialogFooter>
@@ -421,7 +429,7 @@ function SendRequestDetailSheet({
               { label: "会话", value: getSendRequestConversationName(request) },
               { label: "类型", value: request.type },
               { label: "状态", value: <StatusBadge status={sendRequestBadgeStatus(request.status)} /> },
-              { label: "结果消息", value: <code className="font-mono text-xs">{request.resultMsgId || request.resultNewMsgId || "—"}</code> },
+              { label: "消息 ID", value: <code className="font-mono text-xs">{request.message?.messageId || "—"}</code> },
             ]}
           />
           <SendRequestSummary row={request} />
@@ -512,8 +520,9 @@ function mapSendRow(row: BackendSendRequest) {
     conversation: getSendRequestConversationName(row),
     conversationEntity: mapConversationEntity(row.conversation),
     type: row.type,
+    deliveryMode: row.deliveryMode ?? "immediate",
     status: row.status,
-    resultMsgId: row.resultMsgId || row.resultNewMsgId || "",
+    messageId: row.message?.messageId || "",
     updatedAt: row.updatedAt,
     source: row,
   };
@@ -536,7 +545,7 @@ function mapConversationEntity(
 function matchesSendRequestSearch(row: SendRequestRow, query: string): boolean {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) return true;
-  return [row.id, row.conversation, row.type, row.status, row.resultMsgId, String(row.updatedAt ?? "")]
+  return [row.id, row.conversation, row.type, row.deliveryMode, row.status, row.messageId, String(row.updatedAt ?? "")]
     .some((value) => value.toLowerCase().includes(normalizedQuery));
 }
 
@@ -562,15 +571,23 @@ function countRowsByFacet(rows: SendRequestRow[], status: SendRequestFilters["st
   return rows.filter((row) => row.status === status).length;
 }
 
+function sendDeliveryModeBadgeStatus(mode: string): string {
+  return mode === "discard" ? "delivery_discard" : mode === "confirm" ? "delivery_confirm" : "delivery_immediate";
+}
+
 function sendRequestBadgeStatus(status: string): string {
   return status === "unknown" ? "result_unknown" : status;
 }
 
 function sendRequestResultText(row: SendRequestRow): string {
-  if (row.resultMsgId) return row.resultMsgId;
+  if (row.messageId) return row.messageId;
   if (row.status === "pending") return "等待中";
   if (row.status === "unknown") return "结果未知";
   return "—";
+}
+
+function canRevokeSendRequest(row: BackendSendRequest): boolean {
+  return row.status === "sent" && Boolean(row.message?.messageId);
 }
 
 function canCancelSendRequest(status: string): boolean {

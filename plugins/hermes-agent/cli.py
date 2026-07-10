@@ -12,9 +12,11 @@ from typing import Any
 try:
     from .client import GeWeHubClient
     from .config import resolve_gewehub_connection
+    from .outbound import dispatch_standard, normalize_explicit_payload, standard_response
 except ImportError:
     from client import GeWeHubClient
     from config import resolve_gewehub_connection
+    from outbound import dispatch_standard, normalize_explicit_payload, standard_response
 
 
 async def run(argv: list[str] | None = None) -> int:
@@ -84,8 +86,21 @@ async def run_send_html(args: argparse.Namespace) -> int:
         elif args.url:
             kwargs["link_url"] = args.url
 
+        explicit = {
+            "type": "html",
+            "title": kwargs.pop("title"),
+            "desc": kwargs.pop("desc"),
+            "thumbUrl": kwargs.pop("thumb_url", None),
+            "idempotencyKey": kwargs.pop("idempotency_key", None),
+            "htmlContent": kwargs.pop("html_content", None),
+            "htmlContentBase64": kwargs.pop("html_content_base64", None),
+            "htmlFileName": kwargs.pop("html_file_name", None),
+            "linkUrl": kwargs.pop("link_url", None),
+        }
         client = GeWeHubClient(base_url, app_token=app_key)
-        response = await client.send_html(args.conversation_id, **kwargs)
+        response = await dispatch_standard(
+            client, normalize_explicit_payload(args.conversation_id, explicit).payload
+        )
         print(json.dumps(format_send_html_result(response), ensure_ascii=False))
         return 0
     except Exception as exc:
@@ -97,15 +112,12 @@ async def run_send_html(args: argparse.Namespace) -> int:
 
 
 def format_send_html_result(response: dict[str, Any]) -> dict[str, Any]:
+    standard = standard_response(response)
     return {
-        "success": True,
-        "message_id": response.get("messageId") or response.get("message_id"),
-        "send_request_id": response.get("id"),
-        "status": response.get("status"),
-        "html_public_url": response.get("htmlPublicUrl"),
-        "html_page_id": response.get("htmlPageId"),
-        "html_hosted": response.get("htmlHosted"),
-        "raw_response": response,
+        "success": bool(standard.get("success", True)),
+        "message_id": standard.get("messageId"),
+        "url": standard.get("url"),
+        "accepted": standard.get("accepted"),
     }
 
 

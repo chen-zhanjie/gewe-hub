@@ -102,8 +102,8 @@ describe("OutboxService 文件两阶段回调", () => {
 
     expect(createdMessages).toHaveLength(1);
     expect(createdMessages[0]).toMatchObject({
-      messageId: "msg_3205839865020477895",
-      rawMessageId: "3205839865020477895",
+      messageId: expect.stringMatching(/^msg_[A-Za-z0-9_-]{22}$/),
+      platformNewMsgId: "3205839865020477895",
       type: "file",
       renderedText: "[文件] mapping_app.txt",
     });

@@ -132,7 +132,19 @@ enum DeliveryEventType {
   message_revoked
 }
 
+enum SendDeliveryMode {
+  immediate
+  discard
+  confirm
+}
+
+enum SendExecutionMode {
+  sync
+  async
+}
+
 enum SendStatus {
+  held
   pending
   sent
   failed
@@ -311,8 +323,10 @@ model Message {
   webhookEventId String?             @map("webhook_event_id")
   sendRequestId  String?             @unique @map("send_request_id")
   source         MessageSource
-  messageId      String              @unique @map("message_id")
-  rawMessageId   String?             @map("raw_message_id")
+  messageId           String              @unique @map("message_id")
+  platformMsgId       String?             @map("platform_msg_id")
+  platformNewMsgId    String?             @map("platform_new_msg_id")
+  platformCreateTime  String?             @map("platform_create_time")
   dedupeKey      String              @unique @map("dedupe_key")
   type           StandardMessageType
   status         MessageStatus       @default(normal)
@@ -320,6 +334,7 @@ model Message {
   senderWxid     String              @map("sender_wxid")
   isSelf         Boolean             @default(false) @map("is_self")
   isAtMe         Boolean             @default(false) @map("is_at_me")
+  isSent         Boolean             @default(true) @map("is_sent")
   sentAt         DateTime            @map("sent_at")
   payload        Json
   renderedText   String?             @db.VarChar(500) @map("rendered_text")
@@ -335,7 +350,7 @@ model Message {
   mediaAssets    MediaAsset[]
 
   @@index([conversationId, sentAt])
-  @@index([rawMessageId])
+  @@index([platformNewMsgId])
   @@map("messages")
 }
 
@@ -432,15 +447,14 @@ model SendRequest {
   accountId        String       @map("account_id")
   conversationId   String       @map("conversation_id")
   idempotencyKey   String?      @map("idempotency_key")
+  deliveryMode     SendDeliveryMode @default(immediate) @map("delivery_mode")
+  executionMode    SendExecutionMode @default(sync) @map("execution_mode")
   type             String
   requestPayload   Json         @map("request_payload")
   geweRequest      Json?        @map("gewe_request")
   geweResponse     Json?        @map("gewe_response")
   status           SendStatus   @default(pending)
   errorMessage     String?      @db.Text @map("error_message")
-  resultMsgId      String?      @map("result_msg_id")
-  resultNewMsgId   String?      @map("result_new_msg_id")
-  resultCreateTime String?      @map("result_create_time")
   createdAt        DateTime     @default(now()) @map("created_at")
   updatedAt        DateTime     @updatedAt @map("updated_at")
 

@@ -165,4 +165,26 @@ describe("workspace-data", () => {
 
     expect(message.content.quote).toEqual({ type: "text", text: "内层引用" });
   });
+
+  it.each(["confirm", "discard"] as const)("映射 %s deliveryMode 的 held 消息", (deliveryMode) => {
+    const message = mapMessageItem({
+      id: `row_${deliveryMode}`,
+      messageId: `msg_${deliveryMode}`,
+      sendRequestId: "send_1",
+      senderWxid: "wxid_bot",
+      isSelf: true,
+      isSent: false,
+      sendRequest: { id: "send_1", status: "held", deliveryMode },
+      status: "normal",
+      sentAt: "2026-07-11T07:16:37.000Z",
+      payload: { content: { type: "text", text: "待人工处理" } },
+      deliveries: [],
+    });
+
+    expect(message).toMatchObject({
+      isSent: false,
+      sendRequest: { id: "send_1", status: "held", deliveryMode },
+    });
+  });
+
 });

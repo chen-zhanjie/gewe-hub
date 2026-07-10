@@ -13,9 +13,14 @@ export const ackResponseSchema = z
   })
   .strict();
 
+export const sendDeliveryModeSchema = z.enum(["immediate", "discard", "confirm"]);
+export const sendExecutionModeSchema = z.enum(["sync", "async"]);
+
 export const sendRequestSchema = z
   .object({
     conversationId: z.string(),
+    deliveryMode: sendDeliveryModeSchema.default("immediate"),
+    executionMode: sendExecutionModeSchema.default("sync"),
     type: z.enum(["text", "image", "file", "voice", "video", "link", "html"]),
     text: z.string().optional(),
     mediaUrl: z.string().url().optional(),
@@ -93,12 +98,23 @@ export type SendRequest = z.infer<typeof sendRequestSchema>;
 
 export const sendResponseSchema = z
   .object({
-    id: z.string(),
-    status: z.enum(["pending", "sent", "failed"]),
-    messageId: z.string().optional(),
-    htmlPublicUrl: z.string().url().optional(),
-    htmlPageId: z.string().nullable().optional(),
-    htmlHosted: z.boolean().optional()
+    success: z.literal(true),
+    messageId: z.string(),
+    url: z.string().url().optional(),
+    accepted: z.literal(true).optional()
+  })
+  .strict();
+
+export const sendFailureResponseSchema = z
+  .object({
+    success: z.literal(false),
+    messageId: z.string(),
+    error: z
+      .object({
+        code: z.enum(["SEND_FAILED", "SEND_RESULT_UNKNOWN"]),
+        message: z.string()
+      })
+      .strict()
   })
   .strict();
 

@@ -215,6 +215,68 @@ describe("workbench-local-sends", () => {
     expect(visible.map((message) => message.id)).toEqual(["local_visible", "server_1"]);
   });
 
+  it("HTML 本地消息使用新响应 url 作为已解析链接", () => {
+    const message = mapLocalSendToMessageItem({
+      id: "local_html",
+      conversationId: "conv_1",
+      type: "html",
+      text: "[HTML] 日报",
+      status: "pending",
+      sendPayload: {
+        type: "html",
+        title: "日报",
+        resolvedUrl: "https://example.com/rendered",
+      },
+      createdAtIso: "2026-07-06T07:16:37.000Z",
+    });
+
+    expect(message.content).toMatchObject({ link: { url: "https://example.com/rendered" } });
+  });
+
+  it("使用稳定 messageId 替换本地发送，而不依赖 sendRequestId", () => {
+    const server = messageFixture("server_row", null, "2026-07-06T07:16:39.000Z");
+    server.messageId = "msg_stable";
+    const visible = buildVisibleMessages(
+      [server],
+      [{
+        id: "local_pending",
+        conversationId: "conv_1",
+        type: "text",
+        text: "已发送",
+        status: "pending",
+        messageId: "msg_stable",
+        createdAtIso: "2026-07-06T07:16:40.000Z",
+      }],
+      "conv_1",
+    );
+
+    expect(visible.map((message) => message.id)).toEqual(["server_row"]);
+  });
+
+  it("本地发送获得服务端 messageId 后，消息操作暴露稳定 messageId", () => {
+    const message = mapLocalSendToMessageItem({
+      id: "local_pending",
+      conversationId: "conv_1",
+      type: "text",
+      text: "发送中",
+      status: "pending",
+      messageId: "msg_stable",
+      createdAtIso: "2026-07-06T07:16:37.000Z",
+    });
+
+    expect(message.messageId).toBe("msg_stable");
+    expect(message.id).toBe("local_pending");
+  });
+
+  it("合并刷新消息时使用稳定 messageId 去重不同数据库行", () => {
+    const first = messageFixture("row_old", null, "2026-07-06T07:16:37.000Z");
+    first.messageId = "msg_stable";
+    const refreshed = messageFixture("row_new", null, "2026-07-06T07:16:38.000Z");
+    refreshed.messageId = "msg_stable";
+
+    expect(mergeMessagesById([refreshed, first]).map((message) => message.id)).toEqual(["row_new"]);
+  });
+
   it("按 id 合并消息并按 sentAtIso 比较顺序", () => {
     const first = messageFixture("m1", null, "2026-07-06T07:16:37.000Z");
     const duplicate = messageFixture("m1", null, "2026-07-06T07:16:38.000Z");

@@ -19,6 +19,7 @@ uploads/
 logs/
 *.log
 plugins/hermes-agent/state/
+plugins/hermes-agent/media/
 
 # Environment
 .env

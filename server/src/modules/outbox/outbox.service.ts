@@ -11,6 +11,8 @@ import { DeliveryService } from "../delivery/delivery.service.js";
 import { buildDeliveryEventId } from "../delivery/delivery-utils.js";
 import { GeweClientService, GeweRequestTimeoutError } from "../gewe/gewe-client.service.js";
 import { MediaService } from "../media/media.service.js";
+import { createMessageId } from "../messages/message-id.js";
+import { renderMessageMarkdown, renderMessageSummary } from "../messages/message-rendering.js";
 import { hydrateMessageReferencesFromLocalMessages } from "../messages/message-reference.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { buildLocalHubSendMessage } from "../send/send-utils.js";
@@ -20,6 +22,12 @@ import { transitionAfterFailure } from "./outbox-state.js";
 export class OutboxService implements OnModuleInit {
   private readonly logger = new Logger(OutboxService.name);
   private timer: NodeJS.Timeout | undefined;
+  private drainPromise: Promise<void> | null = null;
+  private wakeRequested = false;
+  private readonly sendWaiters = new Map<string, Set<{
+    resolve: (result: { url?: string }) => void;
+    reject: (error: Error) => void;
+  }>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -32,58 +40,109 @@ export class OutboxService implements OnModuleInit {
 
   onModuleInit() {
     this.timer = setInterval(() => {
-      this.tick().catch((error: unknown) => this.logger.error(error));
+      this.wake().catch((error: unknown) => this.logger.error(error));
     }, 2000);
     this.timer.unref();
   }
 
   async tick() {
-    const task = await this.claimNextTask();
-    if (!task) return;
+    return this.wake();
+  }
 
-    try {
-      await this.handleTask(task.taskType, task.refId, task.payload);
-      await this.prisma.outboxTask.update({
-        where: { id: task.id },
-        data: {
-          status: "done",
-          leaseUntil: null,
-          lastError: null
+  wake(): Promise<void> {
+    if (this.drainPromise) {
+      this.wakeRequested = true;
+      return this.drainPromise;
+    }
+    this.wakeRequested = false;
+    this.drainPromise = this.drain().finally(() => {
+      this.drainPromise = null;
+      if (this.wakeRequested) void this.wake();
+    });
+    return this.drainPromise;
+  }
+
+  async waitForSend(sendRequestId: string, timeoutMs: number): Promise<{ url?: string }> {
+    const initial = await this.readSendResult(sendRequestId);
+    if (initial) return initial;
+
+    return new Promise((resolve, reject) => {
+      const waiters = this.sendWaiters.get(sendRequestId) ?? new Set();
+      let timer: NodeJS.Timeout;
+      const remove = () => {
+        waiters.delete(waiter);
+        if (waiters.size === 0) this.sendWaiters.delete(sendRequestId);
+      };
+      const waiter = {
+        resolve: (result: { url?: string }) => { clearTimeout(timer); remove(); resolve(result); },
+        reject: (error: Error) => { clearTimeout(timer); remove(); reject(error); }
+      };
+      waiters.add(waiter);
+      this.sendWaiters.set(sendRequestId, waiters);
+      timer = setTimeout(() => {
+        remove();
+        reject(new SendResultUnknownError("发送结果暂时无法确认，请勿自动重试"));
+      }, timeoutMs);
+      timer.unref();
+
+      void this.readSendResult(sendRequestId).then((result) => {
+        if (result) waiter.resolve(result);
+        else void this.wake();
+      }, waiter.reject);
+    });
+  }
+
+  private async readSendResult(sendRequestId: string): Promise<{ url?: string } | null> {
+    const current = await this.prisma.sendRequest.findUnique({
+      where: { id: sendRequestId },
+      include: { message: { select: { payload: true } } }
+    });
+    if (current?.status === "sent") return { url: extractMessageUrl(current.message?.payload) };
+    if (current?.status === "failed") throw new SendFailedError(current.errorMessage ?? "发送失败");
+    if (current?.status === "unknown") throw new SendResultUnknownError(current.errorMessage ?? "发送结果暂时无法确认，请勿自动重试");
+    return null;
+  }
+
+  private async drain() {
+    const processedTaskIds = new Set<string>();
+    while (true) {
+      const task = await this.claimNextTask();
+      if (!task || processedTaskIds.has(task.id)) return;
+      processedTaskIds.add(task.id);
+      try {
+        await this.handleTask(task.taskType, task.refId, task.payload);
+        await this.prisma.outboxTask.update({
+          where: { id: task.id },
+          data: { status: "done", leaseUntil: null, lastError: null }
+        });
+      } catch (error) {
+        if (task.taskType === "send") {
+          await this.prisma.outboxTask.update({
+            where: { id: task.id },
+            data: {
+              status: "dead",
+              retryCount: task.retryCount + 1,
+              nextRetryAt: null,
+              leaseUntil: null,
+              lastError: error instanceof Error ? error.message : String(error)
+            }
+          });
+          continue;
         }
-      });
-    } catch (error) {
-      if (task.taskType === "send") {
+        const next = transitionAfterFailure({ retryCount: task.retryCount, maxRetry: task.maxRetry }, error);
         await this.prisma.outboxTask.update({
           where: { id: task.id },
           data: {
-            status: "dead",
-            retryCount: task.retryCount + 1,
-            nextRetryAt: null,
+            status: next.status,
+            retryCount: next.retryCount,
+            nextRetryAt: next.nextRetryAt,
             leaseUntil: null,
-            lastError: error instanceof Error ? error.message : String(error)
+            lastError: next.lastError
           }
         });
-        return;
-      }
-      const next = transitionAfterFailure(
-        {
-          retryCount: task.retryCount,
-          maxRetry: task.maxRetry
-        },
-        error
-      );
-      await this.prisma.outboxTask.update({
-        where: { id: task.id },
-        data: {
-          status: next.status,
-          retryCount: next.retryCount,
-          nextRetryAt: next.nextRetryAt,
-          leaseUntil: null,
-          lastError: next.lastError
+        if (task.taskType === "download_media" && next.status === "dead") {
+          await this.media?.markMediaAssetFailedAndDeliver(task.refId, next.lastError);
         }
-      });
-      if (task.taskType === "download_media" && next.status === "dead") {
-        await this.media?.markMediaAssetFailedAndDeliver(task.refId, next.lastError);
       }
     }
   }
@@ -159,7 +218,8 @@ export class OutboxService implements OnModuleInit {
       include: {
         conversation: {
           include: { account: true }
-        }
+        },
+        message: true
       }
     });
     const mapped = parseMappedGeweRequest(sendRequest.geweRequest);
@@ -176,19 +236,24 @@ export class OutboxService implements OnModuleInit {
       const result = extractSendResult(geweResponse, sendRequest.id);
       const text = prepared.localContent?.text ?? extractRenderedText(sendRequest.requestPayload, sendRequest.type);
       const quote = extractQuoteMessageNode(sendRequest.requestPayload);
+      const existingMessage = sendRequest.message ?? await this.prisma.message.findUnique({
+        where: { sendRequestId: sendRequest.id }
+      });
+      const stableMessageId = existingMessage?.messageId ?? createMessageId();
       const localMessage = buildLocalHubSendMessage({
         accountWxid: sendRequest.conversation.account.wxid,
         conversationId: sendRequest.conversation.id,
         conversationWxid: sendRequest.conversation.peerWxid,
         senderWxid: sendRequest.conversation.account.wxid,
         text,
-        newMsgId: result.newMsgId,
+        messageId: stableMessageId,
         createTime: result.createTime,
+        platformMsgId: result.msgId,
+        platformNewMsgId: result.newMsgId,
+        platformCreateTime: result.createTime,
         content: prepared.localContent,
-        quote
-      });
-      const existingMessage = await this.prisma.message.findUnique({
-        where: { sendRequestId: sendRequest.id }
+        quote,
+        outboundMetadata: { sent: true, deliveryMode: sendRequest.deliveryMode }
       });
 
       await this.prisma.message.upsert({
@@ -201,8 +266,11 @@ export class OutboxService implements OnModuleInit {
           payload: localMessage.payload as unknown as Prisma.InputJsonValue
         },
         update: {
-          rawMessageId: localMessage.rawMessageId,
-          dedupeKey: localMessage.dedupeKey,
+          platformMsgId: result.msgId,
+          platformNewMsgId: result.newMsgId,
+          platformCreateTime: result.createTime,
+          type: localMessage.type,
+          isSent: true,
           payload: localMessage.payload as unknown as Prisma.InputJsonValue,
           renderedText: localMessage.renderedText,
           sentAt: localMessage.sentAt
@@ -213,10 +281,11 @@ export class OutboxService implements OnModuleInit {
         sentAt: localMessage.sentAt,
         renderedText: localMessage.renderedText,
         isSelf: true,
-        created: !existingMessage
+        created: !existingMessage,
+        refreshSentAt: existingMessage?.isSent === false
       });
       this.adminEvents?.publishMessageChanged({
-        eventType: "message.created",
+        eventType: existingMessage ? "message.updated" : "message.created",
         conversationId: sendRequest.conversationId,
         messageId: localMessage.messageId,
       });
@@ -225,12 +294,10 @@ export class OutboxService implements OnModuleInit {
         data: {
           status: "sent",
           errorMessage: null,
-          geweResponse: geweResponse as Prisma.InputJsonValue,
-          resultNewMsgId: result.newMsgId,
-          resultMsgId: result.msgId,
-          resultCreateTime: result.createTime
+          geweResponse: geweResponse as Prisma.InputJsonValue
         }
       });
+      this.completeSend(sendRequest.id, { url: extractMessageUrl(localMessage.payload) });
     } catch (error) {
       if (error instanceof GeweRequestTimeoutError) {
         const message = "GeWe 请求超时，发送结果未知，已停止自动重试以避免重复发送";
@@ -241,17 +308,32 @@ export class OutboxService implements OnModuleInit {
             errorMessage: message
           }
         });
-        throw new SendResultUnknownError(message);
+        const unknown = new SendResultUnknownError(message);
+        this.failSend(sendRequest.id, unknown);
+        throw unknown;
       }
+      const failed = error instanceof Error ? error : new Error(String(error));
       await this.prisma.sendRequest.update({
         where: { id: sendRequest.id },
-        data: {
-          status: "failed",
-          errorMessage: error instanceof Error ? error.message : String(error)
-        }
+        data: { status: "failed", errorMessage: failed.message }
       });
-      throw error;
+      this.failSend(sendRequest.id, new SendFailedError(failed.message));
+      throw failed;
     }
+  }
+
+  private completeSend(sendRequestId: string, result: { url?: string }) {
+    const waiters = this.sendWaiters.get(sendRequestId);
+    if (!waiters) return;
+    this.sendWaiters.delete(sendRequestId);
+    for (const waiter of waiters) waiter.resolve(result);
+  }
+
+  private failSend(sendRequestId: string, error: Error) {
+    const waiters = this.sendWaiters.get(sendRequestId);
+    if (!waiters) return;
+    this.sendWaiters.delete(sendRequestId);
+    for (const waiter of waiters) waiter.reject(error);
   }
 
   private async prepareSendRequestForGewe(
@@ -555,11 +637,18 @@ export class OutboxService implements OnModuleInit {
     }
     const revokedMessageRef = extractRevokedMessageRef(rawPayload);
     if (revokedMessageRef) {
-      await this.markMessageRevoked(webhookEventId, revokedMessageRef);
+      await this.markMessageRevoked(
+        webhookEventId,
+        revokedMessageRef,
+        asString(normalizedPayload.wxid ?? normalizedPayload.toUser)
+      );
       return;
     }
 
-    const envelope = normalizeGewePayload(rawPayload);
+    const existingByDedupe = event.dedupeKey
+      ? await this.prisma.message.findUnique({ where: { dedupeKey: event.dedupeKey } })
+      : null;
+    const envelope = normalizeGewePayload(rawPayload, existingByDedupe?.messageId ?? createMessageId());
     if (!envelope) {
       await this.prisma.webhookEvent.update({
         where: { id: webhookEventId },
@@ -614,7 +703,18 @@ export class OutboxService implements OnModuleInit {
       }
     });
 
-    const hydratedEnvelope = await hydrateMessageReferencesFromLocalMessages(this.prisma, envelope, account.id, conversation.id);
+    const envelopeWithStableReferences = await resolveStableReferenceIds(
+      this.prisma,
+      envelope,
+      account.id,
+      conversation.id
+    );
+    const hydratedEnvelope = await hydrateMessageReferencesFromLocalMessages(
+      this.prisma,
+      envelopeWithStableReferences,
+      account.id,
+      conversation.id
+    );
     if (hydratedEnvelope.renderedText !== envelope.renderedText) {
       await this.prisma.conversation.update({
         where: { id: conversation.id },
@@ -625,7 +725,7 @@ export class OutboxService implements OnModuleInit {
     }
 
     const messageDedupeKey = event.dedupeKey ?? envelope.messageId;
-    const existingMessage = await this.prisma.message.findUnique({
+    const existingMessage = existingByDedupe ?? await this.prisma.message.findUnique({
       where: { dedupeKey: messageDedupeKey }
     });
     const message = await this.prisma.message.upsert({
@@ -636,7 +736,9 @@ export class OutboxService implements OnModuleInit {
         webhookEventId,
         source: "callback",
         messageId: hydratedEnvelope.messageId,
-        rawMessageId: String(normalizedPayload.newMsgId ?? normalizedPayload.msgId ?? hydratedEnvelope.messageId),
+        platformMsgId: asString(normalizedPayload.msgId) ?? null,
+        platformNewMsgId: asString(normalizedPayload.newMsgId) ?? null,
+        platformCreateTime: asString(normalizedPayload.createTime) ?? null,
         dedupeKey: messageDedupeKey,
         type: hydratedEnvelope.content.type,
         status: hydratedEnvelope.status,
@@ -651,7 +753,9 @@ export class OutboxService implements OnModuleInit {
       update: {
         webhookEventId,
         messageId: hydratedEnvelope.messageId,
-        rawMessageId: String(normalizedPayload.newMsgId ?? normalizedPayload.msgId ?? hydratedEnvelope.messageId),
+        platformMsgId: asString(normalizedPayload.msgId) ?? null,
+        platformNewMsgId: asString(normalizedPayload.newMsgId) ?? null,
+        platformCreateTime: asString(normalizedPayload.createTime) ?? null,
         type: hydratedEnvelope.content.type,
         payload: hydratedEnvelope as unknown as Prisma.InputJsonValue,
         renderedText: hydratedEnvelope.renderedText.slice(0, 500),
@@ -684,7 +788,7 @@ export class OutboxService implements OnModuleInit {
         payload: hydratedEnvelope
       },
       rawContent: asString(normalizedPayload.content) ?? "",
-      rawMsgId: asString(normalizedPayload.msgId ?? normalizedPayload.newMsgId) ?? message.rawMessageId ?? hydratedEnvelope.messageId
+      rawMsgId: asString(normalizedPayload.msgId ?? normalizedPayload.newMsgId) ?? message.platformMsgId ?? message.platformNewMsgId ?? hydratedEnvelope.messageId
     }) ?? 0;
     if (mediaCount === 0) {
       await this.delivery.createForMessage(message);
@@ -706,6 +810,7 @@ export class OutboxService implements OnModuleInit {
     renderedText: string;
     isSelf: boolean;
     created: boolean;
+    refreshSentAt?: boolean;
   }) {
     const data: Prisma.ConversationUpdateInput = input.created
       ? {
@@ -716,6 +821,7 @@ export class OutboxService implements OnModuleInit {
           isHidden: false
         }
       : {
+          ...(input.refreshSentAt ? { lastMessageAt: input.sentAt, isHidden: false } : {}),
           lastMessageText: input.renderedText.slice(0, 500)
         };
     await this.prisma.conversation.update({
@@ -759,38 +865,29 @@ export class OutboxService implements OnModuleInit {
     });
   }
 
-  private async markMessageRevoked(webhookEventId: string, ref: { messageId: string | null; rawMsgId: string | null }) {
+  private async markMessageRevoked(
+    webhookEventId: string,
+    ref: { platformNewMsgId: string | null; platformMsgId: string | null },
+    accountWxid: string | undefined
+  ) {
     const revokedAt = new Date();
-    const existing = ref.messageId
-      ? await this.prisma.message.findUnique({
-          where: { messageId: ref.messageId },
-          include: {
-            conversation: {
-              include: { app: true }
-            }
-          }
-        })
-      : null;
-    const fallback = existing || !ref.rawMsgId
-      ? null
-      : await this.prisma.message.findFirst({
+    const target = ref.platformNewMsgId
+      ? await this.prisma.message.findFirst({
           where: {
-            webhookEvent: {
-              is: {
-                rawPayload: {
-                  path: "$.Data.MsgId",
-                  equals: Number(ref.rawMsgId)
-                }
-              }
-            }
+            platformNewMsgId: ref.platformNewMsgId,
+            ...(accountWxid ? { account: { wxid: accountWxid } } : {})
           },
-          include: {
-            conversation: {
-              include: { app: true }
-            }
-          }
-        });
-    const target = existing ?? fallback;
+          include: { conversation: { include: { app: true } } }
+        })
+      : ref.platformMsgId
+        ? await this.prisma.message.findFirst({
+            where: {
+              platformMsgId: ref.platformMsgId,
+              ...(accountWxid ? { account: { wxid: accountWxid } } : {})
+            },
+            include: { conversation: { include: { app: true } } }
+          })
+        : null;
 
     if (!target) {
       await this.prisma.webhookEvent.update({
@@ -897,7 +994,16 @@ function parseSyncContactsPayload(payload: unknown, refId: string) {
   };
 }
 
-class SendResultUnknownError extends Error {
+export class SendFailedError extends Error {
+  readonly code = "SEND_FAILED";
+  constructor(message: string) {
+    super(message);
+    this.name = "SendFailedError";
+  }
+}
+
+export class SendResultUnknownError extends Error {
+  readonly code = "SEND_RESULT_UNKNOWN";
   constructor(message: string) {
     super(message);
     this.name = "SendResultUnknownError";
@@ -978,6 +1084,50 @@ const DEFAULT_LINK_THUMBNAIL_JPEG_BASE64 =
 
 const DEFAULT_LINK_THUMBNAIL_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAZAAAAGQCAIAAAAP3aGbAAAACXBIWXMAAAABAAAAAQBPJcTWAAAFN0lEQVR4nO3UMQ0AIQDAwCf5nRER+PeHBTbS5E5Bp4659gdQ8L8OALhlWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZhgVkGBaQYVhAhmEBGYYFZBgWkGFYQIZhARmGBWQYFpBhWECGYQEZB31HBo9AxX7DAAAAAElFTkSuQmCC";
+
+async function resolveStableReferenceIds(
+  prisma: PrismaService,
+  envelope: MessageEnvelope,
+  accountId: string,
+  conversationId: string
+): Promise<MessageEnvelope> {
+  const cache = new Map<string, string | null>();
+  const resolveId = async (platformId: string | undefined): Promise<string | undefined> => {
+    if (!platformId) return undefined;
+    if (/^msg_[A-Za-z0-9_-]{22}$/.test(platformId)) return platformId;
+    if (!cache.has(platformId)) {
+      const message = await prisma.message.findFirst({
+        where: { accountId, conversationId, platformNewMsgId: platformId },
+        orderBy: { sentAt: "desc" },
+        select: { messageId: true }
+      });
+      cache.set(platformId, message?.messageId ?? null);
+    }
+    return cache.get(platformId) ?? undefined;
+  };
+  const resolveNode = async (node: MessageNode): Promise<MessageNode> => ({
+    ...node,
+    sourceMessageId: await resolveId(node.sourceMessageId),
+    items: node.items ? await Promise.all(node.items.map(resolveNode)) : node.items,
+    quote: node.quote ? await resolveNode(node.quote) : node.quote
+  });
+  const content = await resolveNode(envelope.content);
+  const quote = envelope.quote ? await resolveNode(envelope.quote) : envelope.quote;
+  const resolved = { ...envelope, content, quote };
+  return {
+    ...resolved,
+    renderedText: renderMessageSummary(content, quote),
+    renderedMd: renderMessageMarkdown(resolved)
+  };
+}
+
+function extractMessageUrl(payload: unknown): string | undefined {
+  const record = asRecord(payload);
+  const content = asRecord(record?.content);
+  const media = asRecord(content?.media);
+  const link = asRecord(content?.link);
+  return asString(media?.url ?? link?.url);
+}
 
 function extractSendResult(response: unknown, fallbackId: string): { newMsgId: string; msgId: string; createTime: string } {
   const record = asRecord(response);

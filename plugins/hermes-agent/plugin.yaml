@@ -8,6 +8,7 @@ description: >
 author: GeWeHub
 provides_tools:
   - gewehub_send_message
+  - gewehub_revoke_message
 requires_env:
   - name: GEWEHUB_BASE_URL
     description: "GeWeHub base URL, for example https://gewehub.example.com"

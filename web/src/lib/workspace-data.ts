@@ -39,6 +39,8 @@ export interface MessageItem {
   id: string;
   messageId: string;
   sendRequestId?: string | null;
+  isSent?: boolean;
+  sendRequest?: BackendSendRequest | null;
   senderName: string;
   senderProfile: WechatEntityProfile;
   isSelf: boolean;
@@ -81,13 +83,16 @@ export interface LocalSendPayload {
   htmlContent?: string;
   htmlContentBase64?: string;
   htmlFileName?: string;
-  htmlPublicUrl?: string;
+  resolvedUrl?: string;
 }
+
+export type SendDeliveryMode = "immediate" | "discard" | "confirm";
 
 export interface BackendSendRequest {
   id: string;
   type?: string;
-  status: "pending" | "sent" | "failed" | "unknown" | string;
+  status: "held" | "pending" | "sent" | "failed" | "unknown" | string;
+  deliveryMode?: SendDeliveryMode | null;
   errorMessage?: string | null;
 }
 
@@ -125,6 +130,8 @@ export interface BackendMessage {
   id: string;
   messageId: string;
   sendRequestId?: string | null;
+  isSent?: boolean;
+  sendRequest?: BackendSendRequest | null;
   senderWxid: string;
   isSelf: boolean;
   status: "normal" | "revoked";
@@ -181,7 +188,9 @@ export function mapMessageItem(message: BackendMessage): MessageItem {
   return {
     id: message.id,
     messageId: message.messageId,
-    sendRequestId: message.sendRequestId ?? null,
+    sendRequestId: message.sendRequestId ?? message.sendRequest?.id ?? null,
+    isSent: message.isSent ?? true,
+    sendRequest: message.sendRequest ?? null,
     senderName:
       readSenderDisplayName(message.senderProfile ?? null) ||
       asString(sender?.name) ||

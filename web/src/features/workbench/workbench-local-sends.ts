@@ -18,6 +18,7 @@ export interface LocalSend {
   durationMs?: number;
   status: "pending" | "failed";
   errorMessage?: string;
+  messageId?: string | null;
   sendRequestId?: string | null;
   sendPayload?: LocalSendPayload;
   createdAtIso: string;
@@ -26,11 +27,13 @@ export interface LocalSend {
 export type LocalTextSend = LocalSend;
 
 export function mergeMessagesById(messages: MessageItem[]): MessageItem[] {
-  const seen = new Set<string>();
+  const seenIds = new Set<string>();
+  const seenMessageIds = new Set<string>();
   const merged: MessageItem[] = [];
   for (const message of messages) {
-    if (seen.has(message.id)) continue;
-    seen.add(message.id);
+    if (seenIds.has(message.id) || seenMessageIds.has(message.messageId)) continue;
+    seenIds.add(message.id);
+    seenMessageIds.add(message.messageId);
     merged.push(message);
   }
   return merged;
@@ -42,9 +45,11 @@ export function buildVisibleMessages(
   conversationId: string | null,
   account?: AccountSummary,
 ): MessageItem[] {
+  const serverMessageIds = new Set(serverMessages.map((message) => message.messageId).filter(Boolean));
   const serverSendRequestIds = new Set(serverMessages.map((message) => message.sendRequestId).filter(Boolean));
   const localMessages = localSends
     .filter((send) => send.conversationId === conversationId)
+    .filter((send) => !send.messageId || !serverMessageIds.has(send.messageId))
     .filter((send) => !send.sendRequestId || !serverSendRequestIds.has(send.sendRequestId))
     .map((send) => mapLocalSendToMessageItem(send, account));
 
@@ -60,6 +65,7 @@ export function mapLocalSendToMessageItem(send: LocalSend, account?: AccountSumm
     type: send.type,
     text: send.text,
     status: send.status,
+    messageId: send.messageId ?? null,
     sendRequestId: send.sendRequestId ?? null,
     sendPayload: send.sendPayload,
     mentions: send.mentions,
@@ -69,7 +75,7 @@ export function mapLocalSendToMessageItem(send: LocalSend, account?: AccountSumm
 
   return {
     id: send.id,
-    messageId: send.id,
+    messageId: send.messageId ?? send.id,
     sendRequestId: send.sendRequestId ?? null,
     senderName,
     senderProfile: {
@@ -218,7 +224,7 @@ function localSendContent(send: LocalSend): MessageNode {
       link: {
         title: send.sendPayload?.title,
         desc: send.sendPayload?.desc,
-        url: send.sendPayload?.htmlPublicUrl ?? send.sendPayload?.linkUrl,
+        url: send.sendPayload?.resolvedUrl ?? send.sendPayload?.linkUrl,
         thumbnailUrl: send.sendPayload?.thumbUrl,
       },
     };

@@ -28,10 +28,15 @@ export function renderNodeSummary(node: MessageNode): string {
 export function renderMessageMarkdown(envelope: MessageEnvelope): string {
   const lines: string[] = ["[上下文]"];
   lines.push(`消息ID: ${envelope.messageId}`);
-  lines.push(`会话: ${formatConversation(envelope.conversation)}`);
+  lines.push(`会话ID: ${envelope.conversation.id}`);
+  lines.push(`会话类型: ${envelope.conversation.type}`);
+  if (envelope.conversation.name?.trim()) lines.push(`会话名称: ${envelope.conversation.name.trim()}`);
+  if (envelope.conversation.remark?.trim()) lines.push(`会话备注: ${envelope.conversation.remark.trim()}`);
+  lines.push(`发送者ID: ${envelope.sender.wxid}`);
+  if (envelope.sender.name?.trim()) lines.push(`发送者名称: ${envelope.sender.name.trim()}`);
+  if (envelope.sender.remark?.trim()) lines.push(`发送者备注: ${envelope.sender.remark.trim()}`);
   const sentAt = formatDateTime(envelope.sentAt);
   if (sentAt) lines.push(`时间: ${sentAt}`);
-  lines.push(`${envelope.content.type === "chat_record" ? "转发者" : "发送者"}: ${formatIdentity(envelope.sender)}`);
   if (envelope.content.type === "chat_record") lines.push("消息类型: 合并转发");
 
   const mentioned = envelope.mentions.map(formatMention).filter(Boolean);
@@ -209,19 +214,6 @@ function renderTransferMarkdown(node: MessageNode): string {
   return node.transfer?.memo ? `[转账] ${amount}：${node.transfer.memo}` : `[转账] ${amount}`;
 }
 
-function formatConversation(conversation: MessageEnvelope["conversation"]): string {
-  const name = conversation.remark || conversation.name || conversation.wxid;
-  return `${name} (${conversation.type}, ${conversation.id})`;
-}
-
-function formatIdentity(identity: {
-  wxid: string;
-  name?: string;
-  remark?: string;
-}): string {
-  const name = identity.remark || identity.name || identity.wxid;
-  return `${name} <${identity.wxid}>`;
-}
 
 function formatMention(mention: MessageEnvelope["mentions"][number]): string | null {
   if (mention.wxid) return `${mention.name || mention.wxid} <${mention.wxid}>`;

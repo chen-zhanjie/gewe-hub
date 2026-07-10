@@ -44,7 +44,7 @@ describe("send 工具", () => {
       text: "@陈可乐 这个我看过了",
       quote: {
         messageId: "msg_478238581151300365",
-        rawMessageId: "478238581151300365",
+        platformNewMsgId: "478238581151300365",
         senderWxid: "wxid_sender",
         senderName: "陈可乐",
         sentAt: "2026-07-09T10:11:12.000Z",
@@ -86,7 +86,7 @@ describe("send 工具", () => {
       conversationWxid: "room@chatroom",
       senderWxid: "wxid_bot",
       text: "这个我看过了",
-      newMsgId: "9154866412345678",
+      messageId: "msg_9154866412345678",
       createTime: "1782932724220",
       quote: {
         type: "image",
@@ -310,7 +310,7 @@ describe("send 工具", () => {
       conversationWxid: "wxid_target",
       senderWxid: "wxid_bot",
       text: "回复",
-      newMsgId: "9154866412345678",
+      messageId: "msg_9154866412345678",
       createTime: "1782932724220"
     });
 
@@ -326,7 +326,7 @@ describe("send 工具", () => {
       conversationWxid: "wxid_target",
       senderWxid: "wxid_bot",
       text: "[图片]",
-      newMsgId: "3752114964119400000",
+      messageId: "msg_3752114964119400000",
       createTime: "1783476300",
       content: {
         type: "image",
@@ -352,7 +352,7 @@ describe("send 工具", () => {
       conversationWxid: "wxid_target",
       senderWxid: "wxid_bot",
       text: "[语音]",
-      newMsgId: "9154866412345678",
+      messageId: "msg_9154866412345678",
       createTime: "1782932724220",
       content: {
         type: "voice",

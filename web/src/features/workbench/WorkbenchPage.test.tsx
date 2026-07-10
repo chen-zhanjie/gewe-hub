@@ -350,7 +350,7 @@ describe("WorkbenchPage", () => {
           deliveries: [],
         },
       ],
-      "/api/send": { id: "send_1", status: "pending" },
+      "/api/send": { success: true, messageId: "msg_sent_1" },
     });
 
     renderWorkbenchPage();
@@ -444,7 +444,7 @@ describe("WorkbenchPage", () => {
         nextSkip: 0,
         hasMore: false,
       },
-      "/api/send": { id: "send_quote", status: "pending" },
+      "/api/send": { success: true, messageId: "msg_quote_sent" },
     });
 
     renderWorkbenchPage();
@@ -542,7 +542,7 @@ describe("WorkbenchPage", () => {
     expect(screen.getByText("发送中")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
 
-    resolveSend(jsonResponse({ id: "send_pending_1", status: "pending" }));
+    resolveSend(jsonResponse({ success: true, messageId: "msg_pending_1", accepted: true }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/send",
@@ -555,7 +555,7 @@ describe("WorkbenchPage", () => {
     );
   });
 
-  it("文本发送失败后保留失败气泡，支持重试和删除", async () => {
+  it("文本发送失败后保留失败气泡并支持重试，重试 pending 时禁用删除", async () => {
     const fetchMock = mockFetch({
       "/api/accounts": [
         {
@@ -579,7 +579,7 @@ describe("WorkbenchPage", () => {
       "/api/conversations/conv_1/messages?take=50": [
         messageFixture("row_old", "msg_old", "旧消息", "2026-07-06T07:16:37.000Z"),
       ],
-      "/api/send": { id: "send_retry_1", status: "pending" },
+      "/api/send": { success: true, messageId: "msg_retry_1" },
     });
     let sendAttempts = 0;
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -589,7 +589,7 @@ describe("WorkbenchPage", () => {
         if (sendAttempts === 1) {
           return jsonResponse({ error: { message: "GeWe 暂不可用" } }, 502);
         }
-        return jsonResponse({ id: "send_retry_1", status: "pending" });
+        return jsonResponse({ success: true, messageId: "msg_retry_1" });
       }
       return mockResponseForRoute(path, {
         "/api/accounts": [
@@ -630,8 +630,8 @@ describe("WorkbenchPage", () => {
     await waitFor(() => expect(sendAttempts).toBe(2));
     expect(screen.getByText("发送中")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "删除未发送消息 失败后重试" }));
-    expect(screen.queryByText("失败后重试")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "删除未发送消息 失败后重试" })).toBeDisabled();
+    expect(screen.getByText("失败后重试")).toBeInTheDocument();
   });
 
   it("点击加载更早消息时用当前最旧 messageId 翻页并 prepend 到消息流", async () => {
@@ -677,4 +677,87 @@ describe("WorkbenchPage", () => {
     );
     expect(await screen.findByText("更早的历史消息")).toBeInTheDocument();
   });
+
+  it("人工发送 held 消息后刷新消息和 workspace，并按新的 sentAt 重排", async () => {
+    let messageFetchCount = 0;
+    const account = {
+      id: "acc_1",
+      wxid: "wxid_bot",
+      nickname: "客服主号",
+      onlineStatus: "online",
+    };
+    const conversation = {
+      id: "conv_1",
+      accountId: "acc_1",
+      peerWxid: "wxid_target",
+      type: "private",
+      platformRemark: "陈可乐",
+      lastMessageText: "普通消息",
+      lastMessageAt: "2026-07-11T08:00:00.000Z",
+      status: "active",
+    };
+    const heldMessage = (sentAt: string, isSent: boolean, status: string) => ({
+      id: "row_held",
+      messageId: isSent ? "msg_sent" : "msg_held_send_1",
+      sendRequestId: "send_1",
+      senderWxid: "wxid_bot",
+      isSelf: true,
+      isSent,
+      sendRequest: { id: "send_1", status },
+      status: "normal",
+      sentAt,
+      payload: {
+        sender: { wxid: "wxid_bot", name: "客服主号", isOwner: true },
+        content: { type: "text", text: "待发送消息" },
+      },
+      deliveries: [],
+    });
+    const normalMessage = messageFixture(
+      "row_normal",
+      "msg_normal",
+      "普通消息",
+      "2026-07-11T08:00:00.000Z",
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input).replace("http://localhost", "");
+      if (path === "/api/accounts") return jsonResponse([account]);
+      if (path === "/api/apps") return jsonResponse([]);
+      if (path === "/api/conversations") return jsonResponse([conversation]);
+      if (path === "/api/conversations/conv_1/messages?take=50") {
+        messageFetchCount += 1;
+        return jsonResponse(
+          messageFetchCount === 1
+            ? [normalMessage, heldMessage("2026-07-11T07:00:00.000Z", false, "held")]
+            : [heldMessage("2026-07-11T09:00:00.000Z", true, "sent"), normalMessage],
+        );
+      }
+      if (path === "/api/send/send_1/dispatch" && init?.method === "POST") {
+        return jsonResponse({ id: "send_1", status: "pending" });
+      }
+      return jsonResponse({ error: { message: "not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWorkbenchPage();
+
+    expect(await screen.findByText("待确认")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "发送消息 msg_held_send_1" }));
+
+    await waitFor(() => expect(messageFetchCount).toBe(2));
+    await waitFor(() => expect(screen.queryByText("未发送")).not.toBeInTheDocument());
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([input]) => String(input) === "/api/accounts")).toHaveLength(2);
+      expect(fetchMock.mock.calls.filter(([input]) => String(input) === "/api/conversations")).toHaveLength(2);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/send/send_1/dispatch",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    const messageArea = screen.getByLabelText("消息区");
+    const normal = within(messageArea).getByText("普通消息");
+    const dispatched = within(messageArea).getByText("待发送消息");
+    expect(normal.compareDocumentPosition(dispatched) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
 });

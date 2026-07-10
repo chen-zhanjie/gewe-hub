@@ -61,6 +61,7 @@ export function shouldSkipStandardMessage(
 
 export function normalizeGewePayload(
   rawPayload: Record<string, unknown>,
+  messageId?: string,
 ): MessageEnvelope | null {
   const payload = normalizeWebhookPayload(rawPayload);
   if (shouldSkipStandardMessage(payload)) return null;
@@ -86,7 +87,7 @@ export function normalizeGewePayload(
   const envelope: MessageEnvelope = {
     schemaVersion: 1,
     eventType: "message.created",
-    messageId: `msg_${asString(payload.newMsgId ?? payload.msgId) ?? "unknown"}`,
+    messageId: messageId ?? `msg_${asString(payload.newMsgId ?? payload.msgId) ?? "unknown"}`,
     status: "normal",
     isSelf,
     isAtMe,
@@ -124,8 +125,8 @@ export function normalizeGewePayload(
 }
 
 export interface RevokedMessageRef {
-  messageId: string | null;
-  rawMsgId: string | null;
+  platformNewMsgId: string | null;
+  platformMsgId: string | null;
 }
 
 export function extractRevokedMessageRef(
@@ -137,8 +138,8 @@ export function extractRevokedMessageRef(
   const newMsgId = firstString(parsed?.sysmsg?.revokemsg?.newmsgid);
   const rawMsgId = firstString(parsed?.sysmsg?.revokemsg?.msgid);
   return {
-    messageId: newMsgId ? `msg_${newMsgId}` : null,
-    rawMsgId: rawMsgId ?? null,
+    platformNewMsgId: newMsgId ?? null,
+    platformMsgId: rawMsgId ?? null,
   };
 }
 
@@ -366,7 +367,7 @@ function attachQuoteMetadata(
     senderName: displayName ?? node.senderName,
     senderWxid:
       firstString(refermsg.chatusr ?? refermsg.fromusr) ?? node.senderWxid,
-    sourceMessageId: sourceId ? `msg_${sourceId}` : node.sourceMessageId,
+    sourceMessageId: sourceId ?? node.sourceMessageId,
     sentAt: createTime ? secondsToIsoString(createTime) : node.sentAt,
   };
 }
@@ -436,9 +437,7 @@ function normalizeRecordItem(item: Record<string, unknown>): MessageNode {
   const quote = normalizeRecordItemQuote(item);
   const base = {
     senderName: firstString(item.sourcename),
-    sourceMessageId: firstString(item.fromnewmsgid)
-      ? `msg_${firstString(item.fromnewmsgid)}`
-      : undefined,
+    sourceMessageId: firstString(item.fromnewmsgid),
     sentAt: item.srcMsgCreateTime
       ? secondsToIsoString(item.srcMsgCreateTime)
       : undefined,
@@ -691,7 +690,6 @@ function buildGeweMetadata(
     rawMsgType: asString(payload.rawMsgType ?? payload.msgType),
     appMsgType: asString(payload.appMsgType),
     realInnerType: asString(payload.realInnerType),
-    rawMessageId: asString(payload.newMsgId),
   });
   const appattach = parseAppMsg(asString(payload.content))?.appattach;
   const overwriteNewMsgId = firstString(appattach?.overwrite_newmsgid);

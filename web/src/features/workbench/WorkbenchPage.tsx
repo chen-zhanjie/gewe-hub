@@ -9,7 +9,6 @@ import { WorkbenchComposerOutlet } from "@/features/workbench/WorkbenchComposerO
 import { WorkbenchConversationOverlays } from "@/features/workbench/WorkbenchConversationOverlays";
 import {
   adminEventSourceStatusEvent,
-  fetchWorkbenchSendRequest,
   parseWorkbenchLinkPreview,
   sendWorkbenchPayload,
   sendWorkbenchText,
@@ -25,6 +24,7 @@ import { useConversationUnreadState } from "@/features/workbench/useConversation
 import { useWorkbenchComposerController } from "@/features/workbench/useWorkbenchComposerController";
 import { useWorkbenchConversationSurfaceController } from "@/features/workbench/useWorkbenchConversationSurfaceController";
 import { useWorkbenchMessageRevokeController } from "@/features/workbench/useWorkbenchMessageRevokeController";
+import { useWorkbenchMessageDispatchController } from "@/features/workbench/useWorkbenchMessageDispatchController";
 import { useWorkbenchMessagesController } from "@/features/workbench/useWorkbenchMessagesController";
 import { filterConversationsForAccount } from "@/features/workbench/workbench-conversation-filter";
 import { readStoredSelectedAccountId, storeSelectedAccountId } from "@/features/workbench/workbench-selection-storage";
@@ -192,14 +192,13 @@ export function WorkbenchPage({
     refreshMessages,
     sendText: sendWorkbenchText,
     sendPayload: sendWorkbenchPayload,
-    fetchSendRequest: fetchWorkbenchSendRequest,
   });
   const messageRevoke = useWorkbenchMessageRevokeController({
     selectedConversation,
     refreshMessages,
     refreshWorkspace,
   });
-
+  const messageDispatch = useWorkbenchMessageDispatchController({ selectedConversation, refreshMessages, refreshWorkspace });
   useEffect(() => {
     if (initialAccountId === initialAccountIdRef.current) return;
     initialAccountIdRef.current = initialAccountId;
@@ -324,6 +323,8 @@ export function WorkbenchPage({
           onRetryLocalSend={messageState.retryLocalSend}
           onDeleteLocalSend={messageState.deleteLocalSend}
           onRequestRevoke={messageRevoke.requestRevokeMessage}
+          onDispatchHeldMessage={messageDispatch.dispatchHeldMessage}
+          dispatchingMessageId={messageDispatch.dispatchingMessageId}
           onQuoteMessage={setQuotedMessage}
         >
           <WorkbenchComposerOutlet selected={Boolean(selectedConversation)} composer={composer} />

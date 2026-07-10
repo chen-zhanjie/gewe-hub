@@ -3,6 +3,7 @@ import {
   ackResponseSchema,
   messageEnvelopeSchema,
   messageNodeSchema,
+  sendFailureResponseSchema,
   sendResponseSchema,
   sendRequestSchema
 } from "../src/index";
@@ -108,7 +109,13 @@ describe("标准消息契约", () => {
   });
 
   it("校验发送请求第一版支持类型", () => {
-    expect(sendRequestSchema.parse({ conversationId: "cvs_1", type: "text", text: "你好" }).type).toBe("text");
+    const defaultSend = sendRequestSchema.parse({ conversationId: "cvs_1", type: "text", text: "你好" });
+    expect(defaultSend.type).toBe("text");
+    expect(defaultSend.deliveryMode).toBe("immediate");
+    expect(defaultSend.executionMode).toBe("sync");
+    expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "text", text: "旧协议", send: false })).toThrow();
+    expect(sendRequestSchema.parse({ conversationId: "cvs_1", type: "text", text: "不发送", deliveryMode: "discard" }).deliveryMode).toBe("discard");
+    expect(sendRequestSchema.parse({ conversationId: "cvs_1", type: "text", text: "待确认", deliveryMode: "confirm", executionMode: "async" }).executionMode).toBe("async");
     expect(
       sendRequestSchema.parse({
         conversationId: "cvs_1",
@@ -213,21 +220,27 @@ describe("标准消息契约", () => {
     expect(() => sendRequestSchema.parse({ conversationId: "cvs_1", type: "sticker" })).toThrow();
   });
 
-  it("校验 ACK 与发送响应契约", () => {
+  it("校验 ACK 与标准发送响应契约", () => {
     expect(ackResponseSchema.parse({ ok: true, acked: 2 }).acked).toBe(2);
-    expect(sendResponseSchema.parse({ id: "send_1", status: "pending" }).status).toBe("pending");
-    expect(sendResponseSchema.parse({ id: "send_1", status: "sent", messageId: "msg_1" }).messageId).toBe("msg_1");
+    expect(sendResponseSchema.parse({ success: true, messageId: "msg_1" }).messageId).toBe("msg_1");
     expect(
       sendResponseSchema.parse({
-        id: "send_html",
-        status: "pending",
-        htmlPublicUrl: "https://gewehub.yunzxu.com/h/html_token",
-        htmlPageId: "html_1",
-        htmlHosted: true
-      }).htmlPublicUrl
+        success: true,
+        messageId: "msg_html",
+        url: "https://gewehub.yunzxu.com/h/html_token"
+      }).url
     ).toBe("https://gewehub.yunzxu.com/h/html_token");
+    expect(sendResponseSchema.parse({ success: true, messageId: "msg_2", accepted: true }).accepted).toBe(true);
+    expect(
+      sendFailureResponseSchema.parse({
+        success: false,
+        messageId: "msg_3",
+        error: { code: "SEND_FAILED", message: "发送失败" }
+      }).error.code
+    ).toBe("SEND_FAILED");
     expect(() => ackResponseSchema.parse({ ok: false, acked: 0 })).toThrow();
-    expect(() => sendResponseSchema.parse({ id: "send_1", status: "unknown" })).toThrow();
+    expect(() => sendResponseSchema.parse({ id: "send_1", status: "pending" })).toThrow();
+    expect(() => sendResponseSchema.parse({ success: true, messageId: "msg_1", status: "sent" })).toThrow();
   });
 
   it("接受 html 标准消息节点，链接字段承载公网访问地址", () => {

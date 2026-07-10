@@ -31,7 +31,7 @@ describe("WorkbenchPage composer", () => {
         },
       ],
       "/api/conversations/conv_1/messages?take=50": [],
-      "/api/send": { id: "send_voice", status: "pending" },
+      "/api/send": { success: true, messageId: "msg_voice" },
     });
     const createObjectUrl = vi.fn(() => "blob:voice");
     const revokeObjectUrl = vi.fn();
@@ -102,7 +102,7 @@ describe("WorkbenchPage composer", () => {
         },
       ],
       "/api/conversations/conv_1/messages?take=50": [],
-      "/api/send": { id: "send_recorded_voice", status: "pending" },
+      "/api/send": { success: true, messageId: "msg_recorded_voice" },
     });
     const trackStop = vi.fn();
     const getUserMedia = vi.fn(async () => ({ getTracks: () => [{ stop: trackStop }] }) as unknown as MediaStream);
@@ -238,7 +238,7 @@ describe("WorkbenchPage composer", () => {
         },
       ],
       "/api/conversations/conv_1/messages?take=50": [],
-      "/api/send": { id: "send_image", status: "pending" },
+      "/api/send": { success: true, messageId: "msg_image" },
     });
 
     renderWorkbenchPage();
@@ -288,7 +288,7 @@ describe("WorkbenchPage composer", () => {
         },
       ],
       "/api/conversations/conv_1/messages?take=50": [],
-      "/api/send": { id: "send_file", status: "pending" },
+      "/api/send": { success: true, messageId: "msg_file" },
     });
 
     renderWorkbenchPage();
@@ -338,7 +338,7 @@ describe("WorkbenchPage composer", () => {
         },
       ],
       "/api/conversations/conv_1/messages?take=50": [],
-      "/api/send": { id: "send_pasted_image", status: "pending" },
+      "/api/send": { success: true, messageId: "msg_pasted_image" },
     });
 
     renderWorkbenchPage();
@@ -456,7 +456,7 @@ describe("WorkbenchPage composer", () => {
         },
       ],
       "/api/conversations/conv_1/messages?take=50": [],
-      "/api/send": { id: "send_video", status: "pending" },
+      "/api/send": { success: true, messageId: "msg_video" },
     });
     const createObjectUrl = vi.fn(() => "blob:video");
     const revokeObjectUrl = vi.fn();
@@ -536,7 +536,7 @@ describe("WorkbenchPage composer", () => {
         },
       ],
       "/api/conversations/conv_1/messages?take=50": [],
-      "/api/send": { id: "send_video", status: "pending" },
+      "/api/send": { success: true, messageId: "msg_video" },
     });
     vi.stubGlobal("URL", {
       ...URL,
@@ -618,7 +618,7 @@ describe("WorkbenchPage composer", () => {
         },
       ],
       "/api/conversations/conv_1/messages?take=50": [],
-      "/api/send": { id: "send_link", status: "pending" },
+      "/api/send": { success: true, messageId: "msg_link" },
     });
 
     renderWorkbenchPage();
@@ -678,7 +678,7 @@ describe("WorkbenchPage composer", () => {
         },
       ],
       "/api/conversations/conv_1/messages?take=50": [],
-      "/api/send": { id: "send_link", status: "pending" },
+      "/api/send": { success: true, messageId: "msg_link" },
     });
 
     renderWorkbenchPage();

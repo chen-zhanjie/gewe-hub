@@ -4,6 +4,7 @@ import type { RefObject } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type WorkbenchRealtimeMessageDetail,
+  type WorkbenchSendResponse,
   workbenchRealtimeMessageEvent,
 } from "@/features/workbench/queries";
 import {
@@ -21,13 +22,9 @@ import {
   mapMessageItem,
   type AccountSummary,
   type BackendMessage,
-  type BackendSendRequest,
   type ConversationSummary,
   type MessageItem,
 } from "@/lib/workspace-data";
-
-const LOCAL_SEND_STATUS_POLL_DELAY_MS = 1200;
-const LOCAL_SEND_STATUS_MAX_POLLS = 20;
 
 interface WorkbenchMessagesControllerOptions {
   account?: AccountSummary;
@@ -37,9 +34,8 @@ interface WorkbenchMessagesControllerOptions {
   messageListRef: RefObject<HTMLDivElement | null>;
   loadOlderMessages: (conversationId: string, beforeMessageId: string) => Promise<BackendMessage[]>;
   refreshMessages: (conversationId: string) => Promise<BackendMessage[]>;
-  sendText: (conversationId: string, text: string, options?: SendTextOptions) => Promise<{ id: string }>;
-  sendPayload: (conversationId: string, payload: LocalSendPayload) => Promise<{ id: string }>;
-  fetchSendRequest: (sendRequestId: string) => Promise<BackendSendRequest>;
+  sendText: (conversationId: string, text: string, options?: SendTextOptions) => Promise<WorkbenchSendResponse>;
+  sendPayload: (conversationId: string, payload: LocalSendPayload) => Promise<WorkbenchSendResponse>;
 }
 
 export interface SendTextOptions {
@@ -58,12 +54,10 @@ export function useWorkbenchMessagesController({
   refreshMessages,
   sendText,
   sendPayload,
-  fetchSendRequest,
 }: WorkbenchMessagesControllerOptions) {
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [localSends, setLocalSendsState] = useState<LocalSend[]>([]);
   const localSendsRef = useRef<LocalSend[]>([]);
-  const statusPollTimersRef = useRef<number[]>([]);
   const scrollFrameIdsRef = useRef<number[]>([]);
   const pendingInitialScrollConversationIdRef = useRef<string | null>(null);
   const userScrolledAwayConversationIdRef = useRef<string | null>(null);
@@ -127,19 +121,20 @@ export function useWorkbenchMessagesController({
   }, [effectiveConversationId, messageListRef]);
 
   useEffect(() => {
+    const serverMessageIds = new Set(messages.map((message) => message.messageId).filter(Boolean));
     const serverSendRequestIds = new Set(messages.map((message) => message.sendRequestId).filter(Boolean));
-    if (serverSendRequestIds.size === 0) return;
+    if (serverMessageIds.size === 0 && serverSendRequestIds.size === 0) return;
     updateLocalSends((currentSends) =>
-      currentSends.filter((send) => !send.sendRequestId || !serverSendRequestIds.has(send.sendRequestId)),
+      currentSends.filter(
+        (send) =>
+          (!send.messageId || !serverMessageIds.has(send.messageId)) &&
+          (!send.sendRequestId || !serverSendRequestIds.has(send.sendRequestId)),
+      ),
     );
   }, [messages]);
 
   useEffect(() => {
     return () => {
-      for (const timer of statusPollTimersRef.current) {
-        window.clearTimeout(timer);
-      }
-      statusPollTimersRef.current = [];
       cancelScheduledScrolls();
     };
   }, []);
@@ -243,23 +238,33 @@ export function useWorkbenchMessagesController({
   }
 
   async function submitLocalSend(localSend: LocalSend) {
+    let response: WorkbenchSendResponse;
     try {
-      const response =
+      response =
         localSend.type === "text"
           ? await sendText(localSend.conversationId, localSend.text, {
               mentions: localSend.mentions,
               replyToMessageId: localSend.replyToMessageId,
             })
           : await sendPayload(localSend.conversationId, readLocalSendPayload(localSend));
+      const messageId = readSuccessfulMessageId(response);
       updateLocalSends((currentSends) =>
         currentSends.map((send) =>
           send.id === localSend.id
-            ? { ...send, status: "pending", errorMessage: undefined, sendRequestId: response.id }
+            ? {
+                ...send,
+                status: "pending",
+                errorMessage: undefined,
+                messageId,
+                sendRequestId: null,
+                sendPayload:
+                  response.url && send.type === "html" && send.sendPayload
+                    ? { ...send.sendPayload, resolvedUrl: response.url }
+                    : send.sendPayload,
+              }
             : send,
         ),
       );
-      void syncLocalSendRequestStatus(localSend.id, response.id, localSend.conversationId);
-      await refreshMessages(localSend.conversationId);
     } catch (sendError) {
       updateLocalSends((currentSends) =>
         currentSends.map((send) =>
@@ -272,51 +277,14 @@ export function useWorkbenchMessagesController({
             : send,
         ),
       );
+      return;
     }
-  }
 
-  async function syncLocalSendRequestStatus(
-    localSendId: string,
-    sendRequestId: string,
-    conversationId: string,
-    attempt = 0,
-  ) {
-    if (!shouldContinueSendRequestSync(localSendId, sendRequestId)) return;
     try {
-      const sendRequest = await fetchSendRequest(sendRequestId);
-      if (!shouldContinueSendRequestSync(localSendId, sendRequestId)) return;
-      if (sendRequest.status === "failed" || sendRequest.status === "unknown") {
-        updateLocalSends((currentSends) =>
-          currentSends.map((send) =>
-            send.id === localSendId && send.sendRequestId === sendRequestId
-              ? {
-                  ...send,
-                  status: "failed",
-                  errorMessage: readSendRequestErrorMessage(sendRequest),
-                }
-              : send,
-          ),
-        );
-        return;
-      }
-      if (sendRequest.status === "sent") {
-        await refreshMessages(conversationId);
-        return;
-      }
+      await refreshMessages(localSend.conversationId);
     } catch {
-      // Keep the local sending state when status polling fails; the next poll may recover.
+      // 发送已经成功；刷新失败时保留本地 pending 气泡，等待后续查询或实时消息按 messageId 替换。
     }
-
-    if (attempt >= LOCAL_SEND_STATUS_MAX_POLLS || !shouldContinueSendRequestSync(localSendId, sendRequestId)) return;
-    const timer = window.setTimeout(() => {
-      void syncLocalSendRequestStatus(localSendId, sendRequestId, conversationId, attempt + 1);
-    }, LOCAL_SEND_STATUS_POLL_DELAY_MS);
-    statusPollTimersRef.current.push(timer);
-  }
-
-  function shouldContinueSendRequestSync(localSendId: string, sendRequestId: string) {
-    const localSend = localSendsRef.current.find((send) => send.id === localSendId);
-    return localSend?.status === "pending" && localSend.sendRequestId === sendRequestId;
   }
 
   function retryLocalSend(message: MessageItem) {
@@ -336,6 +304,7 @@ export function useWorkbenchMessagesController({
       thumbUrl: localSend.sendPayload?.thumbUrl,
       durationMs: localSend.sendPayload?.durationMs,
       status: "pending",
+      messageId: null,
       sendRequestId: null,
       sendPayload: localSend.sendPayload,
       createdAtIso: message.sentAtIso || new Date().toISOString(),
@@ -347,6 +316,7 @@ export function useWorkbenchMessagesController({
               ...send,
               status: "pending",
               errorMessage: undefined,
+              messageId: null,
               sendRequestId: null,
             }
           : send,
@@ -424,11 +394,12 @@ function readLocalSendPayload(localSend: LocalSend): LocalSendPayload {
   throw new Error("本地发送缺少重试 payload");
 }
 
-function readSendRequestErrorMessage(sendRequest: BackendSendRequest): string {
-  if (sendRequest.status === "unknown") {
-    return sendRequest.errorMessage || "发送结果未知";
+function readSuccessfulMessageId(response: WorkbenchSendResponse): string {
+  const candidate = response as Partial<WorkbenchSendResponse>;
+  if (candidate.success !== true || typeof candidate.messageId !== "string" || !candidate.messageId.trim()) {
+    throw new Error("发送结果未知");
   }
-  return sendRequest.errorMessage || "发送失败";
+  return candidate.messageId;
 }
 
 function isMessageListNearBottom(list: HTMLDivElement | null): boolean {

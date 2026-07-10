@@ -90,26 +90,71 @@ describe("OutboxService 发送任务", () => {
         conversationId: "conversation_1",
         sendRequestId: "send_1",
         source: "hub_send",
-        messageId: "msg_9154866412345678",
-        rawMessageId: "9154866412345678",
+        messageId: expect.stringMatching(/^msg_[A-Za-z0-9_-]{22}$/),
+        platformMsgId: "123456",
+        platformNewMsgId: "9154866412345678",
+        platformCreateTime: "1782932724220",
         type: "text",
         renderedText: "hello"
       }),
       update: expect.objectContaining({
-        rawMessageId: "9154866412345678",
+        platformMsgId: "123456",
+        platformNewMsgId: "9154866412345678",
+        platformCreateTime: "1782932724220",
         renderedText: "hello"
       })
     });
     expect(prisma.sendRequest.update).toHaveBeenCalledWith({
       where: { id: "send_1" },
       data: expect.objectContaining({
-        status: "sent",
-        resultNewMsgId: "9154866412345678",
-        resultMsgId: "123456",
-        resultCreateTime: "1782932724220"
+        status: "sent"
       })
     });
     expect(delivery.createForMessage).not.toHaveBeenCalled();
+  });
+
+  it("分发 held 消息时原地更新真实消息 ID、发送状态和实际时间，不新增消息数", async () => {
+    const heldMessage = { id: "row_held", messageId: "msg_held_send_held", isSent: false };
+    const prisma = {
+      outboxTask: {
+        findFirst: vi.fn(async () => ({ id: "task_held", taskType: "send", refId: "send_held", payload: {}, retryCount: 0, maxRetry: 5 })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        update: vi.fn(async () => ({}))
+      },
+      sendRequest: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "send_held", accountId: "account_1", conversationId: "conversation_1", type: "text",
+          requestPayload: { conversationId: "conversation_1", type: "text", text: "稍后发送", send: false },
+          geweRequest: { path: "/gewe/v2/api/message/postText", body: { appId: "wx_app", toWxid: "wxid_target", content: "稍后发送" } },
+          conversation: { id: "conversation_1", peerWxid: "wxid_target", account: { wxid: "wxid_bot" } }
+        })),
+        update: vi.fn(async () => ({}))
+      },
+      message: {
+        findUnique: vi.fn(async () => heldMessage),
+        upsert: vi.fn(async () => ({}))
+      },
+      conversation: { update: vi.fn(async () => ({})) }
+    };
+    const gewe = { sendByMappedRequest: vi.fn(async () => ({ data: { newMsgId: "real_1", msgId: "raw_1", createTime: "1782932999000" } })) };
+    const service = new OutboxService(prisma as never, { createForMessage: vi.fn() } as never, { syncContacts: vi.fn(), syncGroupMembers: vi.fn() } as never, undefined, gewe as never);
+
+    await service.tick();
+
+    expect(prisma.message.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { sendRequestId: "send_held" },
+      update: expect.objectContaining({
+        platformMsgId: "raw_1",
+        platformNewMsgId: "real_1",
+        platformCreateTime: "1782932999000",
+        isSent: true,
+        sentAt: new Date("2026-07-01T19:09:59.000Z")
+      })
+    }));
+    expect(prisma.conversation.update).toHaveBeenCalledWith({
+      where: { id: "conversation_1" },
+      data: expect.not.objectContaining({ messageCount: expect.anything() })
+    });
   });
 
   it("分发文本引用 send 任务：生成带 quote 的 hub_send 本地消息", async () => {
@@ -1755,5 +1800,24 @@ describe("OutboxService 发送任务", () => {
         lastError: "GeWe 请求超时，发送结果未知，已停止自动重试以避免重复发送"
       })
     });
+  });
+
+  it("waiter 注册窗口内已完成发送时通过二次状态检查返回，避免丢通知", async () => {
+    let lookup = 0;
+    const prisma = {
+      sendRequest: {
+        findUnique: vi.fn(async () => {
+          lookup += 1;
+          return lookup === 1
+            ? { status: "pending", errorMessage: null, message: { payload: {} } }
+            : { status: "sent", errorMessage: null, message: { payload: { content: { link: { url: "https://example.com/result" } } } } };
+        })
+      },
+      outboxTask: { findFirst: vi.fn(async () => null) }
+    };
+    const service = new OutboxService(prisma as never, {} as never, {} as never);
+
+    await expect(service.waitForSend("send_race", 100)).resolves.toEqual({ url: "https://example.com/result" });
+    expect(prisma.sendRequest.findUnique).toHaveBeenCalledTimes(2);
   });
 });

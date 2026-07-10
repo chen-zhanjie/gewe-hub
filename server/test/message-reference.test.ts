@@ -33,16 +33,11 @@ function envelopeWithEmptyQuotedChatRecord(): MessageEnvelope {
 }
 
 describe("消息引用本地回查", () => {
-  it("为大整数 svrid 构建精确和历史精度丢失兼容查询", () => {
+  it("只按稳定消息 ID 构建精确查询", () => {
     expect(buildQuoteReferenceWhere(envelopeWithEmptyQuotedChatRecord(), "account_1", "conversation_1")).toEqual({
       accountId: "account_1",
       conversationId: "conversation_1",
-      OR: [
-        { messageId: "msg_8103115687525853092" },
-        { rawMessageId: "8103115687525853092" },
-        { messageId: { startsWith: "msg_8103115687525853" } },
-        { rawMessageId: { startsWith: "8103115687525853" } }
-      ]
+      messageId: "msg_8103115687525853092"
     });
   });
 

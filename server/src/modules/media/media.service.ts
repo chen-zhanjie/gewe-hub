@@ -596,7 +596,8 @@ function refreshSourcePayloadForRetry(asset: {
   message: {
     id: string;
     accountId: string;
-    rawMessageId: string | null;
+    platformMsgId: string | null;
+    platformNewMsgId: string | null;
     payload: Prisma.JsonValue;
     webhookEvent?: {
       rawPayload: Prisma.JsonValue;
@@ -627,7 +628,8 @@ function refreshSourcePayloadForRetry(asset: {
       rawContent,
       rawMsgId:
         asString(normalizedPayload.msgId ?? normalizedPayload.newMsgId) ??
-        asset.message.rawMessageId ??
+        asset.message.platformMsgId ??
+        asset.message.platformNewMsgId ??
         asString(existingSource?.msgId) ??
         asset.message.id,
     },

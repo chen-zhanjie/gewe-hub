@@ -92,6 +92,11 @@ def is_plain_text_event(event: NormalizedEvent) -> bool:
     )
 
 
+def source_text(event: NormalizedEvent) -> str:
+    return str(event.content.get("text") or "")
+
+
+
 def event_text(event: NormalizedEvent) -> str:
     return event.rendered_text or str(event.content.get("text") or "")
 

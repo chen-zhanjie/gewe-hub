@@ -5,6 +5,12 @@ const labels: Record<string, string> = {
   delivered: "已投递",
   acked: "已确认",
   sent: "已发送",
+  held: "待确认",
+  confirm: "待确认",
+  discard: "未发送",
+  delivery_immediate: "直接发送",
+  delivery_discard: "不发送",
+  delivery_confirm: "人工确认",
   queued: "排队中",
   delivering: "投递中",
   pending: "等待中",
@@ -21,11 +27,11 @@ const labels: Record<string, string> = {
   skipped: "已跳过"
 };
 
-const success = new Set(["online", "delivered", "acked", "sent"]);
+const success = new Set(["online", "delivered", "acked", "sent", "delivery_immediate"]);
 const progress = new Set(["queued", "delivering", "pending"]);
-const warning = new Set(["unknown", "result_unknown", "left", "inactive"]);
+const warning = new Set(["held", "delivery_confirm", "confirm", "unknown", "result_unknown", "left", "inactive"]);
 const failure = new Set(["failed", "offline", "dead"]);
-const neutral = new Set(["disabled", "revoked", "skipped", "removed"]);
+const neutral = new Set(["delivery_discard", "discard", "disabled", "revoked", "skipped", "removed"]);
 
 export function StatusBadge({ status, className }: { status: string; className?: string }) {
   return (

@@ -68,7 +68,7 @@ describe("WorkbenchPage local send status", () => {
     );
 
     resolveRead(new Uint8Array([137, 80, 78, 71]).buffer);
-    resolveSend(jsonResponse({ id: "send_image_pending", status: "pending" }));
+    resolveSend(jsonResponse({ success: true, messageId: "msg_image_sent", accepted: true }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/send",
@@ -95,7 +95,7 @@ describe("WorkbenchPage local send status", () => {
       if (path === "/api/send" && init?.method === "POST") {
         sendAttempts += 1;
         if (sendAttempts === 1) return jsonResponse({ error: { message: "文件上传失败" } }, 502);
-        return jsonResponse({ id: "send_file_retry", status: "pending" });
+        return jsonResponse({ success: true, messageId: "msg_file_retry", accepted: true });
       }
       return mockResponseForRoute(path, baseRoutes);
     });
@@ -118,19 +118,12 @@ describe("WorkbenchPage local send status", () => {
     expect(screen.getByText("发送中")).toBeInTheDocument();
   });
 
-  it("文件发送进入后台后失败时，同一条本地气泡转为失败并保留重试入口", async () => {
+  it("文件发送返回 unknown 结果时保留失败气泡，且不轮询旧 sendRequest 状态", async () => {
     const fetchMock = mockFetch(baseRoutes);
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input).replace("http://localhost", "");
       if (path === "/api/send" && init?.method === "POST") {
-        return jsonResponse({ id: "send_async_failed", status: "pending" });
-      }
-      if (path === "/api/send-requests/send_async_failed") {
-        return jsonResponse({
-          id: "send_async_failed",
-          status: "failed",
-          errorMessage: "后台发送失败",
-        });
+        return jsonResponse({ success: false, accepted: false });
       }
       return mockResponseForRoute(path, baseRoutes);
     });
@@ -138,21 +131,12 @@ describe("WorkbenchPage local send status", () => {
     const { container } = renderWorkbenchPage();
 
     await screen.findByText("客服主号");
-    fireEvent.change(screen.getByLabelText("选择文件"), { target: { files: [createTextFile("async-note.txt")] } });
+    fireEvent.change(screen.getByLabelText("选择文件"), { target: { files: [createTextFile("unknown-note.txt")] } });
 
-    expect(await screen.findByText("发送中")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/send-requests/send_async_failed",
-        expect.objectContaining({ credentials: "include" }),
-      ),
-    );
     expect(await screen.findByText("发送失败")).toBeInTheDocument();
-    expect(screen.getByText("后台发送失败")).toBeInTheDocument();
+    expect(screen.getByText("发送结果未知")).toBeInTheDocument();
     expect(container.querySelectorAll('[data-local-send-status="failed"]')).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "重试发送 [文件] async-note.txt" })).toHaveAttribute(
-      "data-local-send-retry-position",
-      "left",
-    );
+    expect(screen.getByRole("button", { name: "重试发送 [文件] unknown-note.txt" })).toBeEnabled();
+    expect(fetchMock.mock.calls.some(([request]) => String(request).includes("/api/send-requests/"))).toBe(false);
   });
 });

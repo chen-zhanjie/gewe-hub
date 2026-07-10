@@ -30,21 +30,10 @@ function buildMessageReferenceWhere(
   accountId: string,
   conversationId: string | null
 ): Prisma.MessageWhereInput {
-  const rawMessageId = sourceMessageId.startsWith("msg_") ? sourceMessageId.slice(4) : sourceMessageId;
-  const or: Prisma.MessageWhereInput[] = [
-    { messageId: sourceMessageId },
-    { rawMessageId }
-  ];
-  const prefix = largeIntegerPrefix(rawMessageId);
-  if (prefix) {
-    or.push({ messageId: { startsWith: `msg_${prefix}` } });
-    or.push({ rawMessageId: { startsWith: prefix } });
-  }
-
   return {
     accountId,
     ...(conversationId ? { conversationId } : {}),
-    OR: or
+    messageId: sourceMessageId
   };
 }
 
@@ -283,11 +272,6 @@ function shouldUseReferencedContent(currentQuote: MessageNode, referencedContent
     return true;
   }
   return false;
-}
-
-function largeIntegerPrefix(rawMessageId: string): string | null {
-  if (!/^\d{16,}$/.test(rawMessageId)) return null;
-  return rawMessageId.slice(0, 16);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

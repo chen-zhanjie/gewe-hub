@@ -12,11 +12,9 @@ describe("WorkbenchPage HTML composer", () => {
     const fetchMock = mockFetch({
       ...workbenchRoutes(),
       "/api/send": {
-        id: "send_html",
-        status: "pending",
-        htmlPublicUrl: "https://gewehub.yunzxu.com/h/html_token",
-        htmlPageId: "html_1",
-        htmlHosted: true,
+        success: true,
+        messageId: "msg_html",
+        url: "https://gewehub.yunzxu.com/h/html_token",
       },
     });
 
@@ -56,9 +54,9 @@ describe("WorkbenchPage HTML composer", () => {
     const fetchMock = mockFetch({
       ...workbenchRoutes(),
       "/api/send": {
-        id: "send_html_file",
-        status: "pending",
-        htmlPublicUrl: "https://gewehub.yunzxu.com/h/html_file",
+        success: true,
+        messageId: "msg_html_file",
+        url: "https://gewehub.yunzxu.com/h/html_file",
       },
     });
 
@@ -93,10 +91,9 @@ describe("WorkbenchPage HTML composer", () => {
     const fetchMock = mockFetch({
       ...workbenchRoutes(),
       "/api/send": {
-        id: "send_html_url",
-        status: "pending",
-        htmlPublicUrl: "https://example.com/report.html",
-        htmlHosted: false,
+        success: true,
+        messageId: "msg_html_url",
+        url: "https://example.com/report.html",
       },
     });
 

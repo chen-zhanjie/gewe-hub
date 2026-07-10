@@ -35,6 +35,7 @@ describe("SendController", () => {
     await expect(
       controller.send("Bearer invalid-token", {
         conversationId: "conversation_1",
+        executionMode: "async",
         type: "text",
         text: "hello"
       })
@@ -76,16 +77,19 @@ describe("SendController", () => {
 
     const result = await controller.send(undefined, {
       conversationId: "conversation_1",
+      executionMode: "async",
       type: "text",
       text: "hello"
     });
 
-    expect(result).toEqual({ id: "send_1", status: "pending" });
+    expect(result).toMatchObject({ success: true, accepted: true });
     expect(gewe.sendText).not.toHaveBeenCalled();
     expect(prisma.sendRequest.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         accountId: "account_1",
         conversationId: "conversation_1",
+        deliveryMode: "immediate",
+        executionMode: "async",
         type: "text",
         status: "pending",
         geweRequest: {
@@ -107,6 +111,79 @@ describe("SendController", () => {
         priority: 40
       }
     });
+  });
+
+
+  it("默认同步等待发送完成并返回稳定 messageId", async () => {
+    const prisma = {
+      hubApp: { findUnique: vi.fn() },
+      conversation: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "conversation_1", accountId: "account_1", peerWxid: "wxid_target",
+          account: { appId: "wx_app", wxid: "wxid_bot" }
+        })),
+        update: vi.fn(async () => ({}))
+      },
+      sendRequest: { create: vi.fn(async () => ({ id: "send_sync", status: "pending" })) },
+      message: { create: vi.fn(async () => ({})) },
+      outboxTask: { create: vi.fn(async () => ({})) }
+    };
+    Object.assign(prisma, { $transaction: vi.fn(async (callback: (tx: typeof prisma) => unknown) => callback(prisma)) });
+    const outbox = { waitForSend: vi.fn(async () => ({})), wake: vi.fn() };
+    const controller = new SendController(prisma as never, {} as never, undefined, undefined, outbox as never);
+
+    const result = await controller.send(undefined, { conversationId: "conversation_1", type: "text", text: "同步" });
+
+    expect(result).toMatchObject({ success: true, messageId: expect.stringMatching(/^msg_[A-Za-z0-9_-]{22}$/) });
+    expect(result).not.toHaveProperty("accepted");
+    expect(outbox.waitForSend).toHaveBeenCalledWith("send_sync", 60_000);
+  });
+  it("deliveryMode=discard 与 confirm 当前都创建 held，但保留原始策略", async () => {
+    for (const deliveryMode of ["discard", "confirm"] as const) {
+      const prisma = {
+        hubApp: { findUnique: vi.fn() },
+        conversation: {
+          findUniqueOrThrow: vi.fn(async () => ({ id: "conversation_1", accountId: "account_1", peerWxid: "wxid_target", account: { appId: "wx_app", wxid: "wxid_bot" } })),
+          update: vi.fn(async () => ({}))
+        },
+        sendRequest: { create: vi.fn(async () => ({ id: `send_${deliveryMode}`, status: "held", deliveryMode })) },
+        message: { create: vi.fn(async ({ data }) => data) },
+        outboxTask: { create: vi.fn() }
+      };
+      Object.assign(prisma, { $transaction: vi.fn(async (callback: (tx: typeof prisma) => unknown) => callback(prisma)) });
+      const controller = new SendController(prisma as never, {} as never);
+
+      const result = await controller.send(undefined, { conversationId: "conversation_1", type: "text", text: deliveryMode, deliveryMode });
+
+      expect(result).toMatchObject({ success: true, messageId: expect.stringMatching(/^msg_/) });
+      expect(prisma.sendRequest.create).toHaveBeenCalledWith({ data: expect.objectContaining({ deliveryMode, status: "held" }) });
+      expect(prisma.message.create).toHaveBeenCalledWith({ data: expect.objectContaining({ isSent: false }) });
+      expect(prisma.outboxTask.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it("人工发送 held 请求时原子切换为 pending 并只创建一条 outbox", async () => {
+    const prisma = {
+      sendRequest: {
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        findUniqueOrThrow: vi.fn()
+          .mockResolvedValueOnce({ status: "held", deliveryMode: "confirm" })
+          .mockResolvedValueOnce({ id: "send_held", status: "pending", deliveryMode: "confirm", message: { messageId: "msg_stable" } }),
+        update: vi.fn()
+      },
+      outboxTask: { create: vi.fn(async () => ({ id: "task_held" })) }
+    };
+    Object.assign(prisma, { $transaction: vi.fn(async (callback: (tx: typeof prisma) => unknown) => callback(prisma)) });
+    const controller = new SendController(prisma as never, {} as never);
+
+    const result = await controller.dispatch("send_held");
+
+    expect(result).toEqual({ success: true, messageId: "msg_stable", accepted: true });
+    expect(prisma.sendRequest.updateMany).toHaveBeenCalledWith({
+      where: { id: "send_held", status: "held", deliveryMode: "confirm" },
+      data: { status: "pending", errorMessage: null }
+    });
+    expect(prisma.outboxTask.create).toHaveBeenCalledTimes(1);
   });
 
   it("支持使用标准消息里的 cvs 会话 ID 创建发送请求", async () => {
@@ -147,11 +224,12 @@ describe("SendController", () => {
 
     const result = await controller.send("Bearer app_token", {
       conversationId: "cvs_wxid_mngndogkpyms22_wxid_lnop8pc2ivre22",
+      executionMode: "async",
       type: "text",
       text: "hello"
     });
 
-    expect(result).toEqual({ id: "send_1", status: "pending" });
+    expect(result).toMatchObject({ success: true, accepted: true, messageId: expect.stringMatching(/^msg_/) });
     expect(prisma.wechatAccount.findMany).toHaveBeenCalledWith({
       select: {
         id: true,
@@ -204,7 +282,7 @@ describe("SendController", () => {
       message: {
         findFirst: vi.fn(async () => ({
           messageId: "msg_478238581151300365",
-          rawMessageId: "478238581151300365",
+          platformNewMsgId: "478238581151300365",
           senderWxid: "wxid_sender",
           sentAt: new Date("2026-07-09T10:11:12.000Z"),
           payload: {
@@ -238,6 +316,7 @@ describe("SendController", () => {
 
     await controller.send(undefined, {
       conversationId: "conversation_1",
+      executionMode: "async",
       type: "text",
       text: "这个我看过了",
       replyToMessageId: "msg_478238581151300365"
@@ -246,10 +325,7 @@ describe("SendController", () => {
     expect(prisma.message.findFirst).toHaveBeenCalledWith({
       where: {
         conversationId: "conversation_1",
-        OR: [
-          { messageId: "msg_478238581151300365" },
-          { rawMessageId: "478238581151300365" }
-        ]
+        messageId: "msg_478238581151300365"
       },
       include: {
         webhookEvent: {
@@ -268,7 +344,7 @@ describe("SendController", () => {
       replyToMessageId: "msg_478238581151300365",
       quote: {
         messageId: "msg_478238581151300365",
-        rawMessageId: "478238581151300365",
+        platformNewMsgId: "478238581151300365",
         senderName: "陈可乐",
         rawContent
       }
@@ -277,6 +353,35 @@ describe("SendController", () => {
     expect(createArg.data.geweRequest.body.appmsg).toContain("&lt;msg&gt;&lt;appmsg&gt;&lt;title&gt;mapping_app.txt");
   });
 
+
+  it("重复的同步幂等请求仍等待原发送完成，不把 pending 当成功", async () => {
+    const prisma = {
+      hubApp: { findUnique: vi.fn(async () => ({ id: "app_1", status: "active" })) },
+      conversation: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "conversation_1", accountId: "account_1", peerWxid: "wxid_target",
+          account: { appId: "wx_app", wxid: "wxid_bot" }
+        }))
+      },
+      sendRequest: {
+        findFirst: vi.fn(async () => ({
+          id: "send_existing_sync", status: "pending", deliveryMode: "immediate", executionMode: "sync",
+          message: { messageId: "msg_existing_sync", payload: {} }
+        })),
+        create: vi.fn()
+      }
+    };
+    const outbox = { waitForSend: vi.fn(async () => ({ url: "https://cdn.example/result" })), wake: vi.fn() };
+    const controller = new SendController(prisma as never, {} as never, undefined, undefined, outbox as never);
+
+    const result = await controller.send("Bearer app_token", {
+      conversationId: "conversation_1", type: "text", text: "hello", idempotencyKey: "idem_sync"
+    });
+
+    expect(outbox.waitForSend).toHaveBeenCalledWith("send_existing_sync", 60_000);
+    expect(result).toEqual({ success: true, messageId: "msg_existing_sync", url: "https://cdn.example/result" });
+    expect(prisma.sendRequest.create).not.toHaveBeenCalled();
+  });
   it("应用发送请求携带幂等键时复用已有发送记录，不重复排入 outbox", async () => {
     const prisma = {
       hubApp: {
@@ -296,7 +401,9 @@ describe("SendController", () => {
       sendRequest: {
         findFirst: vi.fn(async () => ({
           id: "send_existing",
-          status: "pending"
+          status: "pending",
+          executionMode: "async",
+          message: { messageId: "msg_existing" }
         })),
         create: vi.fn()
       },
@@ -308,21 +415,48 @@ describe("SendController", () => {
 
     const result = await controller.send("Bearer app_token", {
       conversationId: "conversation_1",
+      executionMode: "async",
       type: "text",
       text: "hello",
       idempotencyKey: "idem_1"
     });
 
-    expect(result).toEqual({ id: "send_existing", status: "pending" });
+    expect(result).toEqual({ success: true, messageId: "msg_existing", accepted: true });
     expect(prisma.sendRequest.findFirst).toHaveBeenCalledWith({
       where: {
         appId: "app_1",
         conversationId: "conversation_1",
         idempotencyKey: "idem_1"
       },
-      orderBy: { createdAt: "desc" }
+      orderBy: { createdAt: "desc" },
+      include: { message: { select: { messageId: true } } }
     });
     expect(prisma.sendRequest.create).not.toHaveBeenCalled();
+    expect(prisma.outboxTask.create).not.toHaveBeenCalled();
+  });
+
+  it("重复的 held 幂等请求返回稳定占位消息 ID，不重复创建消息", async () => {
+    const prisma = {
+      hubApp: { findUnique: vi.fn(async () => ({ id: "app_1", status: "active" })) },
+      conversation: {
+        findUniqueOrThrow: vi.fn(async () => ({ id: "conversation_1", accountId: "account_1", peerWxid: "wxid_target", account: { appId: "wx_app", wxid: "wxid_bot" } }))
+      },
+      sendRequest: {
+        findFirst: vi.fn(async () => ({ id: "send_existing_held", status: "held", executionMode: "sync", message: { messageId: "msg_existing_held" } })),
+        create: vi.fn()
+      },
+      message: { create: vi.fn() },
+      outboxTask: { create: vi.fn() }
+    };
+    const controller = new SendController(prisma as never, {} as never);
+
+    const result = await controller.send("Bearer app_token", {
+      conversationId: "conversation_1", type: "text", text: "稍后发送", deliveryMode: "confirm", idempotencyKey: "held_1"
+    });
+
+    expect(result).toEqual({ success: true, messageId: "msg_existing_held" });
+    expect(prisma.sendRequest.create).not.toHaveBeenCalled();
+    expect(prisma.message.create).not.toHaveBeenCalled();
     expect(prisma.outboxTask.create).not.toHaveBeenCalled();
   });
 
@@ -354,6 +488,7 @@ describe("SendController", () => {
 
     await controller.send("Bearer app_token", {
       conversationId: "conversation_1",
+      executionMode: "async",
       type: "text",
       text: "hello",
       requestId: "req_1"
@@ -408,6 +543,7 @@ describe("SendController", () => {
 
     await controller.send(undefined, {
       conversationId: "conversation_1",
+      executionMode: "async",
       type: "voice",
       contentBase64: "UklGRg==",
       mimeType: "audio/webm",
@@ -471,6 +607,7 @@ describe("SendController", () => {
 
     await controller.send(undefined, {
       conversationId: "conversation_1",
+      executionMode: "async",
       type: "image",
       contentBase64: "iVBORw0KGgo=",
       mimeType: "image/png",
@@ -531,6 +668,7 @@ describe("SendController", () => {
 
     await controller.send(undefined, {
       conversationId: "conversation_1",
+      executionMode: "async",
       type: "video",
       contentBase64: "AAAAIGZ0eXA=",
       mimeType: "video/mp4",
@@ -602,6 +740,7 @@ describe("SendController", () => {
 
     await controller.send(undefined, {
       conversationId: "conversation_1",
+      executionMode: "async",
       type: "file",
       contentBase64: "SGVsbG8=",
       mimeType: "text/plain",
@@ -671,6 +810,7 @@ describe("SendController", () => {
 
     const result = await controller.send("Bearer app_token", {
       conversationId: "conversation_1",
+      executionMode: "async",
       type: "html",
       title: "日报",
       desc: "今日 AI 日报",
@@ -717,12 +857,11 @@ describe("SendController", () => {
       })
     });
     expect(htmlPages.bindSendRequest).toHaveBeenCalledWith("html_1", "send_html");
-    expect(result).toEqual({
-      id: "send_html",
-      status: "pending",
-      htmlPublicUrl: "https://gewehub.yunzxu.com/h/html_token",
-      htmlPageId: "html_1",
-      htmlHosted: true
+    expect(result).toMatchObject({
+      success: true,
+      accepted: true,
+      messageId: expect.stringMatching(/^msg_/),
+      url: "https://gewehub.yunzxu.com/h/html_token"
     });
   });
 
@@ -760,6 +899,7 @@ describe("SendController", () => {
 
     const result = await controller.send(undefined, {
       conversationId: "conversation_1",
+      executionMode: "async",
       type: "html",
       title: "外部报告",
       desc: "外部页面",
@@ -787,12 +927,11 @@ describe("SendController", () => {
         })
       })
     });
-    expect(result).toEqual({
-      id: "send_html_url",
-      status: "pending",
-      htmlPublicUrl: "https://example.com/report.html",
-      htmlPageId: null,
-      htmlHosted: false
+    expect(result).toMatchObject({
+      success: true,
+      accepted: true,
+      messageId: expect.stringMatching(/^msg_/),
+      url: "https://example.com/report.html"
     });
   });
 
@@ -831,6 +970,7 @@ describe("SendController", () => {
 
     await controller.send(undefined, {
       conversationId: "conversation_1",
+      executionMode: "async",
       type: "html",
       htmlContent: "<html>default</html>"
     });
@@ -847,65 +987,6 @@ describe("SendController", () => {
             desc: "https://gewehub.yunzxu.com/h/html_default"
           })
         })
-      })
-    });
-  });
-
-  it("撤回已发送消息时用三件套调用 GeWe，并把本地 hub_send 消息标记为已撤回", async () => {
-    const prisma = {
-      sendRequest: {
-        findUniqueOrThrow: vi.fn(async () => ({
-          id: "send_1",
-          status: "sent",
-          resultMsgId: "769533801",
-          resultNewMsgId: "5271007655758710001",
-          resultCreateTime: "1704163145",
-          geweResponse: { ret: 200, msg: "发送成功" },
-          conversation: {
-            peerWxid: "wxid_target",
-            account: {
-              appId: "wx_app"
-            }
-          }
-        })),
-        update: vi.fn(async (_args: unknown) => ({
-          id: "send_1",
-          status: "sent"
-        }))
-      },
-      message: {
-        updateMany: vi.fn(async () => ({ count: 1 }))
-      }
-    };
-    const gewe = {
-      revokeMessage: vi.fn(async () => ({ ret: 200, msg: "操作成功" }))
-    };
-    const controller = new SendController(prisma as never, gewe as never);
-
-    await controller.revoke("send_1");
-
-    expect(gewe.revokeMessage).toHaveBeenCalledWith({
-      appId: "wx_app",
-      toWxid: "wxid_target",
-      msgId: "769533801",
-      newMsgId: "5271007655758710001",
-      createTime: "1704163145"
-    });
-    expect(prisma.sendRequest.update).toHaveBeenCalledWith({
-      where: { id: "send_1" },
-      data: expect.objectContaining({
-        geweResponse: {
-          ret: 200,
-          msg: "发送成功",
-          revoke: { ret: 200, msg: "操作成功" }
-        }
-      })
-    });
-    expect(prisma.message.updateMany).toHaveBeenCalledWith({
-      where: { sendRequestId: "send_1" },
-      data: expect.objectContaining({
-        status: "revoked",
-        revokedAt: expect.any(Date)
       })
     });
   });
@@ -930,12 +1011,11 @@ describe("SendController", () => {
         accountId: true,
         conversationId: true,
         idempotencyKey: true,
+        deliveryMode: true,
         type: true,
         status: true,
         errorMessage: true,
-        resultMsgId: true,
-        resultNewMsgId: true,
-        resultCreateTime: true,
+        executionMode: true,
         createdAt: true,
         updatedAt: true,
         conversation: {
@@ -947,6 +1027,9 @@ describe("SendController", () => {
             avatarUrl: true,
             platformRemark: true
           }
+        },
+        message: {
+          select: { messageId: true }
         },
         app: {
           select: {

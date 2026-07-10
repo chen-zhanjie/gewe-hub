@@ -74,6 +74,7 @@ export class ConversationsController {
       take: Math.min(Number(take ?? 30), 100),
       include: {
         deliveries: true,
+        sendRequest: { select: { id: true, status: true, deliveryMode: true, errorMessage: true } },
         webhookEvent: { select: { rawPayload: true } },
         account: {
           select: {

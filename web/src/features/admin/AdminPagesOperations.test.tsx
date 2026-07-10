@@ -147,8 +147,7 @@ describe("AdminPage operations", () => {
           id: "send_real_1",
           type: "text",
           status: "sent",
-          resultMsgId: "769533801",
-          resultNewMsgId: "5271007655758710001",
+          message: { messageId: "msg_stable_real_1" },
           updatedAt: "2026-07-06T07:16:37.000Z",
           conversation: {
             platformRemark: "陈可乐",
@@ -158,7 +157,7 @@ describe("AdminPage operations", () => {
           geweResponse: { ret: 200, msg: "发送成功" },
         },
       ],
-      "/api/send/send_real_1/revoke": { id: "send_real_1", status: "sent", geweResponse: { revoke: { ret: 200 } } },
+      "/api/messages/msg_stable_real_1/revoke": { messageId: "msg_stable_real_1", revokeStatus: "success" },
     });
 
     window.history.replaceState(null, "", "/send-requests");
@@ -166,6 +165,8 @@ describe("AdminPage operations", () => {
 
     const table = await screen.findByRole("table", { name: "发送记录列表" });
     expect(within(table).getByText("send_real_1")).toBeInTheDocument();
+    expect(within(table).getByText("msg_stable_real_1")).toBeInTheDocument();
+    expect(within(table).queryByText("769533801")).not.toBeInTheDocument();
     expect(within(table).getByText("wxid_target")).toBeInTheDocument();
     expect(within(table).getByLabelText("陈可乐")).toHaveClass("size-6");
     const updatedAt = within(table).getByText("07-06 15:16");
@@ -184,8 +185,9 @@ describe("AdminPage operations", () => {
     expect(within(confirmDialog).getByText("撤回后将调用 GeWe 撤回接口，微信侧消息会尝试显示为已撤回。")).toBeInTheDocument();
     expect(within(confirmDialog).getByText("send_real_1")).toBeInTheDocument();
     expect(within(confirmDialog).getByText("陈可乐")).toBeInTheDocument();
+    expect(within(confirmDialog).getByText("msg_stable_real_1")).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalledWith(
-      "/api/send/send_real_1/revoke",
+      "/api/messages/msg_stable_real_1/revoke",
       expect.objectContaining({ method: "POST" }),
     );
 
@@ -193,11 +195,39 @@ describe("AdminPage operations", () => {
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/send/send_real_1/revoke",
+        "/api/messages/msg_stable_real_1/revoke",
         expect.objectContaining({ method: "POST", credentials: "include" }),
       ),
     );
     expect(fetchMock.mock.calls.filter(([input]) => String(input).replace("http://localhost", "") === "/api/send-requests?take=20&skip=0")).toHaveLength(2);
+  });
+
+  it("发送记录没有关联稳定 messageId 时禁用撤回", async () => {
+    const fetchMock = mockFetch({
+      "/api/send-requests?take=20&skip=0": [
+        {
+          id: "send_without_message",
+          type: "text",
+          status: "sent",
+          updatedAt: "2026-07-06T07:16:37.000Z",
+          conversation: {
+            platformRemark: "陈可乐",
+            name: null,
+            peerWxid: "wxid_target",
+          },
+        },
+      ],
+    });
+
+    window.history.replaceState(null, "", "/send-requests");
+    render(<AdminPage page="sendRequests" />);
+
+    const table = await screen.findByRole("table", { name: "发送记录列表" });
+    expect(within(table).getByRole("button", { name: "撤回" })).toBeDisabled();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringMatching(/^\/api\/messages\//),
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
   it("发送记录页可以取消失败或等待中的发送请求，阻止后续自动重试", async () => {
@@ -258,8 +288,7 @@ describe("AdminPage operations", () => {
           id: "send_detail_1",
           type: "image",
           status: "sent",
-          resultMsgId: "769533801",
-          resultNewMsgId: "5271007655758710001",
+          message: { messageId: "msg_stable_detail_1" },
           updatedAt: "2026-07-06T07:16:37.000Z",
           conversation: {
             platformRemark: "陈可乐",
@@ -272,12 +301,11 @@ describe("AdminPage operations", () => {
         id: "send_detail_1",
         type: "image",
         status: "sent",
-        resultMsgId: "769533801",
-        resultNewMsgId: "5271007655758710001",
+        message: { messageId: "msg_stable_detail_1" },
         updatedAt: "2026-07-06T07:16:37.000Z",
         requestPayload: { type: "image", fileName: "真实图片.png" },
         geweRequest: { api: "postImage", imageUrl: "http://media.local/a.png" },
-        geweResponse: { ret: 200, msg: "发送成功", newMsgId: "5271007655758710001" },
+        geweResponse: { ret: 200, msg: "发送成功" },
         conversation: {
           platformRemark: "陈可乐",
           name: null,
@@ -303,6 +331,9 @@ describe("AdminPage operations", () => {
     expect(detailDialog).toHaveClass("right-0");
     expect(within(detailDialog).getAllByText("send_detail_1").length).toBeGreaterThan(0);
     expect(within(detailDialog).getByText("陈可乐")).toBeInTheDocument();
+    expect(within(detailDialog).getByText("msg_stable_detail_1")).toBeInTheDocument();
+    expect(within(detailDialog).queryByText("769533801")).not.toBeInTheDocument();
+    expect(within(detailDialog).queryByText("5271007655758710001")).not.toBeInTheDocument();
     expect(within(detailDialog).getByText("请求 payload")).toBeInTheDocument();
     expect(within(detailDialog).getByText("GeWe 请求")).toBeInTheDocument();
     expect(within(detailDialog).getByText("GeWe 响应")).toBeInTheDocument();

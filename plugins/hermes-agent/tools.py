@@ -9,11 +9,9 @@ from typing import Any
 try:
     from .client import GeWeHubClient
     from .config import resolve_gewehub_connection
-    from .send_state import mark_tool_sent
 except ImportError:
     from client import GeWeHubClient
     from config import resolve_gewehub_connection
-    from send_state import mark_tool_sent
 
 
 _SEND_TYPES = ["text", "image", "file", "voice", "video", "link", "html"]
@@ -53,6 +51,16 @@ GEWEHUB_SEND_MESSAGE_SCHEMA: dict[str, Any] = {
         "type": "object",
         "properties": {
             "conversationId": {"type": "string", "description": "GeWeHub conversation id."},
+            "deliveryMode": {
+                "type": "string",
+                "enum": ["immediate", "discard", "confirm"],
+                "description": "Delivery mode. immediate dispatches now; discard and confirm are held on the server. The management UI shows discard as 未发送 and confirm as 待确认; both can be sent manually.",
+            },
+            "executionMode": {
+                "type": "string",
+                "enum": ["sync", "async"],
+                "description": "Execution mode. Defaults to sync; async asks the server to accept the operation asynchronously.",
+            },
             "type": {"type": "string", "enum": _SEND_TYPES, "description": "Standard /api/send message type."},
             "text": {"type": "string", "description": "Text body for type=text."},
             "mediaUrl": {"type": "string", "description": "Public media URL for image/video or fallback media sends."},
@@ -97,6 +105,27 @@ GEWEHUB_SEND_MESSAGE_SCHEMA: dict[str, Any] = {
 }
 
 
+
+def _load_outbound_module():
+    try:
+        from . import outbound as module
+        return module
+    except ImportError:
+        import importlib.util
+        import sys
+
+        module_name = f"{__name__}_outbound"
+        module = sys.modules.get(module_name)
+        if module is None:
+            spec = importlib.util.spec_from_file_location(module_name, Path(__file__).with_name("outbound.py"))
+            if spec is None or spec.loader is None:
+                raise RuntimeError("unable to load outbound module")
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+        return module
+
+
 def check_gewehub_tool_available() -> bool:
     connection = resolve_gewehub_connection()
     return bool(connection["base_url"] and connection["app_token"])
@@ -111,63 +140,73 @@ async def handle_gewehub_send_message(args: dict[str, Any], **_kwargs) -> str:
             "GeWeHub is not configured for the active Hermes profile. Configure the plugin profile connection before using this send tool."
         )
 
-    payload = send_payload_from_args(args)
-    if "error" in payload:
-        return _tool_error(payload["error"])
+    outbound = _load_outbound_module()
+    try:
+        payload = outbound.normalize_explicit_payload("", args).payload
+    except Exception as exc:
+        return _tool_error(str(exc))
 
     client = GeWeHubClient(base_url, app_token=app_token)
     try:
-        response = await client.send_message_payload(payload)
-        mark_tool_sent(payload["conversationId"])
-        return _tool_result(
-            success=True,
-            message_id=response.get("messageId") or response.get("message_id"),
-            send_request_id=response.get("id"),
-            status=response.get("status"),
-            html_public_url=response.get("htmlPublicUrl"),
-            html_page_id=response.get("htmlPageId"),
-            html_hosted=response.get("htmlHosted"),
-            raw_response=response,
-        )
+        return _tool_result(**(await outbound.dispatch_standard(client, payload)))
     except Exception as exc:
         return _tool_error(f"GeWeHub send failed: {_redact(str(exc), app_token)}")
     finally:
         await client.aclose()
 
 
+GEWEHUB_REVOKE_MESSAGE_SCHEMA: dict[str, Any] = {
+    "description": "Revoke one GeWeHub message by its stable messageId.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "messageId": {"type": "string", "description": "Stable GeWeHub message id."},
+        },
+        "required": ["messageId"],
+        "additionalProperties": False,
+    },
+}
+
+
+async def handle_gewehub_revoke_message(args: dict[str, Any], **_kwargs) -> str:
+    message_id = _clean_string(args.get("messageId"))
+    if not message_id:
+        return _tool_error("messageId is required")
+    connection = resolve_gewehub_connection()
+    base_url = connection["base_url"]
+    app_token = connection["app_token"]
+    if not base_url or not app_token:
+        return _tool_error(
+            "GeWeHub is not configured for the active Hermes profile. Configure the plugin profile connection before using this revoke tool."
+        )
+    outbound = _load_outbound_module()
+    client = GeWeHubClient(base_url, app_token=app_token)
+    try:
+        return _tool_result(**outbound.standard_response(await client.revoke_message(message_id)))
+    except Exception as exc:
+        return _tool_error(f"GeWeHub revoke failed: {_redact(str(exc), app_token)}")
+    finally:
+        await client.aclose()
+
+
 def send_payload_from_args(args: dict[str, Any], *, default_conversation_id: str | None = None) -> dict[str, Any]:
-    conversation_id = _clean_string(args.get("conversationId") or args.get("conversation_id") or default_conversation_id)
-    if not conversation_id:
-        return {"error": "conversationId is required"}
+    try:
+        from .outbound import build_send_payload
+    except ImportError:
+        import importlib.util
+        import sys
 
-    message_type = _clean_string(args.get("type") or args.get("sendType") or args.get("send_type")).lower()
-    if message_type not in _SEND_TYPES:
-        return {"error": f"type must be one of {', '.join(_SEND_TYPES)}"}
-
-    payload: dict[str, Any] = {"conversationId": conversation_id, "type": message_type}
-    for field in _PAYLOAD_STRING_FIELDS:
-        value = _clean_string(args.get(field))
-        if value:
-            payload[field] = value
-
-    duration_ms = _coerce_int(args.get("durationMs") or args.get("duration_ms"))
-    if duration_ms is not None:
-        payload["durationMs"] = duration_ms
-
-    mentions = _clean_list(args.get("mentions"))
-    if mentions:
-        payload["mentions"] = mentions
-
-    file_error = _apply_local_file(payload, args)
-    if file_error:
-        return {"error": file_error}
-    thumb_error = _apply_local_thumb_file(payload, args)
-    if thumb_error:
-        return {"error": thumb_error}
-
-    if message_type == "text" and not _clean_string(payload.get("text")):
-        return {"error": "text is required when type=text"}
-    return payload
+        module_name = f"{__name__}_outbound"
+        module = sys.modules.get(module_name)
+        if module is None:
+            spec = importlib.util.spec_from_file_location(module_name, Path(__file__).with_name("outbound.py"))
+            if spec is None or spec.loader is None:
+                return {"error": "unable to load outbound module"}
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+        build_send_payload = module.build_send_payload
+    return build_send_payload(args, default_conversation_id=default_conversation_id)
 
 
 def _send_payload_from_args(args: dict[str, Any]) -> dict[str, Any]:

@@ -269,7 +269,7 @@ describe("GeWe 样本标准化", () => {
     expect(result?.quote?.media?.fileName).toBe("mapping_app.txt");
     expect(result?.quote?.media?.size).toBe(2732);
     expect(result?.quote?.senderName).toBe("陈可乐");
-    expect(result?.quote?.sourceMessageId).toBe("msg_478238581151300365");
+    expect(result?.quote?.sourceMessageId).toBe("478238581151300365");
     expect(result?.renderedText).toBe("引用: [文件] mapping_app.txt");
     expect(result?.mentions).toEqual([]);
   });
@@ -335,7 +335,7 @@ describe("GeWe 样本标准化", () => {
     expect(result?.quote).toEqual({
       type: "unsupported",
       text: "引用了一条消息，暂未解析内容",
-      sourceMessageId: "msg_5484099934145465483",
+      sourceMessageId: "5484099934145465483",
       sentAt: "2026-07-06T03:27:11.000Z",
     });
   });
@@ -354,15 +354,15 @@ describe("GeWe 样本标准化", () => {
     const item = result?.content.items?.[0];
     expect(item?.type).toBe("text");
     expect(item?.text).toBe("他们不是发公告了");
-    expect(item?.quote).toEqual({
+    expect(item?.quote).toMatchObject({
       type: "text",
       text: "你偷听梁逸峰 不对 梁文峰开会了？",
       senderName: "🍞",
-      sourceMessageId: "msg_374352950798606728",
+      sourceMessageId: "374352950798606728",
     });
     expect(result?.renderedMd).toContain(
-      "1. 大哈 2026-07-06 10:00（消息ID: msg_5034922477837409496）：\n" +
-        "   > 引用 🍞（消息ID: msg_374352950798606728）：\n" +
+      "1. 大哈 2026-07-06 10:00（消息ID: 5034922477837409496）：\n" +
+        "   > 引用 🍞（消息ID: 374352950798606728）：\n" +
         "   > 你偷听梁逸峰 不对 梁文峰开会了？\n" +
         "\n" +
         "   他们不是发公告了",
@@ -438,7 +438,7 @@ describe("GeWe 样本标准化", () => {
     expect(item?.type).toBe("chat_record");
     expect(item?.text).toBe("内层聊天记录");
     expect(item?.senderName).toBe("陈可乐");
-    expect(item?.sourceMessageId).toBe("msg_6468331776578873920");
+    expect(item?.sourceMessageId).toBe("6468331776578873920");
     expect(nestedItem?.type).toBe("image");
     expect(nestedItem?.media).toEqual({
       status: "pending",
@@ -469,7 +469,7 @@ describe("GeWe 样本标准化", () => {
       url: null,
       durationMs: 5000,
     });
-    expect(item?.sourceMessageId).toBe("msg_5649845438500538903");
+    expect(item?.sourceMessageId).toBe("5649845438500538903");
     expect(item?.senderName).toBe("陈可乐");
   });
 
@@ -607,11 +607,10 @@ describe("GeWe 样本标准化", () => {
     expect(result?.renderedText).toBe("@陳可乐\u2005@云知序\u2005多人艾特测试");
     expect(result?.renderedMd).toContain("[上下文]");
     expect(result?.renderedMd).toContain("消息ID: msg_5004026754542010999");
-    expect(result?.renderedMd).toContain(
-      "会话: 48315023241@chatroom (group, cvs_wxid_bot_48315023241@chatroom)",
-    );
+    expect(result?.renderedMd).toContain("会话ID: cvs_wxid_bot_48315023241@chatroom");
+    expect(result?.renderedMd).toContain("会话类型: group");
     expect(result?.renderedMd).toContain("时间: 2026-07-06 11:29");
-    expect(result?.renderedMd).toContain("发送者: wxid_sender <wxid_sender>");
+    expect(result?.renderedMd).toContain("发送者ID: wxid_sender");
     expect(result?.renderedMd).toContain(
       "被@对象: 陳可乐 <wxid_bot>, 云知序 <wxid_other>",
     );
@@ -635,7 +634,7 @@ describe("GeWe 样本标准化", () => {
 
     expect(result?.renderedMd).toContain("[引用]");
     expect(result?.renderedMd).toContain(
-      "> 引用 陈可乐（消息ID: msg_478238581151300365）：",
+      "> 引用 陈可乐（消息ID: 478238581151300365）：",
     );
     expect(result?.renderedMd).not.toContain("陈可乐 <");
     expect(result?.renderedMd).toContain("[文件] mapping_app.txt");
@@ -653,7 +652,7 @@ describe("GeWe 样本标准化", () => {
     );
 
     expect(result?.renderedMd).toContain("[聊天记录] 客户群的聊天记录");
-    expect(result?.renderedMd).toContain("1. 张三 2026-07-06 10:00（消息ID: msg_5034922477837409496）：");
+    expect(result?.renderedMd).toContain("1. 张三 2026-07-06 10:00（消息ID: 5034922477837409496）：");
     expect(result?.renderedMd).toContain("   第一条");
     expect(result?.renderedMd).toContain("2. wxid_lisi：");
     expect(result?.renderedMd).not.toContain("张三 <");
@@ -705,8 +704,8 @@ describe("GeWe 样本标准化", () => {
     );
 
     expect(ref).toEqual({
-      messageId: "msg_7704921809887032008",
-      rawMsgId: "130881346",
+      platformNewMsgId: "7704921809887032008",
+      platformMsgId: "130881346",
     });
   });
 });

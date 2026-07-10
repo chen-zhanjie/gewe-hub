@@ -1,4 +1,4 @@
-import type { MessageEnvelope, MessageNode } from "@gewehub/contracts";
+import type { MessageEnvelope, MessageNode, SendRequest } from "@gewehub/contracts";
 import {
   renderMessageMarkdown,
   renderMessageSummary,
@@ -90,7 +90,7 @@ export function mapSendRequestToGewe(input: SendMappingInput) {
         ? compactRecord({
             appId: input.appId,
             toWxid: input.peerWxid,
-            thumbUrl: input.thumbUrl,
+            thumbnailUrl: input.thumbUrl,
             thumbSource,
             videoDuration: durationMsToSeconds(input.durationMs),
             source
@@ -99,7 +99,7 @@ export function mapSendRequestToGewe(input: SendMappingInput) {
             appId: input.appId,
             toWxid: input.peerWxid,
             videoUrl: input.mediaUrl ?? input.fileUrl,
-            thumbUrl: input.thumbUrl,
+            thumbnailUrl: input.thumbUrl,
             thumbSource,
             videoDuration: durationMsToSeconds(input.durationMs)
           })
@@ -146,16 +146,65 @@ function formatTextMentions(mentions: string[] | undefined): string | undefined 
   return ats || undefined;
 }
 
+
+export function buildLocalContentFromSendRequest(input: SendRequest, linkUrl?: string): MessageNode {
+  switch (input.type) {
+    case "text":
+      return { type: "text", text: input.text ?? "" };
+    case "image":
+      return {
+        type: "image",
+        text: "[图片]",
+        media: { status: "pending", url: input.mediaUrl ?? input.fileUrl, fileName: input.fileName, mimeType: input.mimeType }
+      };
+    case "voice":
+      return {
+        type: "voice",
+        text: "[语音]",
+        media: { status: "pending", url: input.mediaUrl ?? input.fileUrl, fileName: input.fileName, mimeType: input.mimeType, durationMs: input.durationMs }
+      };
+    case "video":
+      return {
+        type: "video",
+        text: "[视频]",
+        media: { status: "pending", url: input.mediaUrl ?? input.fileUrl, fileName: input.fileName, mimeType: input.mimeType, durationMs: input.durationMs, thumbnailUrl: input.thumbUrl }
+      };
+    case "file":
+      return {
+        type: "file",
+        text: input.fileName ? `[文件] ${input.fileName}` : "[文件]",
+        media: { status: "pending", url: input.fileUrl ?? input.mediaUrl, fileName: input.fileName, mimeType: input.mimeType }
+      };
+    case "link":
+      return {
+        type: "link",
+        text: input.title ? `[链接] ${input.title}` : "[链接]",
+        link: { title: input.title, desc: input.desc, url: input.linkUrl ?? "", thumbnailUrl: input.thumbUrl }
+      };
+    case "html":
+      return {
+        type: "html",
+        text: input.title ? `[HTML] ${input.title}` : "[HTML]",
+        link: { title: input.title, desc: input.desc, url: linkUrl ?? input.linkUrl ?? "", thumbnailUrl: input.thumbUrl }
+      };
+  }
+}
+
 export interface LocalHubSendInput {
   accountWxid: string;
   conversationId: string;
   conversationWxid: string;
   senderWxid: string;
   text: string;
-  newMsgId: string;
+  messageId: string;
   createTime: string;
+  platformMsgId?: string;
+  platformNewMsgId?: string;
+  platformCreateTime?: string;
   content?: MessageNode;
   quote?: MessageNode | null;
+  isSent?: boolean;
+  outboundMetadata?: Record<string, unknown>;
 }
 
 export function buildLocalHubSendMessage(input: LocalHubSendInput) {
@@ -168,7 +217,7 @@ export function buildLocalHubSendMessage(input: LocalHubSendInput) {
   const payload: MessageEnvelope = {
     schemaVersion: 1,
     eventType: "message.created",
-    messageId: `msg_${input.newMsgId}`,
+    messageId: input.messageId,
     status: "normal",
     isSelf: true,
     isAtMe: false,
@@ -188,20 +237,26 @@ export function buildLocalHubSendMessage(input: LocalHubSendInput) {
     content,
     quote: input.quote ?? null,
     renderedText,
-    sentAt
+    sentAt,
+    metadata: input.outboundMetadata
+      ? { outbound: input.outboundMetadata }
+      : undefined
   };
   payload.renderedMd = renderMessageMarkdown(payload);
 
   return {
     source: "hub_send" as const,
     messageId: payload.messageId,
-    rawMessageId: input.newMsgId,
-    dedupeKey: `hub_send:${input.newMsgId}`,
+    platformMsgId: input.platformMsgId ?? null,
+    platformNewMsgId: input.platformNewMsgId ?? null,
+    platformCreateTime: input.platformCreateTime ?? null,
+    dedupeKey: `hub_send:${payload.messageId}`,
     type: content.type,
     status: "normal" as const,
     senderWxid: input.senderWxid,
     isSelf: true,
     isAtMe: false,
+    isSent: input.isSent ?? true,
     sentAt: new Date(sentAt),
     payload,
     renderedText: payload.renderedText,
@@ -211,7 +266,7 @@ export function buildLocalHubSendMessage(input: LocalHubSendInput) {
 
 export interface QuotedSendContext {
   messageId: string;
-  rawMessageId?: string | null;
+  platformNewMsgId: string;
   senderWxid?: string | null;
   senderName?: string | null;
   sentAt?: string | null;
@@ -221,7 +276,7 @@ export interface QuotedSendContext {
 
 function buildQuoteAppMsg(text: string, quote: QuotedSendContext, conversationWxid: string): string {
   const referType = quoteReferType(quote.content, quote.rawContent);
-  const rawMessageId = quote.rawMessageId || stripMessagePrefix(quote.messageId);
+  const platformNewMsgId = quote.platformNewMsgId;
   const displayName = quote.senderName || quote.senderWxid || "";
   const referContent = quote.rawContent || fallbackReferContent(quote.content);
   const createTime = quote.sentAt ? Math.floor(new Date(quote.sentAt).getTime() / 1000) : undefined;
@@ -256,7 +311,7 @@ function buildQuoteAppMsg(text: string, quote: QuotedSendContext, conversationWx
     "  <statextstr />",
     "  <refermsg>",
     `    <type>${escapeXml(referType)}</type>`,
-    `    <svrid>${escapeXml(rawMessageId)}</svrid>`,
+    `    <svrid>${escapeXml(platformNewMsgId)}</svrid>`,
     `    <fromusr>${escapeXml(conversationWxid)}</fromusr>`,
     quote.senderWxid ? `    <chatusr>${escapeXml(quote.senderWxid)}</chatusr>` : undefined,
     `    <displayname>${escapeXml(displayName)}</displayname>`,
@@ -321,10 +376,6 @@ function fallbackAppMsgType(content: MessageNode): string | undefined {
     default:
       return undefined;
   }
-}
-
-function stripMessagePrefix(messageId: string): string {
-  return messageId.startsWith("msg_") ? messageId.slice(4) : messageId;
 }
 
 function escapeXml(value: string): string {

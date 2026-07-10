@@ -88,13 +88,14 @@ try:
         dedupe_key_for_event,
         event_text,
         is_plain_text_event,
+        source_text,
         media_descriptors,
         metadata_for_event,
         normalize_event,
         reply_context,
     )
     from .state import GeWeHubStateStore
-    from .tools import send_payload_from_args
+    from .outbound import OutboundNormalizationError, dispatch_standard, normalize_explicit_payload, normalize_final_output, normalize_outbound
 except ImportError:
     from client import GeWeHubAuthError, GeWeHubClient, GeWeHubError, GeWeHubPermissionError
     from dedupe import BoundedTTLSet
@@ -103,20 +104,14 @@ except ImportError:
         dedupe_key_for_event,
         event_text,
         is_plain_text_event,
+        source_text,
         media_descriptors,
         metadata_for_event,
         normalize_event,
         reply_context,
     )
     from state import GeWeHubStateStore
-
-    _tools_path = Path(__file__).with_name("tools.py")
-    _tools_spec = importlib.util.spec_from_file_location("gewehub_plugin_tools_for_adapter", _tools_path)
-    if _tools_spec is None or _tools_spec.loader is None:
-        raise
-    _tools_module = importlib.util.module_from_spec(_tools_spec)
-    _tools_spec.loader.exec_module(_tools_module)
-    send_payload_from_args = _tools_module.send_payload_from_args
+    from outbound import OutboundNormalizationError, dispatch_standard, normalize_explicit_payload, normalize_final_output, normalize_outbound
 
 
 logger = logging.getLogger(__name__)
@@ -160,6 +155,9 @@ def apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict[str, Any]:
         parsed = _coerce_int(source.get(key))
         if parsed is not None:
             extra[key] = parsed
+    group_command_allowed_users = source.get("group_command_allowed_users")
+    if isinstance(group_command_allowed_users, dict):
+        extra["group_command_allowed_users"] = group_command_allowed_users
     extra.update(_extra_from_env())
     return extra
 
@@ -187,6 +185,7 @@ class GeWeHubAdapter(BasePlatformAdapter):
         )
         self.default_debounce_ms = _coerce_int(os.getenv("GEWEHUB_DEBOUNCE_MS") or extra.get("debounce_ms")) or 0
         self.default_max_wait_ms = _coerce_int(os.getenv("GEWEHUB_MAX_WAIT_MS") or extra.get("max_wait_ms")) or 0
+        self.group_command_allowed_users = _group_command_allowed_users(extra.get("group_command_allowed_users"))
         self._client: GeWeHubClient | None = None
         if self.base_url and self.app_token:
             self._client = GeWeHubClient(self.base_url, app_token=self.app_token)
@@ -253,32 +252,20 @@ class GeWeHubAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         try:
-            html_payload = _html_send_payload_from_metadata(metadata, fallback_title=content)
-            if html_payload is not None:
-                client = self._ensure_client()
-                response = await client.send_html(chat_id, **html_payload)
+            client = self._ensure_client()
+            html_args = _html_send_payload_from_metadata(metadata, fallback_title=content)
+            if html_args is not None:
+                explicit = {"type": "html", **_camelize_html_payload(html_args)}
+                decision = normalize_explicit_payload(chat_id, explicit, metadata=metadata)
             else:
-                client = self._ensure_client()
-                final_envelope = _final_json_envelope_from_content(content, chat_id) if _is_gateway_final_text(metadata) else None
-                if final_envelope is not None:
-                    if final_envelope.get("send") is False:
-                        raw_response = {"suppressed": True, "reason": "gewehub_final_json_send_false"}
-                        content = _clean_string(final_envelope.get("content"))
-                        if content:
-                            raw_response["content"] = content
-                        return SendResult(success=True, raw_response=raw_response)
-                    error = _clean_string(final_envelope.get("error"))
-                    if error:
-                        return SendResult(success=False, error=error)
-                    response = await client.send_message_payload(final_envelope["payload"])
-                else:
-                    response = await client.send_text(
-                        chat_id,
-                        content,
-                        idempotency_key=_idempotency_key_from_metadata(metadata),
-                        mentions=_mentions_from_metadata(metadata),
-                        reply_to_message_id=_reply_to_message_id_from_metadata(metadata),
-                    )
+                delivery_content = _cron_delivery_content(content) if _is_cron_delivery(metadata) else str(content or "")
+                decision = normalize_outbound(
+                    chat_id,
+                    delivery_content,
+                    final=_is_gateway_final_text(metadata) or _is_cron_delivery(metadata),
+                    metadata=metadata,
+                )
+            response = await dispatch_standard(client, decision.payload)
             return SendResult(success=True, message_id=_response_message_id(response), raw_response=response)
         except Exception as exc:
             return SendResult(success=False, error=self._redact(str(exc)))
@@ -469,8 +456,11 @@ class GeWeHubAdapter(BasePlatformAdapter):
         reply = reply_context(normalized)
         conversation_id = _conversation_id(normalized)
         metadata = metadata_for_event(normalized, media=media_results)
+        slash_command = self._is_trusted_slash_command(normalized)
+        if slash_command:
+            metadata["gewehub"]["inputMode"] = "slash_command"
         return MessageEvent(
-            text=event_text(normalized),
+            text=source_text(normalized) if slash_command else event_text(normalized),
             message_type=_message_type_for(normalized, media_types),
             source=self.build_source(
                 chat_id=conversation_id,
@@ -497,6 +487,15 @@ class GeWeHubAdapter(BasePlatformAdapter):
         await self.handle_message(event)
         self._mark_seen(normalized)
 
+    def _is_trusted_slash_command(self, normalized) -> bool:
+        if not source_text(normalized).startswith("/"):
+            return False
+        if _chat_type(normalized.conversation) != "group":
+            return True
+        allowed_users = self.group_command_allowed_users.get(_conversation_id(normalized), set())
+        sender_wxid = _clean_string(normalized.sender.get("wxid"))
+        return bool(sender_wxid and sender_wxid in allowed_users)
+
     def _should_batch_event(self, normalized, event: MessageEvent) -> bool:
         debounce_ms, _ = debounce_config(
             normalized,
@@ -509,6 +508,7 @@ class GeWeHubAdapter(BasePlatformAdapter):
             and event.message_type == MessageType.TEXT
             and not getattr(event, "media_urls", [])
             and not getattr(event, "reply_to_message_id", None)
+            and not _is_slash_command_input(event)
         )
 
     def _enqueue_batch(
@@ -678,20 +678,23 @@ class GeWeHubAdapter(BasePlatformAdapter):
         metadata: dict[str, Any] | None = None,
     ) -> SendResult:
         try:
-            idempotency_key = _idempotency_key_from_metadata(metadata)
-            response = await self._ensure_client().send_media_url(
-                chat_id,
-                media_type=media_type,
-                url=url,
-                file_name=file_name,
-                idempotency_key=idempotency_key,
+            explicit: dict[str, Any] = {"type": media_type, "fileName": file_name}
+            explicit["mediaUrl" if media_type == "image" else "fileUrl"] = url
+            response = await dispatch_standard(
+                self._ensure_client(),
+                normalize_explicit_payload(chat_id, explicit, metadata=metadata).payload,
             )
             raw_response: dict[str, Any] = {"media": response}
             if caption:
-                raw_response["caption"] = await self._ensure_client().send_text(
-                    chat_id,
-                    caption,
-                    idempotency_key=_derived_idempotency_key(idempotency_key, "caption"),
+                caption_metadata = dict(metadata or {})
+                caption_metadata["idempotencyKey"] = _derived_idempotency_key(
+                    _idempotency_key_from_metadata(metadata), "caption"
+                )
+                raw_response["caption"] = await dispatch_standard(
+                    self._ensure_client(),
+                    normalize_explicit_payload(
+                        chat_id, {"type": "text", "text": caption}, metadata=caption_metadata
+                    ).payload,
                 )
             return SendResult(success=True, message_id=_response_message_id(response), raw_response=raw_response)
         except Exception as exc:
@@ -717,27 +720,30 @@ class GeWeHubAdapter(BasePlatformAdapter):
             if not file_path.is_file():
                 raise GeWeHubError(f"media file does not exist: {file_path}")
             resolved_name = file_name or file_path.name
-            resolved_mime = mimetypes.guess_type(resolved_name)[0] or "application/octet-stream"
-            idempotency_key = _idempotency_key_from_metadata(metadata)
-            response = await self._ensure_client().send_media_file(
-                chat_id,
-                media_type=requested_type,
-                content_base64=base64.b64encode(file_path.read_bytes()).decode("ascii"),
-                file_name=resolved_name,
-                mime_type=resolved_mime,
-                duration_ms=duration_ms,
-                thumb_path=thumb_path,
-                thumb_content_base64=thumb_content_base64,
-                thumb_mime_type=thumb_mime_type,
-                thumb_file_name=thumb_file_name,
-                idempotency_key=idempotency_key,
+            explicit: dict[str, Any] = {
+                "type": requested_type,
+                "file": str(file_path),
+                "fileName": resolved_name,
+                "mimeType": mimetypes.guess_type(resolved_name)[0] or "application/octet-stream",
+            }
+            if requested_type == "voice" and duration_ms is not None:
+                explicit["durationMs"] = duration_ms
+            # 视频缩略图与时长由服务端统一探测，避免客户端分叉。
+            response = await dispatch_standard(
+                self._ensure_client(),
+                normalize_explicit_payload(chat_id, explicit, metadata=metadata).payload,
             )
             raw_response: dict[str, Any] = {"media": response}
             if caption:
-                raw_response["caption"] = await self._ensure_client().send_text(
-                    chat_id,
-                    caption,
-                    idempotency_key=_derived_idempotency_key(idempotency_key, "caption"),
+                caption_metadata = dict(metadata or {})
+                caption_metadata["idempotencyKey"] = _derived_idempotency_key(
+                    _idempotency_key_from_metadata(metadata), "caption"
+                )
+                raw_response["caption"] = await dispatch_standard(
+                    self._ensure_client(),
+                    normalize_explicit_payload(
+                        chat_id, {"type": "text", "text": caption}, metadata=caption_metadata
+                    ).payload,
                 )
             return SendResult(success=True, message_id=_response_message_id(response), raw_response=raw_response)
         except Exception as exc:
@@ -745,6 +751,34 @@ class GeWeHubAdapter(BasePlatformAdapter):
 
     def _redact(self, text: str) -> str:
         return text.replace(self.app_token, "[REDACTED]") if self.app_token else text
+
+
+
+def _is_slash_command_input(event: MessageEvent) -> bool:
+    metadata = getattr(event, "metadata", None)
+    gewehub = metadata.get("gewehub") if isinstance(metadata, dict) else None
+    return isinstance(gewehub, dict) and gewehub.get("inputMode") == "slash_command"
+
+
+def _group_command_allowed_users(value: Any) -> dict[str, set[str]]:
+    if not isinstance(value, dict):
+        return {}
+    allowed_by_conversation: dict[str, set[str]] = {}
+    for conversation_id, users in value.items():
+        normalized_conversation_id = _clean_string(conversation_id)
+        if not normalized_conversation_id:
+            continue
+        if isinstance(users, str):
+            candidates = [users]
+        elif isinstance(users, (list, tuple, set)):
+            candidates = users
+        else:
+            continue
+        normalized_users = {_clean_string(user) for user in candidates}
+        normalized_users.discard("")
+        if normalized_users:
+            allowed_by_conversation[normalized_conversation_id] = normalized_users
+    return allowed_by_conversation
 
 
 def _extra_from_env() -> dict[str, Any]:
@@ -883,6 +917,7 @@ def _mentions_from_metadata(metadata: dict[str, Any] | None) -> list[str] | None
     return None
 
 
+
 def _is_gateway_final_text(metadata: dict[str, Any] | None) -> bool:
     if not isinstance(metadata, dict):
         return False
@@ -894,43 +929,30 @@ def _is_gateway_final_text(metadata: dict[str, Any] | None) -> bool:
     return bool(metadata.get("notify") or metadata.get("expect_edits"))
 
 
-def _final_json_envelope_from_content(content: str, conversation_id: str) -> dict[str, Any] | None:
+def _is_cron_delivery(metadata: dict[str, Any] | None) -> bool:
+    return isinstance(metadata, dict) and bool(_clean_string(metadata.get("job_id")))
+
+
+def _cron_delivery_content(content: str) -> str:
     raw = str(content or "").strip()
-    if not (raw.startswith("{") and raw.endswith("}")):
+    body = _cron_wrapped_body(raw)
+    return body if body is not None else raw
+
+
+def _cron_wrapped_body(content: str) -> str | None:
+    if not content.startswith("Cronjob Response: "):
         return None
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
+    divider = "\n-------------\n\n"
+    footer_prefix = '\n\nTo stop or manage this job, send me a new message (e.g. "stop reminder '
+    divider_pos = content.find(divider)
+    footer_pos = content.rfind(footer_prefix)
+    if divider_pos < 0 or footer_pos < 0 or footer_pos <= divider_pos:
         return None
-    if not isinstance(parsed, dict):
+    header = content[:divider_pos]
+    if "\n(job_id: " not in header:
         return None
-    if _final_json_send_disabled(parsed):
-        return {"send": False, "content": _clean_string(parsed.get("content"))}
-
-    payload_args = dict(parsed)
-    for control_key in ("send", "sendMessage", "shouldSend"):
-        payload_args.pop(control_key, None)
-    payload = send_payload_from_args(payload_args, default_conversation_id=conversation_id)
-    if "error" in payload:
-        return {"send": True, "error": payload["error"]}
-    return {"send": True, "payload": payload}
-
-
-def _final_json_send_disabled(payload: dict[str, Any]) -> bool:
-    for key in ("send", "sendMessage", "shouldSend"):
-        if key in payload and _is_false_flag(payload.get(key)):
-            return True
-    return False
-
-
-def _is_false_flag(value: Any) -> bool:
-    if value is False:
-        return True
-    if isinstance(value, str):
-        return value.strip().lower() in {"false", "0", "no", "off"}
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return value == 0
-    return False
+    body_start = divider_pos + len(divider)
+    return content[body_start:footer_pos].strip()
 
 
 def _html_send_payload_from_metadata(metadata: dict[str, Any] | None, *, fallback_title: str) -> dict[str, Any] | None:
@@ -959,6 +981,19 @@ def _html_send_payload_from_metadata(metadata: dict[str, Any] | None, *, fallbac
         if value:
             payload[payload_key] = value
     return payload
+
+
+def _camelize_html_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    aliases = {
+        "link_url": "linkUrl",
+        "html_content": "htmlContent",
+        "html_content_base64": "htmlContentBase64",
+        "html_file_path": "file",
+        "html_file_name": "htmlFileName",
+        "thumb_url": "thumbUrl",
+        "idempotency_key": "idempotencyKey",
+    }
+    return {aliases.get(key, key): value for key, value in payload.items() if value not in (None, "")}
 
 
 def _gewehub_metadata(metadata: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1056,7 +1091,7 @@ def _sse_error_message(sse_event: dict[str, Any]) -> str:
 def _response_message_id(response: dict[str, Any]) -> str | None:
     if not isinstance(response, dict):
         return None
-    value = response.get("messageId") or response.get("message_id") or response.get("requestId") or response.get("id")
+    value = response.get("messageId")
     return str(value) if value is not None else None
 
 
@@ -1082,25 +1117,29 @@ async def _standalone_send(
     client = GeWeHubClient(base_url, app_token=app_token)
     last_response: dict[str, Any] | None = None
     try:
-        text = str(message or "").strip()
+        text = _cron_delivery_content(str(message or ""))
         if text:
-            last_response = await client.send_text(
+            decision = normalize_final_output(
                 conversation_id,
                 text,
-                idempotency_key=_generated_idempotency_key(thread_id, conversation_id, text, "text"),
+                metadata={"idempotencyKey": _generated_idempotency_key(thread_id, conversation_id, text, "text")},
             )
+            last_response = await dispatch_standard(client, decision.payload)
         for index, item in enumerate(media_files or []):
             media_path, is_voice = _standalone_media_entry(item)
             media_type = "voice" if is_voice else ("file" if force_document else _requested_media_type_for_path(media_path))
             file_name = Path(media_path).name
-            last_response = await client.send_media_file(
+            media_payload = normalize_explicit_payload(
                 conversation_id,
-                media_type=media_type,
-                path=media_path,
-                file_name=file_name,
-                mime_type=mimetypes.guess_type(file_name)[0],
-                idempotency_key=_generated_idempotency_key(thread_id, conversation_id, media_path, index, "media"),
-            )
+                {
+                    "type": media_type,
+                    "file": media_path,
+                    "fileName": file_name,
+                    "mimeType": mimetypes.guess_type(file_name)[0],
+                    "idempotencyKey": _generated_idempotency_key(thread_id, conversation_id, media_path, index, "media"),
+                },
+            ).payload
+            last_response = await dispatch_standard(client, media_payload)
         if last_response is None:
             return {"error": "GeWeHub standalone send requires message or media_files"}
         return {"success": True, "message_id": _response_message_id(last_response), "raw_response": last_response}
@@ -1150,7 +1189,7 @@ def _generated_idempotency_key(*parts: Any) -> str:
 
 def register(ctx) -> None:
     try:
-        from .tools import GEWEHUB_SEND_MESSAGE_SCHEMA, check_gewehub_tool_available, handle_gewehub_send_message
+        from .tools import GEWEHUB_REVOKE_MESSAGE_SCHEMA, GEWEHUB_SEND_MESSAGE_SCHEMA, check_gewehub_tool_available, handle_gewehub_revoke_message, handle_gewehub_send_message
     except ImportError:
         tools_path = Path(__file__).with_name("tools.py")
         spec = importlib.util.spec_from_file_location("gewehub_plugin_tools", tools_path)
@@ -1159,8 +1198,10 @@ def register(ctx) -> None:
         tools_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(tools_module)
         GEWEHUB_SEND_MESSAGE_SCHEMA = tools_module.GEWEHUB_SEND_MESSAGE_SCHEMA
+        GEWEHUB_REVOKE_MESSAGE_SCHEMA = tools_module.GEWEHUB_REVOKE_MESSAGE_SCHEMA
         check_gewehub_tool_available = tools_module.check_gewehub_tool_available
         handle_gewehub_send_message = tools_module.handle_gewehub_send_message
+        handle_gewehub_revoke_message = tools_module.handle_gewehub_revoke_message
 
     ctx.register_platform(
         name=_GEWEHUB_PLATFORM_NAME,
@@ -1180,25 +1221,13 @@ def register(ctx) -> None:
         emoji="GH",
         pii_safe=True,
         platform_hint=(
-            "You are chatting via GeWeHub, which bridges WeChat conversations to Hermes. "
-            "You can receive standardized messages with ids, media paths, quote context, and sender "
-            "metadata. For message sending, prefer gewehub_send_message over normal final text replies; "
-            "the tool call itself is the user-visible message, including quoted text replies. "
-            'If you already called gewehub_send_message for the visible answer, make the final response {"send": false, "content": "<brief internal completion note>"} unless an additional user-visible message is truly needed. '
-            "For one final user-visible send, the final response may be a raw JSON object matching "
-            "GeWeHub /api/send fields such as conversationId, type, text, title, desc, mentions, "
-            "and replyToMessageId. Output only the JSON object, with no Markdown fence or explanation. "
-            'Use {"send": false, "content": "<brief internal completion note>"} when the final turn should intentionally send nothing; content is for internal final output and is not sent to WeChat. '
-            "If the final response is not JSON, GeWeHub sends it as ordinary text. "
-            "Use GeWeHub's native capabilities for text, media, link cards, HTML link cards, mentions, "
-            "and quoted replies. Do not simulate platform capabilities with plain text or Markdown. "
-            "HTML link cards should usually not be followed by duplicate text. If the user asks to "
-            "quote/reply to a specific message, use replyToMessageId through gewehub_send_message, "
-            "final JSON, or explicit GeWeHub metadata; do not simulate quotes with Markdown quote blocks. "
-            "Only include replyToMessageId when you intentionally want a quoted reply. "
-            "No replyToMessageId means no quote. Do not use quote=true or infer a quote target automatically. "
-            "For long-running tasks, send a very short status message first, such as '我看看。' or "
-            "'稍等，我处理一下。', then continue working."
+            "You are replying through GeWeHub. "
+            "Plain final text sends an immediate synchronous reply; use a final JSON object only when structured message parameters are needed. "
+            "Use gewehub_send_message for media, HTML, links, mentions, native replies, or messages sent before the final response. "
+            "For every ID in mentions, include the matching @nickname in the message text. "
+            "Normal delivery uses deliveryMode=immediate and executionMode=sync; use deliveryMode=discard to record without delivery, deliveryMode=confirm for human confirmation, and executionMode=async only when explicitly needed. "
+            "Use the stable messageId from conversation context or send results for replyToMessageId and gewehub_revoke_message. "
+            "If a final turn is required after a tool sends the complete answer, return {\"deliveryMode\":\"discard\",\"type\":\"text\",\"text\":\"Reply completed by tool\"} so it is recorded without another user-visible send."
         ),
     )
     if hasattr(ctx, "register_tool"):
@@ -1210,5 +1239,15 @@ def register(ctx) -> None:
             check_fn=check_gewehub_tool_available,
             is_async=True,
             description="Send a standard GeWeHub message through /api/send.",
+            emoji="GH",
+        )
+        ctx.register_tool(
+            name="gewehub_revoke_message",
+            toolset="gewehub",
+            schema=GEWEHUB_REVOKE_MESSAGE_SCHEMA,
+            handler=handle_gewehub_revoke_message,
+            check_fn=check_gewehub_tool_available,
+            is_async=True,
+            description="Revoke a GeWeHub message by stable messageId.",
             emoji="GH",
         )

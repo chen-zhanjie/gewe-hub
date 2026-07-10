@@ -6,7 +6,6 @@ import type {
   BackendAccount,
   BackendConversation,
   BackendMessage,
-  BackendSendRequest,
   ConversationSummary,
   LocalSendPayload,
 } from "@/lib/workspace-data";
@@ -119,11 +118,10 @@ export interface LinkPreviewResponse {
 }
 
 export interface WorkbenchSendResponse {
-  id: string;
-  status?: string;
-  htmlPublicUrl?: string;
-  htmlPageId?: string | null;
-  htmlHosted?: boolean;
+  success: true;
+  messageId: string;
+  url?: string;
+  accepted?: boolean;
 }
 
 export interface SendTextOptions {
@@ -199,12 +197,14 @@ export async function fetchWorkbenchConversations(): Promise<BackendConversation
   return apiFetch<BackendConversation[]>("/api/conversations");
 }
 
-export async function fetchWorkbenchSendRequest(sendRequestId: string): Promise<BackendSendRequest> {
-  return apiFetch<BackendSendRequest>(`/api/send-requests/${sendRequestId}`);
-}
-
 export async function revokeWorkbenchSendRequest(sendRequestId: string): Promise<unknown> {
   return apiFetch(`/api/send/${sendRequestId}/revoke`, {
+    method: "POST",
+  });
+}
+
+export async function dispatchWorkbenchSendRequest(sendRequestId: string): Promise<unknown> {
+  return apiFetch(`/api/send/${sendRequestId}/dispatch`, {
     method: "POST",
   });
 }

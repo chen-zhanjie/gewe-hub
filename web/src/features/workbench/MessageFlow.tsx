@@ -3,6 +3,7 @@ import {
   Clock3,
   Info,
   MessageSquareQuote,
+  SendHorizontal,
   Trash2,
   Undo2,
 } from "lucide-react";
@@ -21,6 +22,8 @@ export function MessageBubble({
   onRetryLocalSend,
   onDeleteLocalSend,
   onRequestRevoke,
+  onDispatchHeldMessage,
+  dispatchingMessageId,
   onQuoteMessage,
 }: {
   message: MessageItem;
@@ -30,6 +33,8 @@ export function MessageBubble({
   onRetryLocalSend: (message: MessageItem) => void;
   onDeleteLocalSend: (message: MessageItem) => void;
   onRequestRevoke: (message: MessageItem) => void;
+  onDispatchHeldMessage: (message: MessageItem) => void;
+  dispatchingMessageId?: string | null;
   onQuoteMessage: (message: MessageItem) => void;
 }) {
   const revokable = useMessageRevokable(message);
@@ -47,8 +52,12 @@ export function MessageBubble({
 
   const framedByContent = isFramedMessageNode(message.content);
   const localSend = message.localSend;
+  const unsent = !localSend && message.isSent === false;
+  const held = unsent && message.sendRequest?.status === "held";
+  const dispatchPending = unsent && message.sendRequest?.status === "pending";
+  const heldLabel = held && message.sendRequest?.deliveryMode === "discard" ? "未发送" : "待确认";
   const deliveryStatus = localSend ? null : readDeliveryStatus(message.deliveries);
-  const metaAlwaysVisible = Boolean(localSend);
+  const metaAlwaysVisible = Boolean(localSend || unsent);
   const showSenderName = !message.isSelf && startsGroup;
   const messageMeta = (
     <div
@@ -71,6 +80,11 @@ export function MessageBubble({
           className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
         >
           已撤回
+        </span>
+      ) : null}
+      {unsent ? (
+        <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+          {dispatchPending ? "发送中" : heldLabel}
         </span>
       ) : null}
       <LocalSendMeta message={message} onRetry={onRetryLocalSend} onDelete={onDeleteLocalSend} />
@@ -96,6 +110,18 @@ export function MessageBubble({
           详情
         </button>
       ) : null}
+      {unsent && message.sendRequest ? (
+        <button
+          type="button"
+          aria-label={`发送消息 ${message.messageId}`}
+          disabled={!held || dispatchingMessageId === message.id}
+          onClick={() => onDispatchHeldMessage(message)}
+          className="inline-flex min-w-[56px] shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <SendHorizontal className="size-3" />
+          {dispatchPending || dispatchingMessageId === message.id ? "发送中" : "发送"}
+        </button>
+      ) : null}
       {revokable ? (
         <button
           type="button"
@@ -114,12 +140,14 @@ export function MessageBubble({
     <article
       data-message-group-start={startsGroup ? "true" : "false"}
       data-message-status={message.status}
+      data-message-sent={message.isSent === false ? "false" : "true"}
       data-local-send-status={localSend?.status}
       className={cn(
         "group relative flex items-start gap-3 rounded-md px-2",
         startsGroup ? "py-1" : "py-0.5",
         message.isSelf && "justify-end",
         message.status === "revoked" && "bg-destructive/5",
+        unsent && "opacity-60",
       )}
     >
       {!message.isSelf ? (
@@ -144,6 +172,7 @@ export function MessageBubble({
                 : cn("px-3 py-2", message.isSelf ? "bg-primary text-primary-foreground" : "border bg-background"),
               localSend?.status === "pending" && "opacity-70",
               localSend?.status === "failed" && !framedByContent && "border border-destructive/50 bg-destructive/10 text-foreground",
+              unsent && "border border-dashed border-muted-foreground bg-muted text-muted-foreground",
             )}
           >
             <MessageNodeView node={message.content} />
@@ -255,8 +284,9 @@ function LocalSendMeta({
         <button
           type="button"
           aria-label={`删除未发送消息 ${localSend.label}`}
+          disabled
           onClick={() => onDelete(message)}
-          className="inline-flex items-center gap-1 rounded-md px-2 py-1 hover:bg-muted"
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 opacity-50"
         >
           <Trash2 className="size-3" />
           删除
@@ -321,7 +351,14 @@ function useMessageRevokable(message: MessageItem): boolean {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const sentAtMs = readMessageSentAtMs(message);
   const expiresAtMs = sentAtMs + 2 * 60 * 1000;
-  const eligible = Boolean(message.isSelf && !message.localSend && message.status === "normal" && message.sendRequestId);
+  const eligible = Boolean(
+    message.isSelf &&
+      message.isSent !== false &&
+      !message.localSend &&
+      message.status === "normal" &&
+      message.sendRequest?.status !== "held" &&
+      message.sendRequestId,
+  );
 
   useEffect(() => {
     if (!eligible || !Number.isFinite(sentAtMs)) return;
@@ -340,6 +377,6 @@ function useMessageRevokable(message: MessageItem): boolean {
 }
 
 function readMessageSentAtMs(message: MessageItem): number {
-  if (!message.isSelf || message.localSend || message.status !== "normal" || !message.sendRequestId) return Number.NaN;
+  if (!message.isSelf || message.isSent === false || message.localSend || message.status !== "normal" || !message.sendRequestId) return Number.NaN;
   return new Date(message.sentAtIso).getTime();
 }
