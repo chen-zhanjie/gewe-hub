@@ -190,6 +190,7 @@ export class OutboxService implements OnModuleInit {
       const existingMessage = await this.prisma.message.findUnique({
         where: { sendRequestId: sendRequest.id }
       });
+      const storedRenderedText = localMessage.renderedText.slice(0, 500);
 
       await this.prisma.message.upsert({
         where: { sendRequestId: sendRequest.id },
@@ -198,13 +199,14 @@ export class OutboxService implements OnModuleInit {
           conversationId: sendRequest.conversationId,
           sendRequestId: sendRequest.id,
           ...localMessage,
+          renderedText: storedRenderedText,
           payload: localMessage.payload as unknown as Prisma.InputJsonValue
         },
         update: {
           rawMessageId: localMessage.rawMessageId,
           dedupeKey: localMessage.dedupeKey,
           payload: localMessage.payload as unknown as Prisma.InputJsonValue,
-          renderedText: localMessage.renderedText,
+          renderedText: storedRenderedText,
           sentAt: localMessage.sentAt
         }
       });

@@ -112,6 +112,104 @@ describe("OutboxService 发送任务", () => {
     expect(delivery.createForMessage).not.toHaveBeenCalled();
   });
 
+  it("发送超过 500 字的文本时保留完整 payload 正文，只把 renderedText 作为 500 字摘要入库", async () => {
+    const longText = "长".repeat(501);
+    const prisma = {
+      outboxTask: {
+        findFirst: vi.fn(async () => ({
+          id: "task_long_text",
+          taskType: "send",
+          refId: "send_long_text",
+          payload: { sendRequestId: "send_long_text" },
+          retryCount: 0,
+          maxRetry: 5
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      sendRequest: {
+        findUniqueOrThrow: vi.fn(async () => ({
+          id: "send_long_text",
+          accountId: "account_1",
+          conversationId: "conversation_1",
+          type: "text",
+          requestPayload: {
+            conversationId: "conversation_1",
+            type: "text",
+            text: longText
+          },
+          geweRequest: {
+            path: "/gewe/v2/api/message/postText",
+            body: {
+              appId: "wx_app",
+              toWxid: "wxid_target",
+              content: longText
+            }
+          },
+          conversation: {
+            id: "conversation_1",
+            peerWxid: "wxid_target",
+            account: { wxid: "wxid_bot" }
+          }
+        })),
+        update: vi.fn(async (_args: unknown) => ({}))
+      },
+      message: {
+        findUnique: vi.fn(async () => null),
+        upsert: vi.fn(async (_args: unknown) => ({}))
+      },
+      conversation: {
+        update: vi.fn(async () => ({}))
+      }
+    };
+    const gewe = {
+      sendByMappedRequest: vi.fn(async () => ({
+        data: {
+          newMsgId: "9154866412345679",
+          msgId: "123457",
+          createTime: "1782932724221"
+        }
+      }))
+    };
+    const service = new OutboxService(
+      prisma as never,
+      { createForMessage: vi.fn() } as never,
+      { syncContacts: vi.fn(), syncGroupMembers: vi.fn() } as never,
+      undefined,
+      gewe as never
+    );
+
+    await service.tick();
+
+    expect(prisma.message.upsert).toHaveBeenCalledWith({
+      where: { sendRequestId: "send_long_text" },
+      create: expect.objectContaining({
+        renderedText: longText.slice(0, 500),
+        payload: expect.objectContaining({
+          content: expect.objectContaining({ text: longText }),
+          renderedText: longText
+        })
+      }),
+      update: expect.objectContaining({
+        renderedText: longText.slice(0, 500),
+        payload: expect.objectContaining({
+          content: expect.objectContaining({ text: longText }),
+          renderedText: longText
+        })
+      })
+    });
+    expect(prisma.conversation.update).toHaveBeenCalledWith({
+      where: { id: "conversation_1" },
+      data: expect.objectContaining({
+        lastMessageText: longText.slice(0, 500)
+      })
+    });
+    expect(prisma.sendRequest.update).toHaveBeenCalledWith({
+      where: { id: "send_long_text" },
+      data: expect.objectContaining({ status: "sent" })
+    });
+  });
+
   it("分发文本引用 send 任务：生成带 quote 的 hub_send 本地消息", async () => {
     const prisma = {
       outboxTask: {
