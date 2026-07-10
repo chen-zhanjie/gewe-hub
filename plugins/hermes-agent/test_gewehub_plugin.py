@@ -436,6 +436,71 @@ def test_register_exposes_hermes_platform_hooks():
     assert set(revoke_tool["schema"]["parameters"]["properties"]) == {"messageId"}
 
 
+def test_tool_prompts_are_concise_current_and_actionable():
+    _install_gateway_stubs()
+    package = _load_plugin_package("gewehub_plugin_tool_prompt_test")
+    captured_tools = []
+    ctx = SimpleNamespace(
+        register_platform=lambda **kwargs: None,
+        register_tool=lambda **kwargs: captured_tools.append(kwargs),
+    )
+
+    package.register(ctx)
+    registered = {tool["name"]: tool for tool in captured_tools}
+    send_schema = package.tools.GEWEHUB_SEND_MESSAGE_SCHEMA
+    revoke_schema = package.tools.GEWEHUB_REVOKE_MESSAGE_SCHEMA
+    send_props = send_schema["parameters"]["properties"]
+
+    assert len(send_schema["description"]) <= 240
+    assert "messageId" in send_schema["description"]
+    assert "reply" in send_schema["description"]
+    assert "revoke" in send_schema["description"]
+
+    assert "record without delivery" in send_props["deliveryMode"]["description"]
+    assert "human confirmation" in send_props["deliveryMode"]["description"]
+    assert "synchronous" in send_props["executionMode"]["description"]
+    assert "text message" in send_props["mentions"]["description"]
+    assert "Every ID" in send_props["mentions"]["description"]
+    assert "@nickname" in send_props["mentions"]["description"]
+    assert "conversation context" in send_props["replyToMessageId"]["description"]
+    assert "send result" in send_props["replyToMessageId"]["description"]
+    assert "text messages" in send_props["replyToMessageId"]["description"]
+    assert "Required for remote video" in send_props["thumbUrl"]["description"]
+    assert "requestId" not in send_props
+    assert "fileUrl" not in send_props
+    assert "file" in send_props["mediaUrl"]["description"]
+    assert "idempotencyKey" in send_props
+
+    assert "current GeWeHub account" in revoke_schema["description"]
+    assert "successful send result" in revoke_schema["parameters"]["properties"]["messageId"]["description"]
+    assert registered["gewehub_send_message"]["description"] == "Send a GeWeHub message and return its stable messageId."
+    assert registered["gewehub_revoke_message"]["description"] == (
+        "Revoke a message sent by the current GeWeHub account using its messageId."
+    )
+
+    prompt_text = " ".join(
+        [
+            send_schema["description"],
+            revoke_schema["description"],
+            *(prop.get("description", "") for prop in send_props.values()),
+            registered["gewehub_send_message"]["description"],
+            registered["gewehub_revoke_message"]["description"],
+        ]
+    )
+    for forbidden in (
+        "/api/send",
+        "held",
+        "management UI",
+        "quote=true",
+        "Markdown quote",
+        "sendRequestId",
+        "removed",
+        "deprecated",
+        "legacy",
+    ):
+        assert forbidden not in prompt_text
+
+
 @pytest.mark.asyncio
 async def test_standalone_sender_uses_config_and_idempotency_key(monkeypatch):
     _install_gateway_stubs()

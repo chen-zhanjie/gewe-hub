@@ -15,88 +15,135 @@ except ImportError:
 
 
 _SEND_TYPES = ["text", "image", "file", "voice", "video", "link", "html"]
-_PAYLOAD_STRING_FIELDS = [
-    "text",
-    "mediaUrl",
-    "fileUrl",
-    "fileName",
-    "contentBase64",
-    "mimeType",
-    "thumbUrl",
-    "thumbContentBase64",
-    "thumbMimeType",
-    "thumbFileName",
-    "title",
-    "desc",
-    "linkUrl",
-    "htmlContent",
-    "htmlContentBase64",
-    "htmlFileName",
-    "replyToMessageId",
-    "requestId",
-    "idempotencyKey",
-]
-
 
 GEWEHUB_SEND_MESSAGE_SCHEMA: dict[str, Any] = {
     "description": (
-        "Send one GeWeHub message through the standard /api/send contract. "
-        "Use this for text, image, file, voice, video, link, and html messages. "
-        "Prefer this tool over normal plain text replies when the platform has a real capability such as quote/reply, mentions, media, link, or HTML. "
-        "Do not simulate platform capabilities with plain text or Markdown when this tool can express them. "
-        "Calling this tool is the message send; for a single final send, the final response JSON envelope can express the same /api/send payload. "
-        "Do not repeat the same content in a normal final text reply."
+        "Send one GeWeHub message. A successful result includes a stable messageId "
+        "that can be used to reply to or revoke the sent message."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "conversationId": {"type": "string", "description": "GeWeHub conversation id."},
+            "conversationId": {
+                "type": "string",
+                "description": "Target conversation ID from the current message context.",
+            },
             "deliveryMode": {
                 "type": "string",
                 "enum": ["immediate", "discard", "confirm"],
-                "description": "Delivery mode. immediate dispatches now; discard and confirm are held on the server. The management UI shows discard as 未发送 and confirm as 待确认; both can be sent manually.",
+                "description": (
+                    "Delivery choice: immediate sends now, discard means record without delivery, "
+                    "and confirm records for human confirmation. Defaults to immediate."
+                ),
             },
             "executionMode": {
                 "type": "string",
                 "enum": ["sync", "async"],
-                "description": "Execution mode. Defaults to sync; async asks the server to accept the operation asynchronously.",
+                "description": (
+                    "Execution choice: sync waits for the send result; async returns after reliable acceptance. "
+                    "Defaults to synchronous execution."
+                ),
             },
-            "type": {"type": "string", "enum": _SEND_TYPES, "description": "Standard /api/send message type."},
-            "text": {"type": "string", "description": "Text body for type=text."},
-            "mediaUrl": {"type": "string", "description": "Public media URL for image/video or fallback media sends."},
-            "fileUrl": {"type": "string", "description": "Public file/media URL for file/voice/video sends."},
-            "fileName": {"type": "string", "description": "File name for uploaded or URL media."},
-            "contentBase64": {"type": "string", "description": "Base64 content for image/file/voice/video."},
-            "mimeType": {"type": "string", "description": "MIME type for contentBase64 media."},
-            "thumbUrl": {"type": "string", "description": "Public thumbnail URL for video/link/html cards."},
-            "thumbContentBase64": {"type": "string", "description": "Base64 thumbnail content."},
-            "thumbMimeType": {"type": "string", "description": "Thumbnail MIME type."},
-            "thumbFileName": {"type": "string", "description": "Thumbnail file name."},
-            "title": {"type": "string", "description": "Title for link/html cards."},
-            "desc": {"type": "string", "description": "Short description for link/html cards."},
-            "linkUrl": {"type": "string", "description": "URL for link cards or already-hosted HTML."},
-            "htmlContent": {"type": "string", "description": "Raw HTML content for type=html."},
-            "htmlContentBase64": {"type": "string", "description": "Base64 HTML content for type=html."},
-            "htmlFileName": {"type": "string", "description": "HTML file name for type=html uploads."},
-            "durationMs": {"type": "integer", "description": "Voice/video duration in milliseconds."},
+            "type": {
+                "type": "string",
+                "enum": _SEND_TYPES,
+                "description": "Message type to send.",
+            },
+            "text": {
+                "type": "string",
+                "description": "Message body. Required for type=text and must include visible @nicknames for mentions.",
+            },
+            "mediaUrl": {
+                "type": "string",
+                "description": "Publicly downloadable source URL for an image, file, voice, or video.",
+            },
+            "fileName": {
+                "type": "string",
+                "description": "Display file name for media or file content.",
+            },
+            "contentBase64": {
+                "type": "string",
+                "description": "Base64 source content for an image, file, voice, or video.",
+            },
+            "mimeType": {
+                "type": "string",
+                "description": "MIME type of contentBase64.",
+            },
+            "thumbUrl": {
+                "type": "string",
+                "description": (
+                    "Public thumbnail URL. Required for remote video messages; optional for link and HTML cards."
+                ),
+            },
+            "thumbContentBase64": {
+                "type": "string",
+                "description": "Base64 thumbnail content for a video, link card, or HTML card.",
+            },
+            "thumbMimeType": {
+                "type": "string",
+                "description": "MIME type of thumbContentBase64.",
+            },
+            "thumbFileName": {
+                "type": "string",
+                "description": "File name of the thumbnail content.",
+            },
+            "title": {
+                "type": "string",
+                "description": "Card title for type=link or type=html.",
+            },
+            "desc": {
+                "type": "string",
+                "description": "Short card description for type=link or type=html.",
+            },
+            "linkUrl": {
+                "type": "string",
+                "description": "Required destination for type=link, or the single hosted-page source for type=html.",
+            },
+            "htmlContent": {
+                "type": "string",
+                "description": "Raw HTML source for type=html. Use exactly one HTML source.",
+            },
+            "htmlContentBase64": {
+                "type": "string",
+                "description": "Base64 HTML source for type=html. Use exactly one HTML source.",
+            },
+            "htmlFileName": {
+                "type": "string",
+                "description": "File name for the HTML document.",
+            },
+            "durationMs": {
+                "type": "integer",
+                "description": "Voice or video duration in milliseconds.",
+            },
             "mentions": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Mentioned wxid list. This is a common send parameter, not a separate message type.",
+                "description": (
+                    "User IDs to mention in a text message. Every ID must have its matching @nickname "
+                    "visible in the text body, in the same order."
+                ),
             },
             "replyToMessageId": {
                 "type": "string",
-                "description": "Message id to quote/reply to with the platform's real quote capability. Only include this when you intentionally want a quoted reply; omit it for normal replies. Do not use quote=true. Do not simulate quotes with Markdown quote blocks.",
+                "description": (
+                    "Stable messageId of the message to reply to. Use an ID from conversation context "
+                    "for a received message or from a successful send result for your own sent message; "
+                    "supported for text messages."
+                ),
             },
-            "requestId": {"type": "string", "description": "Optional stable request id."},
-            "idempotencyKey": {"type": "string", "description": "Optional stable idempotency key."},
+            "idempotencyKey": {
+                "type": "string",
+                "description": (
+                    "Key for retry-safe delivery; reuse the same value only when retrying the same send operation."
+                ),
+            },
             "file": {
                 "type": "string",
-                "description": "Convenience local file path. The tool reads it into contentBase64 or htmlContentBase64.",
+                "description": "Absolute local source path for image, file, voice, video, or HTML content.",
             },
             "thumbFile": {
                 "type": "string",
-                "description": "Convenience local thumbnail path. The tool reads it into thumbContentBase64.",
+                "description": "Absolute local thumbnail image path for video, link, or HTML messages.",
             },
         },
         "required": ["conversationId", "type"],
@@ -156,11 +203,14 @@ async def handle_gewehub_send_message(args: dict[str, Any], **_kwargs) -> str:
 
 
 GEWEHUB_REVOKE_MESSAGE_SCHEMA: dict[str, Any] = {
-    "description": "Revoke one GeWeHub message by its stable messageId.",
+    "description": "Revoke a message sent by the current GeWeHub account using its stable messageId.",
     "parameters": {
         "type": "object",
         "properties": {
-            "messageId": {"type": "string", "description": "Stable GeWeHub message id."},
+            "messageId": {
+                "type": "string",
+                "description": "The stable messageId from the successful send result of the message to revoke.",
+            },
         },
         "required": ["messageId"],
         "additionalProperties": False,

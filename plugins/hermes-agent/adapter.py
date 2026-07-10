@@ -1238,7 +1238,7 @@ def register(ctx) -> None:
             handler=handle_gewehub_send_message,
             check_fn=check_gewehub_tool_available,
             is_async=True,
-            description="Send a standard GeWeHub message through /api/send.",
+            description="Send a GeWeHub message and return its stable messageId.",
             emoji="GH",
         )
         ctx.register_tool(
@@ -1248,6 +1248,6 @@ def register(ctx) -> None:
             handler=handle_gewehub_revoke_message,
             check_fn=check_gewehub_tool_available,
             is_async=True,
-            description="Revoke a GeWeHub message by stable messageId.",
+            description="Revoke a message sent by the current GeWeHub account using its messageId.",
             emoji="GH",
         )
