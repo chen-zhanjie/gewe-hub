@@ -11,6 +11,7 @@ import {
   useParams,
 } from "@tanstack/react-router";
 import { lazy, Suspense } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import { ConsoleShell, pageRoutes, type PageKey } from "@/components/layout/ConsoleShell";
 import { LoginPage } from "@/features/auth/LoginPage";
@@ -29,11 +30,15 @@ import { MobileAdminHomePage } from "@/features/mobile/admin/MobileAdminHomePage
 import { MobileSettingsPage } from "@/features/mobile/admin/MobileSettingsPage";
 import { MobileHtmlPagesPage } from "@/features/mobile/admin/MobileHtmlPagesPage";
 import { MobileObservabilityPage } from "@/features/mobile/admin/MobileObservabilityPage";
+import { MobileDeliveriesPage } from "@/features/mobile/admin/MobileDeliveriesPage";
+import { MobileSendRequestsPage } from "@/features/mobile/admin/MobileSendRequestsPage";
+import { MobileSendRequestDetailPage, type MobileSendRequestRecord } from "@/features/mobile/admin/MobileSendRequestDetailPage";
 import { MobileMePage } from "@/features/mobile/me/MobileMePage";
 import { mobileRoutes } from "@/features/mobile/mobile-routes";
 import type { MobileTabKey } from "@/features/mobile/mobile-navigation";
 import { Radio } from "lucide-react";
 import { mapMessageItem } from "@/lib/workspace-data";
+import { apiFetch } from "@/lib/api";
 
 interface AdminRouteConfig {
   key: PageKey;
@@ -190,10 +195,9 @@ const mobileChildRoutes = [
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.adminAccounts, component: MobileAccountsRoute }),
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.adminHtmlPages, component: MobileHtmlPagesRoute }),
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.adminObservability, component: MobileObservabilityRoute }),
-  ...[
-    [mobileRoutes.adminDeliveries, "推送日志"],
-    [mobileRoutes.adminSendRequests, "发送记录"],
-  ].map(([path, title]) => createRoute({ getParentRoute: () => mobileConsoleRoute, path, component: () => <MobilePlaceholderPage title={title} /> })),
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.adminDeliveries, validateSearch: deliveriesSearchSchema, component: MobileDeliveriesRoute }),
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.adminSendRequests, validateSearch: sendRequestsSearchSchema, component: MobileSendRequestsRoute }),
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: "/mobile/admin/send-requests/$sendRequestId", component: MobileSendRequestDetailRoute }),
 ];
 
 const routeTree = rootRoute.addChildren([
@@ -459,6 +463,41 @@ function MobileAppsRoute() {
 function MobileAccountsRoute() {
   const navigate = useNavigate();
   return <MobileAccountsPage onBack={() => void navigate({ to: mobileRoutes.admin })} onOpenContacts={() => void navigate({ to: mobileRoutes.contacts })} />;
+}
+
+function MobileDeliveriesRoute() {
+  const search = useSearch({ strict: false }) as DeliveryRouteSearch;
+  const navigate = useNavigate();
+  return (
+    <MobileDeliveriesPage
+      initialFilters={{ status: asDeliveryFilterStatus(search.status), messageId: search.messageId, page: search.page ?? 1, pageSize: search.pageSize === 50 ? 50 : 20 }}
+      onFiltersChange={(filters) => void navigate({ to: mobileRoutes.adminDeliveries, search: { status: filters.status || "all", messageId: filters.messageId, page: filters.page > 1 ? filters.page : undefined, pageSize: filters.pageSize !== 20 ? filters.pageSize : undefined } })}
+      onBack={() => void navigate({ to: mobileRoutes.admin })}
+      onOpenConversation={(conversationId) => void navigate({ to: mobileRoutes.conversation(conversationId) })}
+    />
+  );
+}
+
+function MobileSendRequestsRoute() {
+  const search = useSearch({ strict: false }) as SendRequestRouteSearch;
+  const navigate = useNavigate();
+  return (
+    <MobileSendRequestsPage
+      initialFilters={{ status: asSendRequestRouteStatus(search.status), page: search.page ?? 1, pageSize: search.pageSize === 50 ? 50 : 20 }}
+      onFiltersChange={(filters) => void navigate({ to: mobileRoutes.adminSendRequests, search: { status: filters.status || undefined, page: filters.page > 1 ? filters.page : undefined, pageSize: filters.pageSize !== 20 ? filters.pageSize : undefined } })}
+      onBack={() => void navigate({ to: mobileRoutes.admin })}
+    />
+  );
+}
+
+function MobileSendRequestDetailRoute() {
+  const navigate = useNavigate();
+  const { sendRequestId } = useParams({ strict: false }) as { sendRequestId?: string };
+  const detailQuery = useQuery({ queryKey: ["mobile", "send-request", sendRequestId], queryFn: () => apiFetch<MobileSendRequestRecord>(`/api/send-requests/${encodeURIComponent(sendRequestId ?? "")}`), enabled: Boolean(sendRequestId) });
+  if (!sendRequestId) return <Navigate to={mobileRoutes.adminSendRequests} replace />;
+  if (detailQuery.isLoading) return <MobilePlaceholderPage title="正在加载发送详情" />;
+  if (!detailQuery.data) return <MobilePlaceholderPage title={detailQuery.error instanceof Error ? detailQuery.error.message : "发送记录不存在"} />;
+  return <MobileSendRequestDetailPage request={detailQuery.data} onBack={() => void navigate({ to: mobileRoutes.adminSendRequests })} />;
 }
 
 function MobileHtmlPagesRoute() {
