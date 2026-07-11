@@ -11,82 +11,57 @@ REMOTE_HOST="${REMOTE_HOST:-root@1panel.yunzxu.com}"
 REMOTE_DIR="${REMOTE_DIR:-/opt/gewehub}"
 IMAGE_NAME="${IMAGE_NAME:-gewehub:latest}"
 PLATFORM="${PLATFORM:-linux/amd64}"
-PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://gewehub.yunzxu.com}"
-WEB_ORIGIN="${WEB_ORIGIN:-https://gewehub.yunzxu.com}"
-HOST_PORT="${HOST_PORT:-1870}"
-MYSQL_HOST="${MYSQL_HOST:-1Panel-mysql-aQxp}"
-MYSQL_DATABASE="${MYSQL_DATABASE:-gewehub}"
-MYSQL_USER="${MYSQL_USER:-gewehub}"
-MYSQL_PASSWORD="${MYSQL_PASSWORD:-${GEWEHUB_DATABASE_PASSWORD:-}}"
-REDIS_HOST="${REDIS_HOST:-1Panel-redis-LoQW}"
-REDIS_DATABASE="${REDIS_DATABASE:-0}"
-REDIS_PASSWORD="${REDIS_PASSWORD:-${GEWEHUB_REDIS_PASSWORD:-}}"
-ENV_SOURCE="${ENV_SOURCE:-$ROOT_DIR/server/.env}"
+PUBLIC_BASE_URL="https://gewehub.yunzxu.com"
+HOST_PORT="1870"
 BUILD_DIR="$ROOT_DIR/runtime/deploy"
 IMAGE_TAR="$BUILD_DIR/gewehub-latest-amd64.tar"
-ENV_TMP="$BUILD_DIR/.env.production"
-
-if [ -z "$MYSQL_PASSWORD" ]; then
-  printf 'MYSQL_PASSWORD or GEWEHUB_DATABASE_PASSWORD is required\n' >&2
-  exit 1
-fi
-
-if [ ! -f "$ENV_SOURCE" ]; then
-  printf 'Env source not found: %s\n' "$ENV_SOURCE" >&2
-  exit 1
-fi
-
-if [ -z "$REDIS_PASSWORD" ]; then
-  REDIS_PASSWORD="$(
-    ssh "$REMOTE_HOST" "docker inspect $REDIS_HOST --format '{{json .Config.Cmd}}'" |
-      python3 -c 'import json, sys
-cmd = json.load(sys.stdin)
-try:
-    print(cmd[cmd.index("--requirepass") + 1])
-except (ValueError, IndexError):
-    print("")
-'
-  )"
-fi
-
-if [ -n "$REDIS_PASSWORD" ]; then
-  REDIS_URL="redis://:${REDIS_PASSWORD}@${REDIS_HOST}:6379/${REDIS_DATABASE}"
-else
-  REDIS_URL="redis://${REDIS_HOST}:6379/${REDIS_DATABASE}"
-fi
-
-DATABASE_URL="mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@${MYSQL_HOST}:3306/${MYSQL_DATABASE}"
 
 mkdir -p "$BUILD_DIR"
 
-awk -F= '
-  BEGIN {
-    skip["DATABASE_URL"]=1
-    skip["REDIS_URL"]=1
-    skip["PUBLIC_BASE_URL"]=1
-    skip["WEB_ORIGIN"]=1
-    skip["FILE_STORAGE_DIR"]=1
-    skip["PORT"]=1
-    skip["NODE_ENV"]=1
-  }
-  /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-  {
-    key=$1
-    sub(/^[[:space:]]+/, "", key)
-    sub(/[[:space:]]+$/, "", key)
-    if (!(key in skip)) print
-  }
-' "$ENV_SOURCE" > "$ENV_TMP"
-{
-  printf 'DATABASE_URL=%s\n' "$DATABASE_URL"
-  printf 'REDIS_URL=%s\n' "$REDIS_URL"
-  printf 'PUBLIC_BASE_URL=%s\n' "$PUBLIC_BASE_URL"
-  printf 'WEB_ORIGIN=%s\n' "$WEB_ORIGIN"
-  printf 'FILE_STORAGE_DIR=%s\n' "/app/server/storage/files"
-  printf 'PORT=%s\n' "3000"
-  printf 'NODE_ENV=%s\n' "production"
-} >> "$ENV_TMP"
-chmod 600 "$ENV_TMP"
+REMOTE_DIR_B64="$(printf '%s' "$REMOTE_DIR" | base64 | tr -d '\n')"
+ssh "$REMOTE_HOST" "REMOTE_DIR_B64='$REMOTE_DIR_B64' python3 -" <<'PY'
+import base64
+import os
+import pathlib
+import re
+
+remote_dir = base64.b64decode(os.environ["REMOTE_DIR_B64"]).decode()
+p = pathlib.Path(remote_dir) / ".env.production"
+if not p.is_file():
+    raise SystemExit(f"Production env missing on remote host: {p}")
+
+values = {}
+for raw_line in p.read_text().splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    key, value = line.split("=", 1)
+    values[key.strip()] = value.strip()
+
+required = {
+    "DATABASE_URL",
+    "REDIS_URL",
+    "GEWE_BASE_URL",
+    "GEWE_TOKEN",
+    "WEBHOOK_SECRET",
+    "ADMIN_USERNAME",
+    "ADMIN_PASSWORD_HASH",
+    "SESSION_SECRET",
+}
+missing = sorted(key for key in required if not values.get(key))
+if missing:
+    raise SystemExit("Production env missing or empty required keys: " + ", ".join(missing))
+
+raw_hash = values["ADMIN_PASSWORD_HASH"]
+quoted = len(raw_hash) >= 2 and raw_hash[0] == raw_hash[-1] and raw_hash[0] in {"'", '"'}
+admin_hash = raw_hash[1:-1] if quoted else raw_hash
+if not quoted:
+    raise SystemExit("ADMIN_PASSWORD_HASH must be quoted in production env to prevent Compose interpolation")
+if not re.fullmatch(r"\$2[aby]\$\d{2}\$.{53}", admin_hash):
+    raise SystemExit("ADMIN_PASSWORD_HASH is not a valid bcrypt hash")
+
+print(f"Production env preserved: {p}")
+PY
 
 "$DOCKER_BIN" buildx build \
   --platform "$PLATFORM" \
@@ -102,7 +77,6 @@ chmod 600 "$ENV_TMP"
 ssh "$REMOTE_HOST" "mkdir -p '$REMOTE_DIR/runtime/files' '$REMOTE_DIR/runtime/logs'"
 scp "$IMAGE_TAR" "$REMOTE_HOST:$REMOTE_DIR/gewehub-latest-amd64.tar"
 scp "$ROOT_DIR/deploy/docker-compose.prod.yml" "$REMOTE_HOST:$REMOTE_DIR/docker-compose.prod.yml"
-scp "$ENV_TMP" "$REMOTE_HOST:$REMOTE_DIR/.env.production"
 
 ssh "$REMOTE_HOST" "cd '$REMOTE_DIR' && \
   docker load -i gewehub-latest-amd64.tar && \

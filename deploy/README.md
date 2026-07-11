@@ -90,17 +90,10 @@ REDIS_URL="redis://redis:6379/0" \
 一键部署从本机构建 `linux/amd64` 镜像，上传到服务器后 `docker load` 并启动：
 
 ```bash
-GEWEHUB_DATABASE_PASSWORD="<服务器 gewehub MySQL 密码>" \
 scripts/deploy-gewehub.sh
 ```
 
-脚本会从本地 `server/.env` 读取 GeWe token、webhook secret、管理员 hash、session secret 等当前开发环境配置，并在生成服务器 `/opt/gewehub/.env.production` 时覆盖：
-
-- `DATABASE_URL`：连接服务器现有 MySQL 容器。
-- `REDIS_URL`：连接服务器现有 Redis 容器。
-- `PUBLIC_BASE_URL=https://gewehub.yunzxu.com`
-- `WEB_ORIGIN=https://gewehub.yunzxu.com`
-- `FILE_STORAGE_DIR=/app/server/storage/files`
+服务器 `/opt/gewehub/.env.production` 是生产配置的唯一事实来源。部署脚本只校验该文件存在、必要配置非空且管理员 bcrypt 哈希已正确引用，**不会从本地生成、上传或覆盖线上环境文件**。如需修改生产密钥，应在服务器上单独变更并保留备份，不应通过代码部署同步。
 
 脚本不会把真实密钥写入仓库。生产容器启动时会先执行 `prisma migrate deploy`，再启动后端和 nginx。
 

@@ -55,7 +55,7 @@ describe("production deploy assets", () => {
     expect(compose).toContain("1panel-network");
   });
 
-  it("deploy script builds locally, uploads image/env/compose, and verifies the public base URL", () => {
+  it("deploy script builds locally, uploads image and compose, preserves remote env, and verifies the public base URL", () => {
     const script = readDeployFile("scripts/deploy-gewehub.sh");
 
     expect(script).toContain("buildx build");
@@ -64,21 +64,28 @@ describe("production deploy assets", () => {
     expect(script).toContain("save \"$IMAGE_NAME\"");
     expect(script).toContain("scp");
     expect(script).toContain("docker load -i");
+    expect(script).not.toContain('scp "$ENV_TMP" "$REMOTE_HOST:$REMOTE_DIR/.env.production"');
+    expect(script).toContain("Production env missing on remote host");
+    expect(script).toContain("ADMIN_PASSWORD_HASH");
+    expect(script).toContain("DATABASE_URL");
+    expect(script).toContain("Production env preserved");
+    expect(script).toContain("ADMIN_PASSWORD_HASH must be quoted");
+    expect(script).toContain("ADMIN_PASSWORD_HASH is not a valid bcrypt hash");
+    expect(script).toContain("Production env missing or empty required keys");
     expect(script).toContain("docker compose -f docker-compose.prod.yml --env-file .env.production up -d");
     expect(script).toContain("/opt/1panel/www/sites/gewehub.yunzxu.com/proxy/gewehub-sse.conf");
     expect(script).toContain("proxy_buffering off;");
     expect(script).toContain("proxy_read_timeout 3700s;");
     expect(script).toContain("docker exec 1Panel-openresty-Qju3 nginx -s reload");
     expect(script).toContain("https://gewehub.yunzxu.com");
-    expect(script).toContain('MYSQL_PASSWORD="${MYSQL_PASSWORD:-${GEWEHUB_DATABASE_PASSWORD:-}}"');
-    expect(script).not.toMatch(/MYSQL_PASSWORD="\$\{MYSQL_PASSWORD:-[^$}][^}]*}"/);
   });
 
-  it("deploy script parses Redis requirepass from docker inspect JSON instead of brittle text matching", () => {
+  it("deploy script preserves the remote production env instead of reconstructing Redis or database secrets locally", () => {
     const script = readDeployFile("scripts/deploy-gewehub.sh");
 
-    expect(script).toContain("json.load(sys.stdin)");
-    expect(script).toContain('cmd.index("--requirepass")');
-    expect(script).not.toContain("sed -n 's/.*--requirepass");
+    expect(script).toContain("Production env preserved");
+    expect(script).not.toContain("docker inspect $REDIS_HOST");
+    expect(script).not.toContain("GEWEHUB_DATABASE_PASSWORD");
+    expect(script).not.toContain("ENV_SOURCE");
   });
 });
