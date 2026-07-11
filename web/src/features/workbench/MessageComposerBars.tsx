@@ -1,6 +1,4 @@
 import { FileText, Image, Mic, Send, Trash2, Video, X } from "lucide-react";
-import { cn } from "@/lib/utils";
-import type { WorkbenchGroupMember } from "@/features/workbench/queries";
 import type { PendingAttachment } from "@/features/workbench/MessageComposer";
 
 export function QuotePreviewBar({
@@ -21,39 +19,6 @@ export function QuotePreviewBar({
       >
         <X className="size-4" />
       </button>
-    </div>
-  );
-}
-
-export function MentionBar({
-  members,
-  selectedWxids,
-  onToggleMention,
-}: {
-  members: WorkbenchGroupMember[];
-  selectedWxids: string[];
-  onToggleMention: (wxid: string) => void;
-}) {
-  return (
-    <div className="mb-3 flex flex-wrap gap-2">
-      {members.map((member) => {
-        const selected = selectedWxids.includes(member.wxid);
-        const label = readGroupMemberDisplayName(member);
-        return (
-          <button
-            key={member.id}
-            type="button"
-            aria-label={`@${label}`}
-            onClick={() => onToggleMention(member.wxid)}
-            className={cn(
-              "inline-flex max-w-44 items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs",
-              selected ? "border-primary bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
-          >
-            <span className="truncate">@{label}</span>
-          </button>
-        );
-      })}
     </div>
   );
 }
@@ -126,12 +91,6 @@ function formatPendingAttachmentType(type: PendingAttachment["type"]): string {
   if (type === "voice") return "语音";
   if (type === "video") return "视频";
   return "文件";
-}
-
-function readGroupMemberDisplayName(member: WorkbenchGroupMember): string {
-  const baseName = member.displayName || member.nickname || member.wxid;
-  if (member.platformRemark && member.displayName) return `${member.platformRemark}(${member.displayName})`;
-  return member.platformRemark || baseName;
 }
 
 function formatBytes(value: number): string {

@@ -103,6 +103,7 @@ export class SendController {
     const htmlInfo = body.type === "html" ? await this.resolveHtmlSend(body, conversation, app?.id ?? null) : undefined;
     const htmlPresentation = resolveHtmlPresentation(body, htmlInfo);
     const requestPayload = buildRequestPayload(body, idempotencyKey, htmlInfo, htmlPresentation, quote);
+    const localMentions = normalizeLocalMentions(body.mentions);
     const mapped = mapSendRequestToGewe({
       appId: conversation.account.appId,
       peerWxid: conversation.peerWxid,
@@ -150,6 +151,7 @@ export class SendController {
         messageId,
         createTime: String(Date.now()),
         content: buildLocalContentFromSendRequest(body, htmlInfo?.htmlPublicUrl),
+        mentions: localMentions,
         quote: quote ? {
           ...quote.content,
           senderName: quote.senderName ?? quote.content.senderName,
@@ -451,6 +453,11 @@ export class SendController {
       ...preview
     };
   }
+}
+
+function normalizeLocalMentions(mentions: string[] | undefined): Array<{ wxid: string; resolved: true }> {
+  return [...new Set(mentions?.map((mention) => mention.trim()).filter(Boolean) ?? [])]
+    .map((wxid) => ({ wxid, resolved: true }));
 }
 
 function normalizeIdempotencyKey(value: string | undefined): string | undefined {

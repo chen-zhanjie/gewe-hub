@@ -23,8 +23,8 @@ export function WorkbenchComposerOutlet({
       showHtmlForm={composer.showHtmlForm}
       htmlDraft={composer.htmlDraft}
       pendingAttachments={composer.pendingAttachments}
-      mentionMembers={composer.mentionMembers}
-      selectedMentionWxids={composer.selectedMentionWxids}
+      mentionCandidates={composer.mentionCandidates}
+      activeMentionQuery={composer.activeMentionQuery}
       quotedMessageLabel={composer.quotedMessageLabel}
       sendError={composer.sendError}
       parsingLink={composer.parsingLink}
@@ -36,6 +36,7 @@ export function WorkbenchComposerOutlet({
       htmlFileInputRef={composer.htmlFileInputRef}
       fileInputRef={composer.fileInputRef}
       onMessageTextChange={composer.setMessageText}
+      onInsertMention={composer.insertMention}
       onShowVideoFormChange={composer.setShowVideoForm}
       onVideoDraftChange={composer.setVideoDraft}
       onShowLinkFormChange={composer.setShowLinkForm}
@@ -62,7 +63,6 @@ export function WorkbenchComposerOutlet({
         void composer.handleParseLink();
       }}
       onRemovePendingAttachment={composer.removePendingAttachment}
-      onToggleMention={composer.toggleMention}
       onClearQuotedMessage={composer.clearQuotedMessage}
       onSendPendingAttachments={() => {
         void composer.handleSendPendingAttachments();

@@ -202,6 +202,7 @@ export interface LocalHubSendInput {
   platformNewMsgId?: string;
   platformCreateTime?: string;
   content?: MessageNode;
+  mentions?: MessageEnvelope["mentions"];
   quote?: MessageNode | null;
   isSent?: boolean;
   outboundMetadata?: Record<string, unknown>;
@@ -233,7 +234,7 @@ export function buildLocalHubSendMessage(input: LocalHubSendInput) {
       wxid: input.senderWxid,
       isOwner: false
     },
-    mentions: [],
+    mentions: input.mentions ?? [],
     content,
     quote: input.quote ?? null,
     renderedText,

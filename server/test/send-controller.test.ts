@@ -132,10 +132,25 @@ describe("SendController", () => {
     const outbox = { waitForSend: vi.fn(async () => ({})), wake: vi.fn() };
     const controller = new SendController(prisma as never, {} as never, undefined, undefined, outbox as never);
 
-    const result = await controller.send(undefined, { conversationId: "conversation_1", type: "text", text: "同步" });
+    const result = await controller.send(undefined, {
+      conversationId: "conversation_1",
+      type: "text",
+      text: "@名称 同步",
+      mentions: [" wxid_member ", "", "wxid_member", "wxid_other", "  "]
+    });
 
     expect(result).toMatchObject({ success: true, messageId: expect.stringMatching(/^msg_[A-Za-z0-9_-]{22}$/) });
     expect(result).not.toHaveProperty("accepted");
+    expect(prisma.message.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        payload: expect.objectContaining({
+          mentions: [
+            { wxid: "wxid_member", resolved: true },
+            { wxid: "wxid_other", resolved: true }
+          ]
+        })
+      })
+    });
     expect(outbox.waitForSend).toHaveBeenCalledWith("send_sync", 60_000);
   });
   it("deliveryMode=discard 与 confirm 当前都创建 held，但保留原始策略", async () => {

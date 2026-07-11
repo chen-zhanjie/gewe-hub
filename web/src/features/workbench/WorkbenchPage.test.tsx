@@ -375,102 +375,95 @@ describe("WorkbenchPage", () => {
     ).toHaveLength(2);
   });
 
-  it("引用消息并选择群成员后发送文本时携带 replyToMessageId 和 mentions", async () => {
+  it("群聊输入 @ 后选择成员会自动插入正文并携带真实 mentions", async () => {
     const fetchMock = mockFetch({
-      "/api/accounts": [
-        {
-          id: "acc_1",
-          wxid: "wxid_bot",
-          nickname: "客服主号",
-          onlineStatus: "online",
-        },
-      ],
-      "/api/conversations": [
-        {
-          id: "conv_1",
-          accountId: "acc_1",
-          peerWxid: "room_alpha@chatroom",
-          type: "group",
-          platformRemark: "Alpha 产品群",
-          lastMessageText: "需要确认的文件",
-          lastMessageAt: "2026-07-06T07:16:37.000Z",
-          status: "active",
-        },
-      ],
-      "/api/conversations/conv_1/messages?take=50": [
-        {
-          id: "row_file",
-          messageId: "msg_file",
-          senderWxid: "wxid_sender",
-          isSelf: false,
-          status: "normal",
-          sentAt: "2026-07-06T07:16:37.000Z",
-          renderedText: "[文件] mapping_app.txt",
-          payload: {
-            sender: { wxid: "wxid_sender", name: "陈可乐", isOwner: false },
-            content: {
-              type: "file",
-              text: "[文件] mapping_app.txt",
-              media: { status: "ready", fileName: "mapping_app.txt" },
-            },
-          },
-          webhookEvent: { rawPayload: { TypeName: "AddMsg" } },
-          deliveries: [],
-        },
-      ],
-      "/api/groups?accountId=acc_1&q=room_alpha%40chatroom": [
-        {
-          id: "group_1",
-          accountId: "acc_1",
-          wxid: "room_alpha@chatroom",
-          name: "Alpha 产品群",
-          status: "active",
-        },
-      ],
+      "/api/accounts": [{ id: "acc_1", wxid: "wxid_bot", nickname: "客服主号", onlineStatus: "online" }],
+      "/api/conversations": [{
+        id: "conv_1", accountId: "acc_1", peerWxid: "room_alpha@chatroom", type: "group", platformRemark: "Alpha 产品群",
+        lastMessageText: "需要确认", lastMessageAt: "2026-07-06T07:16:37.000Z", status: "active",
+      }],
+      "/api/conversations/conv_1/messages?take=50": [],
+      "/api/groups?accountId=acc_1&q=room_alpha%40chatroom": [{ id: "group_1", accountId: "acc_1", wxid: "room_alpha@chatroom", name: "Alpha 产品群", status: "active" }],
       "/api/groups/group_1/members?take=50&skip=0": {
         items: [
-          {
-            id: "member_kele",
-            wxid: "wxid_kele",
-            nickname: "陈可乐",
-            displayName: "可乐",
-            platformRemark: "负责人",
-            status: "active",
-          },
-        ],
-        total: 1,
-        take: 50,
-        skip: 0,
-        nextSkip: 0,
-        hasMore: false,
+          { id: "member_kele", wxid: "wxid_kele", nickname: "陈可乐", displayName: "可乐", platformRemark: "负责人", status: "active" },
+          { id: "member_left", wxid: "wxid_left", nickname: "已离开", displayName: "已离开", status: "left" },
+        ], total: 2, take: 50, skip: 0, nextSkip: 0, hasMore: false,
       },
-      "/api/send": { success: true, messageId: "msg_quote_sent" },
+      "/api/send": { success: true, messageId: "msg_mention_sent" },
     });
 
     renderWorkbenchPage();
+    await waitFor(() => expect(fetchMock.mock.calls.some(([request]) => String(request).includes("/api/groups/group_1/members"))).toBe(true));
+    const input = screen.getByPlaceholderText("输入消息，Enter 发送，Shift+Enter 换行") as HTMLTextAreaElement;
+    input.setSelectionRange(4, 4);
+    fireEvent.change(input, { target: { value: "请 @负", selectionStart: 4, selectionEnd: 4 } });
 
-    const messageRegion = screen.getByLabelText("消息区");
-    expect(await within(messageRegion).findByText("mapping_app.txt")).toBeInTheDocument();
-    fireEvent.click(within(messageRegion).getByRole("button", { name: "引用消息 msg_file" }));
-    expect(await screen.findByText("引用 [文件] mapping_app.txt")).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: "@负责人(可乐)" }));
+    expect(await screen.findByRole("button", { name: "提及 负责人" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "提及 已离开" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "提及 负责人" }));
+    await waitFor(() => expect(input).toHaveValue("请 @负责人 "));
 
-    const input = screen.getByPlaceholderText("输入消息，Enter 发送，Shift+Enter 换行");
-    fireEvent.change(input, { target: { value: "@负责人 这个我看过了" } });
+    fireEvent.change(input, { target: { value: "请 @负责人 请确认", selectionStart: "请 @负责人 请确认".length } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => {
+      const sendCall = fetchMock.mock.calls.find(([request]) => String(request).replace("http://localhost", "") === "/api/send");
+      expect(JSON.parse(String(sendCall?.[1]?.body))).toEqual({
+        conversationId: "conv_1", type: "text", text: "请 @负责人 请确认", mentions: ["wxid_kele"],
+      });
+    });
+  });
+
+  it("删除 @名称 自动空格后仅取消真实 mentions，保留文本", async () => {
+    const fetchMock = mockFetch({
+      "/api/accounts": [{ id: "acc_1", wxid: "wxid_bot", nickname: "客服主号", onlineStatus: "online" }],
+      "/api/conversations": [{
+        id: "conv_1", accountId: "acc_1", peerWxid: "room_alpha@chatroom", type: "group", platformRemark: "Alpha 产品群",
+        lastMessageText: "需要确认", lastMessageAt: "2026-07-06T07:16:37.000Z", status: "active",
+      }],
+      "/api/conversations/conv_1/messages?take=50": [],
+      "/api/groups?accountId=acc_1&q=room_alpha%40chatroom": [{ id: "group_1", accountId: "acc_1", wxid: "room_alpha@chatroom", name: "Alpha 产品群", status: "active" }],
+      "/api/groups/group_1/members?take=50&skip=0": { items: [{ id: "member_kele", wxid: "wxid_kele", displayName: "可乐", platformRemark: "负责人", status: "active" }], total: 1, take: 50, skip: 0, nextSkip: 0, hasMore: false },
+      "/api/send": { success: true, messageId: "msg_text_sent" },
+    });
+
+    renderWorkbenchPage();
+    await waitFor(() => expect(fetchMock.mock.calls.some(([request]) => String(request).includes("/api/groups/group_1/members"))).toBe(true));
+    const input = screen.getByPlaceholderText("输入消息，Enter 发送，Shift+Enter 换行") as HTMLTextAreaElement;
+    input.setSelectionRange(1, 1);
+    fireEvent.change(input, { target: { value: "@", selectionStart: 1, selectionEnd: 1 } });
+    fireEvent.click(await screen.findByRole("button", { name: "提及 负责人" }));
+    await waitFor(() => expect(input).toHaveValue("@负责人 "));
+    fireEvent.change(input, { target: { value: "@负责人", selectionStart: "@负责人".length } });
+    expect(input).toHaveValue("@负责人");
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
 
     await waitFor(() => {
-      const sendCall = fetchMock.mock.calls.find(([input]) => String(input).replace("http://localhost", "") === "/api/send");
-      expect(sendCall).toBeTruthy();
-      expect(JSON.parse(String(sendCall?.[1]?.body))).toEqual({
-        conversationId: "conv_1",
-        type: "text",
-        text: "@负责人 这个我看过了",
-        mentions: ["wxid_kele"],
-        replyToMessageId: "msg_file",
-      });
+      const sendCall = fetchMock.mock.calls.find(([request]) => String(request).replace("http://localhost", "") === "/api/send");
+      expect(JSON.parse(String(sendCall?.[1]?.body))).toEqual({ conversationId: "conv_1", type: "text", text: "@负责人" });
     });
-    expect(screen.queryByText("引用 [文件] mapping_app.txt")).not.toBeInTheDocument();
+  });
+
+  it("引用消息时阻止真实 @，避免 GeWe 静默丢失 ats", async () => {
+    const fetchMock = mockFetch({
+      "/api/accounts": [{ id: "acc_1", wxid: "wxid_bot", nickname: "客服主号", onlineStatus: "online" }],
+      "/api/conversations": [{ id: "conv_1", accountId: "acc_1", peerWxid: "room_alpha@chatroom", type: "group", platformRemark: "Alpha 产品群", lastMessageText: "文件", lastMessageAt: "2026-07-06T07:16:37.000Z", status: "active" }],
+      "/api/conversations/conv_1/messages?take=50": [{ id: "row_file", messageId: "msg_file", senderWxid: "wxid_sender", isSelf: false, status: "normal", sentAt: "2026-07-06T07:16:37.000Z", renderedText: "[文件] mapping_app.txt", payload: { sender: { wxid: "wxid_sender", name: "陈可乐", isOwner: false }, content: { type: "file", text: "[文件] mapping_app.txt", media: { status: "ready", fileName: "mapping_app.txt" } } }, webhookEvent: { rawPayload: { TypeName: "AddMsg" } }, deliveries: [] }],
+      "/api/groups?accountId=acc_1&q=room_alpha%40chatroom": [{ id: "group_1", accountId: "acc_1", wxid: "room_alpha@chatroom", name: "Alpha 产品群", status: "active" }],
+      "/api/groups/group_1/members?take=50&skip=0": { items: [{ id: "member_kele", wxid: "wxid_kele", displayName: "可乐", platformRemark: "负责人", status: "active" }], total: 1, take: 50, skip: 0, nextSkip: 0, hasMore: false },
+    });
+
+    renderWorkbenchPage();
+    const messageRegion = screen.getByLabelText("消息区");
+    expect(await within(messageRegion).findByText("mapping_app.txt")).toBeInTheDocument();
+    fireEvent.click(within(messageRegion).getByRole("button", { name: "引用消息 msg_file" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([request]) => String(request).includes("/api/groups/group_1/members"))).toBe(true));
+    const input = screen.getByPlaceholderText("输入消息，Enter 发送，Shift+Enter 换行") as HTMLTextAreaElement;
+    input.setSelectionRange(1, 1);
+    fireEvent.change(input, { target: { value: "@", selectionStart: 1, selectionEnd: 1 } });
+    fireEvent.click(await screen.findByRole("button", { name: "提及 负责人" }));
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    expect(await screen.findByText("引用消息暂不支持真实 @；请取消引用后再发送。")).toBeInTheDocument();
   });
 
   it("发送文本后立即插入本地发送中气泡并清空输入", async () => {
@@ -535,9 +528,10 @@ describe("WorkbenchPage", () => {
 
     const input = await screen.findByPlaceholderText("输入消息，Enter 发送，Shift+Enter 换行");
     fireEvent.change(input, { target: { value: "乐观发送测试" } });
+    await waitFor(() => expect(input).toHaveValue("乐观发送测试"));
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
 
-    expect(input).toHaveValue("");
+    await waitFor(() => expect(input).toHaveValue(""));
     expect(await screen.findByText("乐观发送测试")).toBeInTheDocument();
     expect(screen.getByText("发送中")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();

@@ -7,7 +7,7 @@ describe("send 工具", () => {
       appId: "wx_app",
       peerWxid: "wxid_target",
       type: "text",
-      text: "你好",
+      text: "@名称 你好",
       mentions: ["wxid_a", "wxid_b"]
     });
 
@@ -15,7 +15,7 @@ describe("send 工具", () => {
     expect(result.body).toEqual({
       appId: "wx_app",
       toWxid: "wxid_target",
-      content: "你好",
+      content: "@名称 你好",
       ats: "wxid_a,wxid_b"
     });
   });
@@ -77,6 +77,21 @@ describe("send 工具", () => {
     expect(appmsg).toContain("<displayname>陈可乐</displayname>");
     expect(appmsg).not.toContain("<referdesc>");
     expect(appmsg).toContain("&lt;msg&gt;&lt;appmsg");
+  });
+
+  it("构建本地消息时保留传入的 mentions", () => {
+    const local = buildLocalHubSendMessage({
+      accountWxid: "wxid_bot",
+      conversationId: "cvs_1",
+      conversationWxid: "room@chatroom",
+      senderWxid: "wxid_bot",
+      text: "@名称 你好",
+      messageId: "msg_mention_1",
+      createTime: "1782932724220",
+      mentions: [{ wxid: "wxid_member", resolved: true }]
+    });
+
+    expect(local.payload.mentions).toEqual([{ wxid: "wxid_member", resolved: true }]);
   });
 
   it("发送成功后生成带 quote 的本地引用消息", () => {

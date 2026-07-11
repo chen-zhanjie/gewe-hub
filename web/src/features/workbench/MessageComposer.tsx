@@ -9,7 +9,7 @@ import {
   Upload,
   Video,
 } from "lucide-react";
-import type { ClipboardEvent, RefObject } from "react";
+import { useRef, type ClipboardEvent, type RefObject } from "react";
 import {
   Dialog,
   DialogContent,
@@ -20,8 +20,9 @@ import {
 } from "@/components/ui/Dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/Popover";
 import { cn } from "@/lib/utils";
-import type { WorkbenchGroupMember, WorkbenchMediaSendType } from "@/features/workbench/queries";
-import { MentionBar, PendingAttachmentBar, QuotePreviewBar } from "@/features/workbench/MessageComposerBars";
+import type { WorkbenchMediaSendType } from "@/features/workbench/queries";
+import type { MentionCandidate } from "@/features/workbench/mention-draft";
+import { PendingAttachmentBar, QuotePreviewBar } from "@/features/workbench/MessageComposerBars";
 
 type MediaSendType = WorkbenchMediaSendType;
 
@@ -66,8 +67,8 @@ export function MessageComposer({
   showHtmlForm,
   htmlDraft,
   pendingAttachments,
-  mentionMembers,
-  selectedMentionWxids,
+  mentionCandidates,
+  activeMentionQuery,
   quotedMessageLabel,
   sendError,
   parsingLink,
@@ -79,6 +80,7 @@ export function MessageComposer({
   htmlFileInputRef,
   fileInputRef,
   onMessageTextChange,
+  onInsertMention,
   onShowVideoFormChange,
   onVideoDraftChange,
   onShowLinkFormChange,
@@ -95,7 +97,6 @@ export function MessageComposer({
   onSendHtml,
   onParseLink,
   onRemovePendingAttachment,
-  onToggleMention,
   onClearQuotedMessage,
   onSendPendingAttachments,
   onPaste,
@@ -112,8 +113,8 @@ export function MessageComposer({
   showHtmlForm: boolean;
   htmlDraft: HtmlDraft;
   pendingAttachments: PendingAttachment[];
-  mentionMembers: WorkbenchGroupMember[];
-  selectedMentionWxids: string[];
+  mentionCandidates: MentionCandidate[];
+  activeMentionQuery: { start: number; query: string } | null;
   quotedMessageLabel: string | null;
   sendError: string | null;
   parsingLink: boolean;
@@ -124,7 +125,8 @@ export function MessageComposer({
   linkThumbInputRef: RefObject<HTMLInputElement | null>;
   htmlFileInputRef: RefObject<HTMLInputElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
-  onMessageTextChange: (text: string) => void;
+  onMessageTextChange: (text: string, selectionStart: number) => void;
+  onInsertMention: (member: MentionCandidate, selectionStart?: number) => void;
   onShowVideoFormChange: (show: boolean) => void;
   onVideoDraftChange: (draft: VideoDraft | ((current: VideoDraft) => VideoDraft)) => void;
   onShowLinkFormChange: (show: boolean | ((current: boolean) => boolean)) => void;
@@ -141,12 +143,13 @@ export function MessageComposer({
   onSendHtml: () => void;
   onParseLink: () => void;
   onRemovePendingAttachment: (attachmentId: string) => void;
-  onToggleMention: (wxid: string) => void;
   onClearQuotedMessage: () => void;
   onSendPendingAttachments: () => void;
   onPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onSendText: () => void;
 }) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
   return (
     <div className="shrink-0 border-t bg-background p-4">
       <div className="mb-3 flex items-center gap-2">
@@ -310,18 +313,36 @@ export function MessageComposer({
       {quotedMessageLabel ? (
         <QuotePreviewBar label={quotedMessageLabel} onClear={onClearQuotedMessage} />
       ) : null}
-      {mentionMembers.length > 0 ? (
-        <MentionBar
-          members={mentionMembers.slice(0, 12)}
-          selectedWxids={selectedMentionWxids}
-          onToggleMention={onToggleMention}
-        />
-      ) : null}
-      <div className="flex items-end gap-3">
+      <div className="relative flex items-end gap-3">
+        {activeMentionQuery ? (
+          <div role="listbox" aria-label="可提及的群成员" className="absolute bottom-full left-0 z-20 mb-2 max-h-52 w-72 overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
+            {mentionCandidates.length > 0 ? mentionCandidates.map((member) => (
+              <button
+                key={member.wxid}
+                type="button"
+                aria-label={`提及 ${member.label}`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onInsertMention(member, textareaRef.current?.selectionStart ?? undefined);
+                  requestAnimationFrame(() => {
+                    const textarea = textareaRef.current;
+                    if (!textarea) return;
+                    textarea.focus();
+                    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+                  });
+                }}
+                className="flex w-full items-center rounded-sm px-3 py-2 text-left text-sm hover:bg-muted"
+              >
+                @{member.label}
+              </button>
+            )) : <div className="px-3 py-2 text-sm text-muted-foreground">没有匹配的群成员</div>}
+          </div>
+        ) : null}
         <textarea
+          ref={textareaRef}
           rows={3}
           value={messageText}
-          onChange={(event) => onMessageTextChange(event.target.value)}
+          onChange={(event) => onMessageTextChange(event.currentTarget.value, event.currentTarget.selectionStart || event.currentTarget.value.length)}
           onPaste={onPaste}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {

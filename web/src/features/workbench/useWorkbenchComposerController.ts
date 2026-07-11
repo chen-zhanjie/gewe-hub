@@ -3,6 +3,14 @@ import type { ClipboardEvent, DragEvent } from "react";
 import { useRef, useState } from "react";
 import type { PendingAttachment } from "@/features/workbench/MessageComposer";
 import {
+  applyMentionTextChange,
+  createMentionDraft,
+  getActiveMentionQuery,
+  getEffectiveMentionWxids,
+  insertMention,
+  type MentionCandidate,
+} from "@/features/workbench/mention-draft";
+import {
   arrayBufferToBase64,
   guessMimeType,
   inferMediaTypeFromFile,
@@ -76,7 +84,7 @@ export function useWorkbenchComposerController({
   submitLocalSendPayload,
   failLocalSend,
 }: WorkbenchComposerControllerOptions) {
-  const [messageText, setMessageText] = useState("");
+  const [mentionDraft, setMentionDraft] = useState(() => createMentionDraft());
   const [showVideoForm, setShowVideoForm] = useState(false);
   const [videoDraft, setVideoDraft] = useState<VideoDraft>({
     file: null,
@@ -103,7 +111,6 @@ export function useWorkbenchComposerController({
   const [sending, setSending] = useState(false);
   const [parsingLink, setParsingLink] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
-  const [selectedMentionWxids, setSelectedMentionWxids] = useState<string[]>([]);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -120,29 +127,40 @@ export function useWorkbenchComposerController({
   });
 
   async function handleSendText() {
-    const text = messageText.trim();
+    const text = mentionDraft.text.trim();
     if (!selectedConversation || !text) return;
 
+    const mentions = getEffectiveMentionWxids(mentionDraft);
+    if (quotedMessage && mentions.length > 0) {
+      setSendError("引用消息暂不支持真实 @；请取消引用后再发送。");
+      return;
+    }
+
     setSendError(null);
-    setMessageText("");
     const sent = await onSendText(text, {
-      mentions: selectedMentionWxids,
+      mentions,
       replyToMessageId: quotedMessage?.messageId,
       quotePreview: quotedMessage ? buildQuotePreview(quotedMessage) : undefined,
     });
-    if (!sent) {
-      setMessageText(text);
-      return;
-    }
-    setSelectedMentionWxids([]);
+    if (!sent) return;
+    setMentionDraft(createMentionDraft());
     onClearQuotedMessage();
   }
 
-  function toggleMention(wxid: string) {
-    setSelectedMentionWxids((current) =>
-      current.includes(wxid) ? current.filter((item) => item !== wxid) : [...current, wxid],
-    );
+  function handleMessageTextChange(text: string, selectionStart: number) {
+    setMentionDraft((current) => applyMentionTextChange(current, text, selectionStart));
   }
+
+  function handleInsertMention(member: MentionCandidate, selectionStart?: number) {
+    setMentionDraft((current) => insertMention(current, member, selectionStart));
+  }
+
+  const mentionCandidates = selectedConversation?.type === "group"
+    ? groupMembers
+        .filter((member) => member.status === "active")
+        .filter((member) => matchesMentionQuery(member, getActiveMentionQuery(mentionDraft)?.query ?? ""))
+        .map((member) => ({ wxid: member.wxid, label: readMentionMemberLabel(member) }))
+    : [];
 
   async function handleSendMedia(file: File | undefined, type: MediaSendType, options?: { durationMs?: number }) {
     if (!selectedConversation || !file || sending) return;
@@ -470,8 +488,11 @@ function defaultHtmlTitle(draft: HtmlDraft): string {
 }
 
   return {
-    messageText,
-    setMessageText,
+    messageText: mentionDraft.text,
+    mentionCandidates,
+    activeMentionQuery: selectedConversation?.type === "group" ? getActiveMentionQuery(mentionDraft) : null,
+    setMessageText: handleMessageTextChange,
+    insertMention: handleInsertMention,
     showVideoForm,
     setShowVideoForm,
     videoDraft,
@@ -490,8 +511,6 @@ function defaultHtmlTitle(draft: HtmlDraft): string {
     sending,
     parsingLink,
     pendingAttachments,
-    mentionMembers: selectedConversation?.type === "group" ? groupMembers : [],
-    selectedMentionWxids,
     quotedMessageLabel: quotedMessage ? formatQuotedMessageLabel(quotedMessage) : null,
     attachmentDragActive,
     sendError,
@@ -510,7 +529,6 @@ function defaultHtmlTitle(draft: HtmlDraft): string {
     handleParseLink,
     handleSendVideo,
     removePendingAttachment,
-    toggleMention,
     clearQuotedMessage: onClearQuotedMessage,
     handleSendPendingAttachments,
     handleAttachmentPaste,
@@ -534,4 +552,17 @@ function buildQuotePreview(message: MessageItem): MessageNode {
 
 function formatQuotedMessageLabel(message: MessageItem): string {
   return `${message.content.text || message.messageId}`;
+}
+
+function matchesMentionQuery(member: WorkbenchGroupMember, query: string): boolean {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return true;
+  return [member.platformRemark, member.displayName, member.nickname, member.wxid]
+    .filter((value): value is string => Boolean(value))
+    .some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
+}
+
+function readMentionMemberLabel(member: WorkbenchGroupMember): string {
+  const baseName = member.displayName || member.nickname || member.wxid;
+  return member.platformRemark || baseName;
 }
