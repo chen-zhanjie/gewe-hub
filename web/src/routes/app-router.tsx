@@ -15,6 +15,10 @@ import { ConsoleShell, pageRoutes, type PageKey } from "@/components/layout/Cons
 import { LoginPage } from "@/features/auth/LoginPage";
 import { useAuthMeQuery, useLoginMutation, useLogoutMutation } from "@/features/auth/queries";
 import { WorkbenchPage } from "@/features/workbench/WorkbenchPage";
+import { MobileAppShell } from "@/features/mobile/MobileAppShell";
+import { MobileLoginPage } from "@/features/mobile/auth/MobileLoginPage";
+import { mobileRoutes } from "@/features/mobile/mobile-routes";
+import type { MobileTabKey } from "@/features/mobile/mobile-navigation";
 import { Radio } from "lucide-react";
 
 interface AdminRouteConfig {
@@ -124,7 +128,45 @@ const consoleChildRoutes = adminRoutes.map((route) =>
   }),
 );
 
-const routeTree = rootRoute.addChildren([indexRoute, loginRoute, consoleRoute.addChildren(consoleChildRoutes)]);
+const mobileIndexRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: mobileRoutes.root,
+  component: () => <Navigate to={mobileRoutes.conversations} replace />,
+});
+
+const mobileLoginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: `${mobileRoutes.root}/login`,
+  component: MobileLoginRoute,
+});
+
+const mobileConsoleRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  id: "mobile-console",
+  component: MobileConsoleRoute,
+});
+
+const mobileChildRoutes = [
+  [mobileRoutes.conversations, "会话"],
+  [mobileRoutes.contacts, "通讯录"],
+  [mobileRoutes.admin, "管理"],
+  [mobileRoutes.me, "我的"],
+].map(([path, title]) =>
+  createRoute({
+    getParentRoute: () => mobileConsoleRoute,
+    path,
+    component: () => <MobilePlaceholderPage title={title} />,
+  }),
+);
+
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  loginRoute,
+  mobileIndexRoute,
+  mobileLoginRoute,
+  consoleRoute.addChildren(consoleChildRoutes),
+  mobileConsoleRoute.addChildren(mobileChildRoutes),
+]);
 
 export function createAppRouter() {
   return createRouter({
@@ -279,6 +321,64 @@ function asSendRequestRouteStatus(value: unknown): "" | "success" | "failed" | "
 function asHtmlPageRouteStatus(value: unknown): "" | "active" | "archived" | "deleted" {
   if (value === "active" || value === "archived" || value === "deleted") return value;
   return "";
+}
+
+
+function MobileLoginRoute() {
+  const authMe = useAuthMeQuery();
+  const loginMutation = useLoginMutation();
+
+  if (authMe.isLoading) return <BootScreen />;
+  if (authMe.data) return <Navigate to={mobileRoutes.conversations} replace />;
+
+  return (
+    <MobileLoginPage
+      submitting={loginMutation.isPending}
+      onLogin={async (username, password) => {
+        await loginMutation.mutateAsync({ username, password });
+      }}
+    />
+  );
+}
+
+function MobileConsoleRoute() {
+  const authMe = useAuthMeQuery();
+  const logoutMutation = useLogoutMutation();
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const activeTab = mobileTabFromPath(pathname);
+
+  if (authMe.isLoading) return <BootScreen />;
+  if (!authMe.data) return <Navigate to={`${mobileRoutes.root}/login`} replace />;
+
+  return (
+    <MobileAppShell
+      activeTab={activeTab}
+      username={authMe.data.user.username}
+      showTabs
+      onNavigate={(path) => void navigate({ to: path })}
+      onLogout={() => {
+        void logoutMutation.mutateAsync().finally(() => navigate({ to: `${mobileRoutes.root}/login`, replace: true }));
+      }}
+    >
+      <Outlet />
+    </MobileAppShell>
+  );
+}
+
+function MobilePlaceholderPage({ title }: { title: string }) {
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
+      {title}页面
+    </div>
+  );
+}
+
+function mobileTabFromPath(pathname: string): MobileTabKey {
+  if (pathname.startsWith(mobileRoutes.contacts)) return "contacts";
+  if (pathname.startsWith(mobileRoutes.admin)) return "admin";
+  if (pathname.startsWith(mobileRoutes.me)) return "me";
+  return "conversations";
 }
 
 function LoginRoute() {

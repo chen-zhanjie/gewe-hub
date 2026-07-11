@@ -120,3 +120,13 @@ describe("全局样式架构", () => {
     expect(sourcesWithoutLayerDefinition).not.toMatch(/\bz-(?:40|50|\[60\])\b/);
   });
 });
+
+describe("移动端样式架构", () => {
+  it("使用动态视口和顶部底部安全区", () => {
+    const source = readFileSync(resolve(__dirname, "styles.css"), "utf8");
+
+    expect(source).toContain("100dvh");
+    expect(source).toContain("env(safe-area-inset-top)");
+    expect(source).toContain("env(safe-area-inset-bottom)");
+  });
+});
