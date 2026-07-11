@@ -8,6 +8,7 @@ import {
   useNavigate,
   useRouterState,
   useSearch,
+  useParams,
 } from "@tanstack/react-router";
 import { lazy, Suspense } from "react";
 import { z } from "zod";
@@ -18,6 +19,10 @@ import { WorkbenchPage } from "@/features/workbench/WorkbenchPage";
 import { MobileAppShell } from "@/features/mobile/MobileAppShell";
 import { MobileLoginPage } from "@/features/mobile/auth/MobileLoginPage";
 import { MobileConversationsPage } from "@/features/mobile/conversations/MobileConversationsPage";
+import { MobileChatPage } from "@/features/mobile/chat/MobileChatPage";
+import { MobileContactsPage } from "@/features/mobile/contacts/MobileContactsPage";
+import { MobileAppsPage } from "@/features/mobile/admin/MobileAppsPage";
+import { MobileAccountsPage } from "@/features/mobile/admin/MobileAccountsPage";
 import { MobileAdminHomePage } from "@/features/mobile/admin/MobileAdminHomePage";
 import { MobileSettingsPage } from "@/features/mobile/admin/MobileSettingsPage";
 import { MobileMePage } from "@/features/mobile/me/MobileMePage";
@@ -156,15 +161,22 @@ const mobileConversationsRoute = createRoute({
   component: MobileConversationsRoute,
 });
 
+const mobileChatRoute = createRoute({
+  getParentRoute: () => mobileConsoleRoute,
+  path: "/mobile/conversations/$conversationId",
+  component: MobileChatRoute,
+});
+
 const mobileChildRoutes = [
   mobileConversationsRoute,
-  createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.contacts, component: () => <MobilePlaceholderPage title="通讯录" /> }),
+  mobileChatRoute,
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.contacts, component: MobileContactsRoute }),
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.admin, component: MobileAdminHomePage }),
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.me, component: MobileMeRoute }),
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.settings, component: MobileSettingsRoute }),
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.adminApps, component: MobileAppsRoute }),
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.adminAccounts, component: MobileAccountsRoute }),
   ...[
-    [mobileRoutes.adminApps, "应用管理"],
-    [mobileRoutes.adminAccounts, "微信账号"],
     [mobileRoutes.adminDeliveries, "推送日志"],
     [mobileRoutes.adminSendRequests, "发送记录"],
     [mobileRoutes.adminHtmlPages, "HTML 页面"],
@@ -387,6 +399,28 @@ function MobileConversationsRoute() {
       onOpenManagement={(conversationId) => void navigate({ to: mobileRoutes.conversationManage(conversationId) })}
     />
   );
+}
+
+function MobileChatRoute() {
+  const navigate = useNavigate();
+  const { conversationId } = useParams({ strict: false }) as { conversationId?: string };
+  if (!conversationId) return <Navigate to={mobileRoutes.conversations} replace />;
+  return <MobileChatPage conversationId={conversationId} onBack={() => void navigate({ to: mobileRoutes.conversations })} />;
+}
+
+function MobileContactsRoute() {
+  const navigate = useNavigate();
+  return <MobileContactsPage onOpenConversation={(conversationId) => void navigate({ to: mobileRoutes.conversation(conversationId) })} />;
+}
+
+function MobileAppsRoute() {
+  const navigate = useNavigate();
+  return <MobileAppsPage onBack={() => void navigate({ to: mobileRoutes.admin })} onOpenConversation={(conversationId) => void navigate({ to: mobileRoutes.conversation(conversationId) })} />;
+}
+
+function MobileAccountsRoute() {
+  const navigate = useNavigate();
+  return <MobileAccountsPage onBack={() => void navigate({ to: mobileRoutes.admin })} onOpenContacts={() => void navigate({ to: mobileRoutes.contacts })} />;
 }
 
 function MobileMeRoute() {

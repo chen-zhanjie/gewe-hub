@@ -29,6 +29,17 @@ describe("app router architecture", () => {
     expect(navigationSource).toContain("mobileRoutes.me");
   });
 
+  it("移动端真实页面接入会话详情、通讯录、应用和微信账号路由", () => {
+    const source = readFileSync(resolve(__dirname, "app-router.tsx"), "utf8");
+
+    expect(source).toContain('path: "/mobile/conversations/$conversationId"');
+    expect(source).toContain("component: MobileChatRoute");
+    expect(source).toContain("component: MobileContactsRoute");
+    expect(source).toContain("component: MobileAppsRoute");
+    expect(source).toContain("component: MobileAccountsRoute");
+    expect(source).not.toContain('path: mobileRoutes.contacts, component: () => <MobilePlaceholderPage title="通讯录" />');
+  });
+
   it("管理页使用路由级动态导入，避免进入工作台首屏包", () => {
     const source = readFileSync(resolve(__dirname, "app-router.tsx"), "utf8");
 
