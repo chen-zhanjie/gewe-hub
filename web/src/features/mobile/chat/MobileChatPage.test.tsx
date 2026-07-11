@@ -240,6 +240,27 @@ describe("MobileChatPage", () => {
     );
   });
 
+  it("默认输入器发送文本，并可从消息长按动作引用回复", async () => {
+    const fetchMock = mockApi([message({ id: "quote-source", messageId: "quote-source" })]);
+    renderPage();
+    await screen.findByText("收到");
+
+    fireEvent.click(screen.getByRole("button", { name: "收到 更多操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "引用" }));
+    expect(screen.getByText("引用 收到")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "消息" }), { target: { value: "回复内容", selectionStart: 4 } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/send",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ conversationId: "conv-1", type: "text", text: "回复内容", replyToMessageId: "quote-source" }),
+      }),
+    ));
+  });
+
   it("失败的本地消息可长按重试或删除", async () => {
     const fetchMock = mockApi([], { failFirstSend: true });
     renderPage({

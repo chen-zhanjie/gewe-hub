@@ -9,6 +9,7 @@ import type { MessageItem } from "@/lib/workspace-data";
 export function MobileMessageActions({
   message,
   onClose,
+  onQuote,
   onRetryLocalSend,
   onDeleteLocalSend,
   onDispatchHeldMessage,
@@ -17,6 +18,7 @@ export function MobileMessageActions({
 }: {
   message: MessageItem | null;
   onClose: () => void;
+  onQuote?: (message: MessageItem) => void;
   onRetryLocalSend: (message: MessageItem) => void;
   onDeleteLocalSend: (message: MessageItem) => void;
   onDispatchHeldMessage: (message: MessageItem) => void;
@@ -45,6 +47,12 @@ export function MobileMessageActions({
 
   const actions: MobileActionSheetAction[] = [];
   if (message && capabilities) {
+    if (onQuote && capabilities.canQuote)
+      actions.push({
+        id: "quote",
+        label: "引用",
+        onSelect: () => onQuote(message),
+      });
     if (capabilities.canDispatchHeld)
       actions.push({
         id: "dispatch",
