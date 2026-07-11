@@ -17,6 +17,7 @@ import { useAuthMeQuery, useLoginMutation, useLogoutMutation } from "@/features/
 import { WorkbenchPage } from "@/features/workbench/WorkbenchPage";
 import { MobileAppShell } from "@/features/mobile/MobileAppShell";
 import { MobileLoginPage } from "@/features/mobile/auth/MobileLoginPage";
+import { MobileConversationsPage } from "@/features/mobile/conversations/MobileConversationsPage";
 import { mobileRoutes } from "@/features/mobile/mobile-routes";
 import type { MobileTabKey } from "@/features/mobile/mobile-navigation";
 import { Radio } from "lucide-react";
@@ -146,18 +147,26 @@ const mobileConsoleRoute = createRoute({
   component: MobileConsoleRoute,
 });
 
+const mobileConversationsRoute = createRoute({
+  getParentRoute: () => mobileConsoleRoute,
+  path: mobileRoutes.conversations,
+  component: MobileConversationsRoute,
+});
+
 const mobileChildRoutes = [
-  [mobileRoutes.conversations, "会话"],
-  [mobileRoutes.contacts, "通讯录"],
-  [mobileRoutes.admin, "管理"],
-  [mobileRoutes.me, "我的"],
-].map(([path, title]) =>
-  createRoute({
-    getParentRoute: () => mobileConsoleRoute,
-    path,
-    component: () => <MobilePlaceholderPage title={title} />,
-  }),
-);
+  mobileConversationsRoute,
+  ...[
+    [mobileRoutes.contacts, "通讯录"],
+    [mobileRoutes.admin, "管理"],
+    [mobileRoutes.me, "我的"],
+  ].map(([path, title]) =>
+    createRoute({
+      getParentRoute: () => mobileConsoleRoute,
+      path,
+      component: () => <MobilePlaceholderPage title={title} />,
+    }),
+  ),
+];
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -363,6 +372,16 @@ function MobileConsoleRoute() {
     >
       <Outlet />
     </MobileAppShell>
+  );
+}
+
+function MobileConversationsRoute() {
+  const navigate = useNavigate({ from: mobileRoutes.conversations });
+  return (
+    <MobileConversationsPage
+      onOpenConversation={(conversationId) => void navigate({ to: mobileRoutes.conversation(conversationId) })}
+      onOpenManagement={(conversationId) => void navigate({ to: mobileRoutes.conversationManage(conversationId) })}
+    />
   );
 }
 
