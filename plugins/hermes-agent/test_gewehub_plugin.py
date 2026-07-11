@@ -153,6 +153,8 @@ def test_platform_hint_is_concise_and_describes_only_current_behavior():
         "last character must be }",
         "no Markdown code fences",
         "no text before or after",
+        "Do not use the conversation WeChat ID",
+        "wxid_...",
     ):
         assert required in hint
 
@@ -506,6 +508,12 @@ def test_tool_prompts_are_concise_current_and_actionable():
     assert "reply" in send_schema["description"]
     assert "revoke" in send_schema["description"]
 
+    assert "conversation ID" in send_props["conversationId"]["description"]
+    assert "cvs_..." in send_props["conversationId"]["description"]
+    assert "internal conversation.id" in send_props["conversationId"]["description"]
+    assert "Do not use" in send_props["conversationId"]["description"]
+    assert "conversation WeChat ID" in send_props["conversationId"]["description"]
+    assert "wxid_..." in send_props["conversationId"]["description"]
     assert "record without delivery" in send_props["deliveryMode"]["description"]
     assert "human confirmation" in send_props["deliveryMode"]["description"]
     assert "synchronous" in send_props["executionMode"]["description"]

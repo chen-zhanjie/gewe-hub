@@ -26,7 +26,11 @@ GEWEHUB_SEND_MESSAGE_SCHEMA: dict[str, Any] = {
         "properties": {
             "conversationId": {
                 "type": "string",
-                "description": "Target conversation ID from the current message context.",
+                "description": (
+                    "Target conversation ID: use the context field named 会话ID (for example cvs_...) "
+                    "or internal conversation.id. Do not use the conversation WeChat ID / 对端微信ID "
+                    "(for example wxid_...)."
+                ),
             },
             "deliveryMode": {
                 "type": "string",

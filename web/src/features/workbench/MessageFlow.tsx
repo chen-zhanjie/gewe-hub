@@ -55,6 +55,7 @@ export function MessageBubble({
   const unsent = !localSend && message.isSent === false;
   const held = unsent && message.sendRequest?.status === "held";
   const dispatchPending = unsent && message.sendRequest?.status === "pending";
+  const heldForConfirmation = held && message.sendRequest?.deliveryMode === "confirm";
   const heldLabel = held && message.sendRequest?.deliveryMode === "discard" ? "未发送" : "待确认";
   const deliveryStatus = localSend ? null : readDeliveryStatus(message.deliveries);
   const metaAlwaysVisible = Boolean(localSend || unsent);
@@ -172,7 +173,8 @@ export function MessageBubble({
                 : cn("px-3 py-2", message.isSelf ? "bg-primary text-primary-foreground" : "border bg-background"),
               localSend?.status === "pending" && "opacity-70",
               localSend?.status === "failed" && !framedByContent && "border border-destructive/50 bg-destructive/10 text-foreground",
-              unsent && "border border-dashed border-muted-foreground bg-muted text-muted-foreground",
+              heldForConfirmation && "border border-dashed border-amber-400 bg-amber-50 text-amber-950",
+              unsent && !heldForConfirmation && "border border-dashed border-muted-foreground bg-muted text-muted-foreground",
             )}
           >
             <MessageNodeView node={message.content} />

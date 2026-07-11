@@ -1222,13 +1222,14 @@ def register(ctx) -> None:
         pii_safe=True,
         platform_hint=(
             "You are replying through GeWeHub. "
-            "Plain final text sends an immediate synchronous reply; use final JSON only when structured message parameters are needed. "
-            "When final uses JSON, return a pure JSON string: the first character must be { and the last character must be }; include no Markdown code fences and no text before or after the JSON object, including labels or explanations. "
-            "Use gewehub_send_message for media, HTML, links, mentions, native replies, or messages sent before the final response. "
+            "Plain final text sends immediately; use final JSON for structured parameters. "
+            "When final uses JSON, return a pure JSON string: the first character must be { and the last character must be }; no Markdown code fences and no text before or after, including labels or explanations. "
+            "Use gewehub_send_message for media, HTML, links, mentions, native replies, or pre-final messages. "
+            "conversationId must be 会话ID (cvs_...) or internal conversation.id. Do not use the conversation WeChat ID / 对端微信ID (wxid_...). "
             "For every ID in mentions, include the matching @nickname in the message text. "
-            "Normal delivery uses deliveryMode=immediate and executionMode=sync; use deliveryMode=discard to record without delivery, deliveryMode=confirm for human confirmation, and executionMode=async only when explicitly needed. "
-            "Use the stable messageId from conversation context or send results for replyToMessageId and gewehub_revoke_message. "
-            "If a final turn is required after a tool sends the complete answer, return {\"deliveryMode\":\"discard\",\"type\":\"text\",\"text\":\"Reply completed by tool\"} so it is recorded without another user-visible send."
+            "Default: deliveryMode=immediate, executionMode=sync; discard records without delivery, confirm needs human confirmation, async only when needed. "
+            "Use stable messageId from context or results for replyToMessageId and gewehub_revoke_message. "
+            "After a complete tool reply, final must be {\"deliveryMode\":\"discard\",\"type\":\"text\",\"text\":\"Reply completed by tool\"}."
         ),
     )
     if hasattr(ctx, "register_tool"):

@@ -148,6 +148,70 @@ describe("GeWe 样本标准化", () => {
     expect(result?.content.items?.length).toBeGreaterThan(1);
   });
 
+  it("扁平 APP_MSG 收藏聊天记录 type=40 realinnertype=19 标准化为 chat_record 摘要", () => {
+    const result = normalizeGewePayload({
+      appid: "wx_app",
+      wxid: "wxid_bot",
+      msgId: "1402190183",
+      newMsgId: "7992089383321772258",
+      createTime: 1783737698811,
+      fromUser: "wxid_sender",
+      toUser: "wxid_bot",
+      isSelf: false,
+      msgType: "APP_MSG",
+      content:
+        "<msg><appmsg><title>陈可乐与食唔食虾饺的聊天记录</title><des>食唔食虾饺: 不是\n陈可乐: 我自己打出来是吧</des><type>40</type><realinnertype>19</realinnertype></appmsg></msg>",
+    });
+
+    expect(result?.content.type).toBe("chat_record");
+    expect(result?.content.text).toContain("陈可乐与食唔食虾饺的聊天记录");
+    expect(result?.content.text).toContain("我自己打出来是吧");
+    expect(result?.content.items).toEqual([]);
+    expect(result?.content.rawType).toBe("APP_MSG_TYPE_40_REALINNER_19");
+    expect(result?.metadata?.gewe).toMatchObject({
+      msgType: "CHAT_RECORD",
+      rawMsgType: "APP_MSG",
+      appMsgType: "40",
+      realInnerType: "19",
+    });
+  });
+
+  it("扁平 APP_MSG type=19 标准化为 chat_record", () => {
+    const result = normalizeGewePayload({
+      appid: "wx_app",
+      wxid: "wxid_bot",
+      msgId: "1402190184",
+      newMsgId: "7992089383321772259",
+      createTime: 1783737698812,
+      fromUser: "wxid_sender",
+      toUser: "wxid_bot",
+      isSelf: false,
+      msgType: "APP_MSG",
+      content:
+        "<msg><appmsg><title>聊天记录</title><type>19</type><recorditem><![CDATA[<recordinfo><datalist><dataitem datatype=\"1\"><datadesc>第一条</datadesc></dataitem></datalist></recordinfo>]]></recorditem></appmsg></msg>",
+    });
+
+    expect(result?.content.type).toBe("chat_record");
+    expect(result?.content.items).toHaveLength(1);
+    expect(result?.metadata?.gewe).toMatchObject({
+      msgType: "CHAT_RECORD",
+      rawMsgType: "APP_MSG",
+      appMsgType: "19",
+    });
+  });
+
+  it("扁平 APP_MSG type=74 文件壳仍跳过", () => {
+    const payload = {
+      appid: "wx_app",
+      wxid: "wxid_bot",
+      msgType: "APP_MSG",
+      content: "<msg><appmsg><title>附件.txt</title><type>74</type></appmsg></msg>",
+    };
+
+    expect(shouldSkipStandardMessage(payload)).toBe(true);
+    expect(normalizeGewePayload(payload)).toBeNull();
+  });
+
   it("真实 AddMsg 收藏聊天记录 type=40 realinnertype=19 降级为 chat_record 摘要", () => {
     const result = normalizeGewePayload(
       addMsgPayload({
@@ -609,7 +673,7 @@ describe("GeWe 样本标准化", () => {
     expect(result?.renderedMd).toContain("消息ID: msg_5004026754542010999");
     expect(result?.renderedMd).toContain("会话ID: cvs_wxid_bot_48315023241@chatroom");
     expect(result?.renderedMd).toContain("会话类型: group");
-    expect(result?.renderedMd).toContain("会话微信ID: 48315023241@chatroom");
+    expect(result?.renderedMd).toContain("对端微信ID（不可作为 conversationId）: 48315023241@chatroom");
     expect(result?.renderedMd).toContain("当前账号ID: wxid_bot");
     expect(result?.renderedMd).toContain("是否@我: 是");
     expect(result?.renderedMd).toContain("时间: 2026-07-06 11:29");

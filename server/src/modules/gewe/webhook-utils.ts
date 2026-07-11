@@ -66,7 +66,7 @@ export function classifyWebhookPayload(payload: Record<string, unknown>): Webhoo
 
 export function normalizeWebhookPayload(payload: Record<string, unknown>): Record<string, unknown> {
   const data = asRecord(payload.Data);
-  if (!data) return payload;
+  if (!data) return normalizeFlatWebhookPayload(payload);
 
   const rawMsgType = asString(data.MsgType ?? data.msgType);
   const rawContent = unwrapString(data.Content);
@@ -98,6 +98,38 @@ export function normalizeWebhookPayload(payload: Record<string, unknown>): Recor
     fromGroup,
     toUser: unwrapString(data.ToUserName ?? data.toUserName),
     isSelf: computeIsSelf(payload, data)
+  };
+}
+
+function normalizeFlatWebhookPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const rawMsgType = asString(payload.msgType ?? payload.MsgType);
+  const rawContent = unwrapString(payload.content ?? payload.Content);
+  const appMsgType = getAppMsgType(rawContent);
+  const realInnerType = getRealInnerType(rawContent);
+  const msgType =
+    rawMsgType === "APP_MSG"
+      ? mapAppMsgType(appMsgType, realInnerType)
+      : rawMsgType;
+
+  return {
+    ...payload,
+    appid: unwrapString(payload.Appid ?? payload.appid ?? payload.appId),
+    wxid: unwrapString(payload.Wxid ?? payload.wxid),
+    msgType,
+    rawMsgType,
+    appMsgType,
+    realInnerType,
+    msgId: unwrapString(payload.MsgId ?? payload.msgId),
+    newMsgId: unwrapString(payload.NewMsgId ?? payload.newMsgId ?? payload.newmsgid),
+    createTime: payload.CreateTime ?? payload.createTime,
+    content: rawContent,
+    rawContent,
+    pushContent: unwrapString(payload.PushContent ?? payload.pushContent),
+    msgSource: unwrapString(payload.MsgSource ?? payload.msgSource),
+    fromUser: unwrapString(payload.FromUser ?? payload.fromUser),
+    fromGroup: unwrapString(payload.FromGroup ?? payload.fromGroup),
+    toUser: unwrapString(payload.ToUser ?? payload.toUser),
+    isSelf: parseBoolean(payload.isSelf ?? payload.IsSelf),
   };
 }
 

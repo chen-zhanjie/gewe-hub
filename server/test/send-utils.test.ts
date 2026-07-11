@@ -148,7 +148,7 @@ describe("send 工具", () => {
     expect(local.renderedText).toBe("这个我看过了: [图片]");
     expect(local.payload.renderedMd).toContain("[上下文]");
     expect(local.payload.renderedMd).toContain("消息ID: msg_9154866412345678");
-    expect(local.payload.renderedMd).toContain("会话微信ID: room@chatroom");
+    expect(local.payload.renderedMd).toContain("对端微信ID（不可作为 conversationId）: room@chatroom");
     expect(local.payload.renderedMd).toContain("当前账号ID: wxid_bot");
     expect(local.payload.renderedMd).toContain("是否@我: 否");
     expect(local.payload.renderedMd).toContain("[引用]");

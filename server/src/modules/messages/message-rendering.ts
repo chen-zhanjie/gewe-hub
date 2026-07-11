@@ -30,7 +30,7 @@ export function renderMessageMarkdown(envelope: MessageEnvelope): string {
   lines.push(`消息ID: ${envelope.messageId}`);
   lines.push(`会话ID: ${envelope.conversation.id}`);
   lines.push(`会话类型: ${envelope.conversation.type}`);
-  lines.push(`会话微信ID: ${envelope.conversation.wxid}`);
+  lines.push(`对端微信ID（不可作为 conversationId）: ${envelope.conversation.wxid}`);
   if (envelope.conversation.name?.trim()) lines.push(`会话名称: ${envelope.conversation.name.trim()}`);
   if (envelope.conversation.remark?.trim()) lines.push(`会话备注: ${envelope.conversation.remark.trim()}`);
   lines.push(`当前账号ID: ${envelope.account.wxid}`);

@@ -107,8 +107,14 @@ describe("MessageBubble", () => {
       />,
     );
 
+    const messageFrame = container.querySelector('[data-message-content-shell="true"] > div');
     expect(container.querySelector('[data-message-sent="false"]')).toHaveClass("opacity-60");
-    expect(container.querySelector('[data-message-content-shell="true"] > div')).toHaveClass("border-dashed");
+    expect(messageFrame).toHaveClass("border-dashed");
+    if (deliveryMode === "confirm") {
+      expect(messageFrame).toHaveClass("border-amber-400", "bg-amber-50", "text-amber-950");
+    } else {
+      expect(messageFrame).not.toHaveClass("border-amber-400", "bg-amber-50", "text-amber-950");
+    }
     expect(screen.getByText(label)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "撤回消息 msg_recent" })).not.toBeInTheDocument();
 
