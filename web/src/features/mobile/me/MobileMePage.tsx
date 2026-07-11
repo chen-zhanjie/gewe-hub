@@ -12,7 +12,7 @@ import { useAuthMeQuery, useLogoutMutation } from "@/features/auth/queries";
 import { loadMobileAccountId } from "../mobile-selection-storage";
 import { MobilePage } from "../MobilePage";
 
-export function MobileMePage() {
+export function MobileMePage({ onLoggedOut }: { onLoggedOut?: () => void } = {}) {
   const authQuery = useAuthMeQuery();
   const geweStatusQuery = useGeweStatusQuery();
   const accountsQuery = useAccountsQuery();
@@ -71,7 +71,7 @@ export function MobileMePage() {
         <button
           type="button"
           disabled={logoutMutation.isPending}
-          onClick={() => void logoutMutation.mutateAsync()}
+          onClick={() => void logoutMutation.mutateAsync().then(() => onLoggedOut?.())}
           className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-destructive/30 bg-background text-sm font-medium text-destructive disabled:cursor-not-allowed disabled:opacity-50"
         >
           <LogOut className="size-5" />

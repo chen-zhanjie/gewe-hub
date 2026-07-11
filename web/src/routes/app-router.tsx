@@ -18,6 +18,9 @@ import { WorkbenchPage } from "@/features/workbench/WorkbenchPage";
 import { MobileAppShell } from "@/features/mobile/MobileAppShell";
 import { MobileLoginPage } from "@/features/mobile/auth/MobileLoginPage";
 import { MobileConversationsPage } from "@/features/mobile/conversations/MobileConversationsPage";
+import { MobileAdminHomePage } from "@/features/mobile/admin/MobileAdminHomePage";
+import { MobileSettingsPage } from "@/features/mobile/admin/MobileSettingsPage";
+import { MobileMePage } from "@/features/mobile/me/MobileMePage";
 import { mobileRoutes } from "@/features/mobile/mobile-routes";
 import type { MobileTabKey } from "@/features/mobile/mobile-navigation";
 import { Radio } from "lucide-react";
@@ -155,17 +158,18 @@ const mobileConversationsRoute = createRoute({
 
 const mobileChildRoutes = [
   mobileConversationsRoute,
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.contacts, component: () => <MobilePlaceholderPage title="通讯录" /> }),
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.admin, component: MobileAdminHomePage }),
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.me, component: MobileMeRoute }),
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.settings, component: MobileSettingsRoute }),
   ...[
-    [mobileRoutes.contacts, "通讯录"],
-    [mobileRoutes.admin, "管理"],
-    [mobileRoutes.me, "我的"],
-  ].map(([path, title]) =>
-    createRoute({
-      getParentRoute: () => mobileConsoleRoute,
-      path,
-      component: () => <MobilePlaceholderPage title={title} />,
-    }),
-  ),
+    [mobileRoutes.adminApps, "应用管理"],
+    [mobileRoutes.adminAccounts, "微信账号"],
+    [mobileRoutes.adminDeliveries, "推送日志"],
+    [mobileRoutes.adminSendRequests, "发送记录"],
+    [mobileRoutes.adminHtmlPages, "HTML 页面"],
+    [mobileRoutes.adminObservability, "运行观测"],
+  ].map(([path, title]) => createRoute({ getParentRoute: () => mobileConsoleRoute, path, component: () => <MobilePlaceholderPage title={title} /> })),
 ];
 
 const routeTree = rootRoute.addChildren([
@@ -364,7 +368,7 @@ function MobileConsoleRoute() {
     <MobileAppShell
       activeTab={activeTab}
       username={authMe.data.user.username}
-      showTabs
+      showTabs={pathname === mobileRoutes.conversations || pathname === mobileRoutes.contacts || pathname === mobileRoutes.admin || pathname === mobileRoutes.me}
       onNavigate={(path) => void navigate({ to: path })}
       onLogout={() => {
         void logoutMutation.mutateAsync().finally(() => navigate({ to: `${mobileRoutes.root}/login`, replace: true }));
@@ -383,6 +387,16 @@ function MobileConversationsRoute() {
       onOpenManagement={(conversationId) => void navigate({ to: mobileRoutes.conversationManage(conversationId) })}
     />
   );
+}
+
+function MobileMeRoute() {
+  const navigate = useNavigate();
+  return <MobileMePage onLoggedOut={() => void navigate({ to: `${mobileRoutes.root}/login`, replace: true })} />;
+}
+
+function MobileSettingsRoute() {
+  const navigate = useNavigate();
+  return <MobileSettingsPage onBack={() => void navigate({ to: mobileRoutes.me })} />;
 }
 
 function MobilePlaceholderPage({ title }: { title: string }) {
