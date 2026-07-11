@@ -16,10 +16,12 @@ import { ConsoleShell, pageRoutes, type PageKey } from "@/components/layout/Cons
 import { LoginPage } from "@/features/auth/LoginPage";
 import { useAuthMeQuery, useLoginMutation, useLogoutMutation } from "@/features/auth/queries";
 import { WorkbenchPage } from "@/features/workbench/WorkbenchPage";
+import { useWorkbenchMessagesQuery } from "@/features/workbench/queries";
 import { MobileAppShell } from "@/features/mobile/MobileAppShell";
 import { MobileLoginPage } from "@/features/mobile/auth/MobileLoginPage";
 import { MobileConversationsPage } from "@/features/mobile/conversations/MobileConversationsPage";
 import { MobileChatPage } from "@/features/mobile/chat/MobileChatPage";
+import { MobileMessageDetailPage } from "@/features/mobile/chat/MobileMessageDetailPage";
 import { MobileContactsPage } from "@/features/mobile/contacts/MobileContactsPage";
 import { MobileAppsPage } from "@/features/mobile/admin/MobileAppsPage";
 import { MobileAccountsPage } from "@/features/mobile/admin/MobileAccountsPage";
@@ -29,6 +31,7 @@ import { MobileMePage } from "@/features/mobile/me/MobileMePage";
 import { mobileRoutes } from "@/features/mobile/mobile-routes";
 import type { MobileTabKey } from "@/features/mobile/mobile-navigation";
 import { Radio } from "lucide-react";
+import { mapMessageItem } from "@/lib/workspace-data";
 
 interface AdminRouteConfig {
   key: PageKey;
@@ -167,9 +170,16 @@ const mobileChatRoute = createRoute({
   component: MobileChatRoute,
 });
 
+const mobileMessageDetailRoute = createRoute({
+  getParentRoute: () => mobileConsoleRoute,
+  path: "/mobile/conversations/$conversationId/messages/$messageId",
+  component: MobileMessageDetailRoute,
+});
+
 const mobileChildRoutes = [
   mobileConversationsRoute,
   mobileChatRoute,
+  mobileMessageDetailRoute,
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.contacts, component: MobileContactsRoute }),
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.admin, component: MobileAdminHomePage }),
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.me, component: MobileMeRoute }),
@@ -405,7 +415,33 @@ function MobileChatRoute() {
   const navigate = useNavigate();
   const { conversationId } = useParams({ strict: false }) as { conversationId?: string };
   if (!conversationId) return <Navigate to={mobileRoutes.conversations} replace />;
-  return <MobileChatPage conversationId={conversationId} onBack={() => void navigate({ to: mobileRoutes.conversations })} />;
+  return (
+    <MobileChatPage
+      conversationId={conversationId}
+      onBack={() => void navigate({ to: mobileRoutes.conversations })}
+      onShowMessageDetail={(message) => void navigate({ to: mobileRoutes.messageDetail(conversationId, message.id) })}
+    />
+  );
+}
+
+function MobileMessageDetailRoute() {
+  const navigate = useNavigate();
+  const { conversationId, messageId } = useParams({ strict: false }) as { conversationId?: string; messageId?: string };
+  const messagesQuery = useWorkbenchMessagesQuery(conversationId ?? null);
+  if (!conversationId || !messageId) return <Navigate to={mobileRoutes.conversations} replace />;
+  if (messagesQuery.isLoading) return <MobilePlaceholderPage title="正在加载消息详情" />;
+  const messages = (messagesQuery.data ?? []).map(mapMessageItem);
+  const message = messages.find((item) => item.id === messageId || item.messageId === messageId);
+  if (!message) return <MobilePlaceholderPage title="消息不存在" />;
+  return (
+    <MobileMessageDetailPage
+      message={message}
+      messages={messages}
+      onBack={() => void navigate({ to: mobileRoutes.conversation(conversationId) })}
+      onSelectMessage={(selected) => void navigate({ to: mobileRoutes.messageDetail(conversationId, selected.id) })}
+      onOpenDeliveryLog={(selectedMessageId) => void navigate({ to: mobileRoutes.adminDeliveries, search: { status: "failed", messageId: selectedMessageId } })}
+    />
+  );
 }
 
 function MobileContactsRoute() {

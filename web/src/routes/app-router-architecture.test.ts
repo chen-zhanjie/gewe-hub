@@ -34,6 +34,7 @@ describe("app router architecture", () => {
 
     expect(source).toContain('path: "/mobile/conversations/$conversationId"');
     expect(source).toContain("component: MobileChatRoute");
+    expect(source).toContain("component: MobileMessageDetailRoute");
     expect(source).toContain("component: MobileContactsRoute");
     expect(source).toContain("component: MobileAppsRoute");
     expect(source).toContain("component: MobileAccountsRoute");

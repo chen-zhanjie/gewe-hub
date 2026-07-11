@@ -1,7 +1,8 @@
 export const mobileRoutes = {
   root: "/mobile",
   conversations: "/mobile/conversations",
-  conversation: (conversationId: string) => `/mobile/conversations/${conversationId}`,
+  conversation: (conversationId: string) => `/mobile/conversations/${encodeURIComponent(conversationId)}`,
+  messageDetail: (conversationId: string, messageId: string) => `/mobile/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
   conversationManage: (conversationId: string) => `/mobile/conversations/${conversationId}/manage`,
   contacts: "/mobile/contacts",
   admin: "/mobile/admin",
