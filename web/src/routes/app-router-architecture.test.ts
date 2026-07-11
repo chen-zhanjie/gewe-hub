@@ -3,6 +3,32 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("app router architecture", () => {
+  it("移动端路径全部位于 /mobile 命名空间，并提供四个一级导航 Tab", () => {
+    const routesSource = readFileSync(
+      resolve(__dirname, "../features/mobile/mobile-routes.ts"),
+      "utf8",
+    );
+    const navigationSource = readFileSync(
+      resolve(__dirname, "../features/mobile/mobile-navigation.ts"),
+      "utf8",
+    );
+
+    expect(routesSource).toContain('root: "/mobile"');
+    expect(routesSource).toContain('conversations: "/mobile/conversations"');
+    expect(routesSource).toContain('contacts: "/mobile/contacts"');
+    expect(routesSource).toContain('admin: "/mobile/admin"');
+    expect(routesSource).toContain('me: "/mobile/me"');
+
+    expect(navigationSource).toContain('label: "会话"');
+    expect(navigationSource).toContain('label: "通讯录"');
+    expect(navigationSource).toContain('label: "管理"');
+    expect(navigationSource).toContain('label: "我的"');
+    expect(navigationSource).toContain("mobileRoutes.conversations");
+    expect(navigationSource).toContain("mobileRoutes.contacts");
+    expect(navigationSource).toContain("mobileRoutes.admin");
+    expect(navigationSource).toContain("mobileRoutes.me");
+  });
+
   it("管理页使用路由级动态导入，避免进入工作台首屏包", () => {
     const source = readFileSync(resolve(__dirname, "app-router.tsx"), "utf8");
 
