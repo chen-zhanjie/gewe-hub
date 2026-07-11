@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { isFramedMessageNode, MessageNodeView } from "@/components/message/MessageNodeView";
 import { Avatar } from "@/components/ui/Avatar";
 import { TimeText } from "@/components/ui/TimeText";
+import { getMessageActionCapabilities } from "@/features/mobile/mobile-action-capabilities";
 import { cn } from "@/lib/utils";
 import type { MessageItem } from "@/lib/workspace-data";
 
@@ -37,7 +38,7 @@ export function MessageBubble({
   dispatchingMessageId?: string | null;
   onQuoteMessage: (message: MessageItem) => void;
 }) {
-  const revokable = useMessageRevokable(message);
+  const actionCapabilities = useMessageActionCapabilities(message);
 
   if (message.content.type === "system") {
     return (
@@ -89,7 +90,7 @@ export function MessageBubble({
         </span>
       ) : null}
       <LocalSendMeta message={message} onRetry={onRetryLocalSend} onDelete={onDeleteLocalSend} />
-      {!localSend ? (
+      {actionCapabilities.canQuote ? (
         <button
           type="button"
           aria-label={`引用消息 ${message.messageId}`}
@@ -100,7 +101,7 @@ export function MessageBubble({
           引用
         </button>
       ) : null}
-      {!localSend ? (
+      {actionCapabilities.canShowDetail ? (
         <button
           type="button"
           aria-label={`查看消息详情 ${message.messageId}`}
@@ -115,7 +116,7 @@ export function MessageBubble({
         <button
           type="button"
           aria-label={`发送消息 ${message.messageId}`}
-          disabled={!held || dispatchingMessageId === message.id}
+          disabled={!actionCapabilities.canDispatchHeld || dispatchingMessageId === message.id}
           onClick={() => onDispatchHeldMessage(message)}
           className="inline-flex min-w-[56px] shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -123,7 +124,7 @@ export function MessageBubble({
           {dispatchPending || dispatchingMessageId === message.id ? "发送中" : "发送"}
         </button>
       ) : null}
-      {revokable ? (
+      {actionCapabilities.canRevoke ? (
         <button
           type="button"
           aria-label={`撤回消息 ${message.messageId}`}
@@ -161,7 +162,7 @@ export function MessageBubble({
       <div className={cn("message-bubble flex max-w-[calc(100%_-_200px)] min-w-0 flex-col gap-1", message.isSelf && "items-end")}>
         {showSenderName ? <div className="text-xs text-muted-foreground">{message.senderName}</div> : null}
         <div data-message-content-shell="true" className="relative inline-block max-w-full">
-          {localSend?.status === "failed" ? (
+          {actionCapabilities.canRetryLocalSend ? (
             <LocalSendFailureRetry message={message} onRetry={onRetryLocalSend} />
           ) : null}
           <div
@@ -349,21 +350,14 @@ function readDeliveryStatus(deliveries: unknown[]): string | null {
   return first?.status ?? null;
 }
 
-function useMessageRevokable(message: MessageItem): boolean {
+function useMessageActionCapabilities(message: MessageItem) {
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const sentAtMs = readMessageSentAtMs(message);
+  const capabilities = getMessageActionCapabilities(message, nowMs);
+  const sentAtMs = new Date(message.sentAtIso).getTime();
   const expiresAtMs = sentAtMs + 2 * 60 * 1000;
-  const eligible = Boolean(
-    message.isSelf &&
-      message.isSent !== false &&
-      !message.localSend &&
-      message.status === "normal" &&
-      message.sendRequest?.status !== "held" &&
-      message.sendRequestId,
-  );
 
   useEffect(() => {
-    if (!eligible || !Number.isFinite(sentAtMs)) return;
+    if (!capabilities.canRevoke || !Number.isFinite(sentAtMs)) return;
     const remainingMs = expiresAtMs - Date.now();
     if (remainingMs <= 0) {
       setNowMs(Date.now());
@@ -373,12 +367,7 @@ function useMessageRevokable(message: MessageItem): boolean {
       setNowMs(Date.now());
     }, remainingMs + 250);
     return () => window.clearTimeout(timer);
-  }, [eligible, expiresAtMs, sentAtMs]);
+  }, [capabilities.canRevoke, expiresAtMs, sentAtMs]);
 
-  return eligible && nowMs >= sentAtMs && nowMs <= expiresAtMs;
-}
-
-function readMessageSentAtMs(message: MessageItem): number {
-  if (!message.isSelf || message.isSent === false || message.localSend || message.status !== "normal" || !message.sendRequestId) return Number.NaN;
-  return new Date(message.sentAtIso).getTime();
+  return capabilities;
 }
