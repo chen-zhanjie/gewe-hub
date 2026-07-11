@@ -80,6 +80,24 @@ describe("MobileConversationsPage", () => {
     expect(screen.queryByText("林晴")).not.toBeInTheDocument();
   });
 
+  it("从会话操作打开并保存已有的备注表单", async () => {
+    const fetchMock = mockWorkspace();
+    renderPage();
+    await screen.findByText("林晴");
+
+    fireEvent.click(screen.getByRole("button", { name: "林晴 更多操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑备注" }));
+
+    const input = screen.getByRole("textbox", { name: "平台会话备注" });
+    fireEvent.change(input, { target: { value: "重点客户" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存备注" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/conversations/conv-pinned",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ platformRemark: "重点客户" }) }),
+    ));
+  });
+
   it("打开会话操作并执行标为已读", async () => {
     const fetchMock = mockWorkspace();
     renderPage();

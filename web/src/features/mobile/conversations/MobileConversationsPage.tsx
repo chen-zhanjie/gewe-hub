@@ -4,6 +4,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { MobilePage } from "@/features/mobile/MobilePage";
 import { loadMobileAccountId, storeMobileAccountId } from "@/features/mobile/mobile-selection-storage";
 import { adminEventSourceStatusEvent, type AdminEventSourceStatusDetail, useRefreshWorkbenchQueries, useWorkbenchAdminEvents, useWorkbenchWorkspaceQuery } from "@/features/workbench/queries";
+import { ConversationRemarkDialog } from "@/features/workbench/ConversationRemarkDialog";
 import { useWorkbenchConversationActions } from "@/features/workbench/useWorkbenchConversationActions";
 import { useConversationUnreadState } from "@/features/workbench/useConversationUnreadState";
 import { filterConversationsForAccount } from "@/features/workbench/workbench-conversation-filter";
@@ -60,6 +61,15 @@ export function MobileConversationsPage({ onOpenConversation, onOpenManagement =
       </div>
       <MobileAccountPicker open={accountPickerOpen} accounts={accounts} selectedAccountId={selectedAccount?.id ?? null} onSelect={(accountId) => { setSelectedAccountId(accountId); storeMobileAccountId(accountId); }} onClose={() => setAccountPickerOpen(false)} />
       <MobileConversationActions conversation={actionConversation} onClose={() => setActionConversation(null)} onTogglePinned={() => actionConversation && void actions.togglePinned(actionConversation)} onMarkRead={() => actionConversation && void actions.markRead(actionConversation)} onEditRemark={() => actionConversation && actions.openRemarkDialog(actionConversation)} onManage={() => actionConversation && onOpenManagement(actionConversation.id)} onHide={() => actionConversation && void actions.hideConversation(actionConversation)} />
+      <ConversationRemarkDialog
+        conversation={actions.remarkDialog.conversation}
+        draft={actions.remarkDialog.draft}
+        saving={actions.remarkDialog.saving}
+        error={actions.remarkDialog.error}
+        onDraftChange={actions.remarkDialog.setDraft}
+        onSave={() => void actions.saveRemark()}
+        onOpenChange={(open) => { if (!open) actions.closeRemarkDialog(); }}
+      />
     </MobilePage>
   );
 
