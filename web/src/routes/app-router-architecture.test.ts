@@ -38,6 +38,8 @@ describe("app router architecture", () => {
     expect(source).toContain("component: MobileContactsRoute");
     expect(source).toContain("component: MobileAppsRoute");
     expect(source).toContain("component: MobileAccountsRoute");
+    expect(source).toContain("component: MobileHtmlPagesRoute");
+    expect(source).toContain("component: MobileObservabilityRoute");
     expect(source).not.toContain('path: mobileRoutes.contacts, component: () => <MobilePlaceholderPage title="通讯录" />');
   });
 

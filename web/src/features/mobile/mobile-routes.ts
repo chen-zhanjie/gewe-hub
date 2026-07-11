@@ -10,6 +10,7 @@ export const mobileRoutes = {
   adminAccounts: "/mobile/admin/accounts",
   adminDeliveries: "/mobile/admin/deliveries",
   adminSendRequests: "/mobile/admin/send-requests",
+  adminSendRequest: (sendRequestId: string) => `/mobile/admin/send-requests/${encodeURIComponent(sendRequestId)}`,
   adminHtmlPages: "/mobile/admin/html-pages",
   adminObservability: "/mobile/admin/observability",
   me: "/mobile/me",

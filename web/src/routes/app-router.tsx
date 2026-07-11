@@ -27,6 +27,8 @@ import { MobileAppsPage } from "@/features/mobile/admin/MobileAppsPage";
 import { MobileAccountsPage } from "@/features/mobile/admin/MobileAccountsPage";
 import { MobileAdminHomePage } from "@/features/mobile/admin/MobileAdminHomePage";
 import { MobileSettingsPage } from "@/features/mobile/admin/MobileSettingsPage";
+import { MobileHtmlPagesPage } from "@/features/mobile/admin/MobileHtmlPagesPage";
+import { MobileObservabilityPage } from "@/features/mobile/admin/MobileObservabilityPage";
 import { MobileMePage } from "@/features/mobile/me/MobileMePage";
 import { mobileRoutes } from "@/features/mobile/mobile-routes";
 import type { MobileTabKey } from "@/features/mobile/mobile-navigation";
@@ -186,11 +188,11 @@ const mobileChildRoutes = [
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.settings, component: MobileSettingsRoute }),
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.adminApps, component: MobileAppsRoute }),
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.adminAccounts, component: MobileAccountsRoute }),
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.adminHtmlPages, component: MobileHtmlPagesRoute }),
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.adminObservability, component: MobileObservabilityRoute }),
   ...[
     [mobileRoutes.adminDeliveries, "推送日志"],
     [mobileRoutes.adminSendRequests, "发送记录"],
-    [mobileRoutes.adminHtmlPages, "HTML 页面"],
-    [mobileRoutes.adminObservability, "运行观测"],
   ].map(([path, title]) => createRoute({ getParentRoute: () => mobileConsoleRoute, path, component: () => <MobilePlaceholderPage title={title} /> })),
 ];
 
@@ -457,6 +459,16 @@ function MobileAppsRoute() {
 function MobileAccountsRoute() {
   const navigate = useNavigate();
   return <MobileAccountsPage onBack={() => void navigate({ to: mobileRoutes.admin })} onOpenContacts={() => void navigate({ to: mobileRoutes.contacts })} />;
+}
+
+function MobileHtmlPagesRoute() {
+  const navigate = useNavigate();
+  return <MobileHtmlPagesPage onBack={() => void navigate({ to: mobileRoutes.admin })} onOpenSendRequest={(sendRequestId) => void navigate({ to: mobileRoutes.adminSendRequest(sendRequestId) })} />;
+}
+
+function MobileObservabilityRoute() {
+  const navigate = useNavigate();
+  return <MobileObservabilityPage onBack={() => void navigate({ to: mobileRoutes.admin })} />;
 }
 
 function MobileMeRoute() {
