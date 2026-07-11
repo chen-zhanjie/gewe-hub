@@ -156,6 +156,21 @@ describe("MobileContactsPage", () => {
     );
   });
 
+  it("可进入现有联系人详情和群成员页面", async () => {
+    mockApi();
+    const onOpenContact = vi.fn();
+    const onOpenGroupMembers = vi.fn();
+    renderPage({ onOpenContact, onOpenGroupMembers });
+    await screen.findByText("林晴");
+
+    fireEvent.click(screen.getByRole("button", { name: "查看联系人详情 林晴" }));
+    expect(onOpenContact).toHaveBeenCalledWith("acc-1", "wxid_lin");
+
+    fireEvent.click(screen.getByRole("tab", { name: "群列表" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看群成员 产品讨论群" }));
+    await waitFor(() => expect(onOpenGroupMembers).toHaveBeenCalledWith("conversation-group"));
+  });
+
   it("同步 active 群成员，非 active 联系人和群灰显且不可操作", async () => {
     const fetchMock = mockApi();
     renderPage();

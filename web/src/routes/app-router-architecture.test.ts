@@ -36,6 +36,9 @@ describe("app router architecture", () => {
     expect(source).toContain("component: MobileChatRoute");
     expect(source).toContain("component: MobileMessageDetailRoute");
     expect(source).toContain("component: MobileContactsRoute");
+    expect(source).toContain("component: MobileContactProfileRoute");
+    expect(source).toContain("component: MobileGroupMembersRoute");
+    expect(source).toContain("component: MobileConversationManageRoute");
     expect(source).toContain("component: MobileAppsRoute");
     expect(source).toContain("component: MobileAccountsRoute");
     expect(source).toContain("component: MobileHtmlPagesRoute");

@@ -1,4 +1,6 @@
+import { MoreHorizontal } from "lucide-react";
 import { useMemo, useRef, useState, type ReactNode } from "react";
+import { MobileActionSheet } from "@/features/mobile/MobileActionSheet";
 import { MobileTopBar } from "@/features/mobile/MobileTopBar";
 import { MessageRevokeConfirmDialog } from "@/features/workbench/MessageRevokeConfirmDialog";
 import { parseWorkbenchLinkPreview, sendWorkbenchPayload, sendWorkbenchText, useRefreshWorkbenchQueries, useWorkbenchAdminEvents, useWorkbenchGroupMembersQuery, useWorkbenchMessagesQuery, useWorkbenchWorkspaceQuery } from "@/features/workbench/queries";
@@ -20,10 +22,12 @@ export interface MobileChatComposerApi {
   conversationId: string;
 }
 
-export function MobileChatPage({ conversationId, onBack, onOpenContact, onShowMessageDetail, composer, children }: {
+export function MobileChatPage({ conversationId, onBack, onOpenContact, onOpenManagement, onOpenGroupMembers, onShowMessageDetail, composer, children }: {
   conversationId: string;
   onBack?: () => void;
   onOpenContact?: (wxid: string, accountId?: string | null) => void;
+  onOpenManagement?: () => void;
+  onOpenGroupMembers?: () => void;
   onShowMessageDetail?: (message: MessageItem) => void;
   composer?: ReactNode | ((api: MobileChatComposerApi) => ReactNode);
   children?: ReactNode;
@@ -31,6 +35,7 @@ export function MobileChatPage({ conversationId, onBack, onOpenContact, onShowMe
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const [actionMessage, setActionMessage] = useState<MessageItem | null>(null);
   const [quotedMessage, setQuotedMessage] = useState<MessageItem | null>(null);
+  const [chatActionsOpen, setChatActionsOpen] = useState(false);
   const workspaceQuery = useWorkbenchWorkspaceQuery();
   const conversations = useMemo(() => (workspaceQuery.data?.conversations ?? []).map(mapConversationSummary), [workspaceQuery.data?.conversations]);
   const accounts = useMemo(() => (workspaceQuery.data?.accounts ?? []).map(mapAccountSummary), [workspaceQuery.data?.accounts]);
@@ -69,7 +74,7 @@ export function MobileChatPage({ conversationId, onBack, onOpenContact, onShowMe
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <MobileTopBar title={selectedConversation?.name ?? "聊天"} subtitle={selectedConversation?.appName ? `已绑定 ${selectedConversation.appName}` : undefined} onBack={onBack} />
+      <MobileTopBar title={selectedConversation?.name ?? "聊天"} subtitle={selectedConversation?.appName ? `已绑定 ${selectedConversation.appName}` : undefined} onBack={onBack} actions={(onOpenManagement || (selectedConversation?.type === "group" && onOpenGroupMembers)) ? <button type="button" aria-label="聊天设置" onClick={() => setChatActionsOpen(true)} className="mobile-icon-button"><MoreHorizontal className="size-5" /></button> : undefined} />
       {workspaceQuery.isError ? <div className="p-4 text-sm text-destructive">加载会话失败</div> : null}
       <MobileMessageList conversation={selectedConversation} messages={messageState.visibleMessages} messageListRef={messageListRef} loading={messagesQuery.isLoading || workspaceQuery.isLoading} loadingHistory={messageState.loadingHistory} hasMoreHistory={messageState.hasMoreHistory} historyError={messageState.historyError} newMessageCount={messageState.newMessageCount} dispatchingMessageId={dispatchController.dispatchingMessageId} onScroll={messageState.handleMessageListScroll} onLoadOlder={() => void messageState.handleLoadOlderMessages()} onJumpToNewMessages={messageState.scrollMessageListToBottom} onOpenActions={setActionMessage} onOpenContact={(wxid) => onOpenContact?.(wxid, selectedConversation?.raw.accountId)} />
       {composer === undefined ? (
@@ -87,6 +92,15 @@ export function MobileChatPage({ conversationId, onBack, onOpenContact, onShowMe
         />
       ) : typeof composer === "function" ? composer(composerApi) : composer}
       {children}
+      <MobileActionSheet
+        open={chatActionsOpen}
+        title="聊天操作"
+        onClose={() => setChatActionsOpen(false)}
+        actions={[
+          ...(selectedConversation?.type === "group" && onOpenGroupMembers ? [{ id: "members", label: "群成员", onSelect: onOpenGroupMembers }] : []),
+          ...(onOpenManagement ? [{ id: "manage", label: "会话管理", onSelect: onOpenManagement }] : []),
+        ]}
+      />
       <MobileMessageActions message={actionMessage} onClose={() => setActionMessage(null)} onQuote={setQuotedMessage} onRetryLocalSend={messageState.retryLocalSend} onDeleteLocalSend={messageState.deleteLocalSend} onDispatchHeldMessage={(message) => void dispatchController.dispatchHeldMessage(message)} onRequestRevoke={revokeController.requestRevokeMessage} onShowDetail={onShowMessageDetail} />
       <MessageRevokeConfirmDialog message={revokeController.confirmingRevokeMessage} revokingMessageId={revokeController.revokingMessageId} onClose={revokeController.closeRevokeDialog} onConfirm={() => void revokeController.confirmRevokeMessage()} />
     </div>

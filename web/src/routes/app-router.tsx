@@ -17,13 +17,16 @@ import { ConsoleShell, pageRoutes, type PageKey } from "@/components/layout/Cons
 import { LoginPage } from "@/features/auth/LoginPage";
 import { useAuthMeQuery, useLoginMutation, useLogoutMutation } from "@/features/auth/queries";
 import { WorkbenchPage } from "@/features/workbench/WorkbenchPage";
-import { useWorkbenchMessagesQuery } from "@/features/workbench/queries";
+import { useWorkbenchMessagesQuery, useWorkbenchWorkspaceQuery } from "@/features/workbench/queries";
 import { MobileAppShell } from "@/features/mobile/MobileAppShell";
 import { MobileLoginPage } from "@/features/mobile/auth/MobileLoginPage";
 import { MobileConversationsPage } from "@/features/mobile/conversations/MobileConversationsPage";
 import { MobileChatPage } from "@/features/mobile/chat/MobileChatPage";
 import { MobileMessageDetailPage } from "@/features/mobile/chat/MobileMessageDetailPage";
 import { MobileContactsPage } from "@/features/mobile/contacts/MobileContactsPage";
+import { MobileContactProfilePage } from "@/features/mobile/contacts/MobileContactProfilePage";
+import { MobileGroupMembersPage } from "@/features/mobile/contacts/MobileGroupMembersPage";
+import { MobileConversationManagePage } from "@/features/mobile/conversations/MobileConversationManagePage";
 import { MobileAppsPage } from "@/features/mobile/admin/MobileAppsPage";
 import { MobileAccountsPage } from "@/features/mobile/admin/MobileAccountsPage";
 import { MobileAdminHomePage } from "@/features/mobile/admin/MobileAdminHomePage";
@@ -37,7 +40,7 @@ import { MobileMePage } from "@/features/mobile/me/MobileMePage";
 import { mobileRoutes } from "@/features/mobile/mobile-routes";
 import type { MobileTabKey } from "@/features/mobile/mobile-navigation";
 import { Radio } from "lucide-react";
-import { mapMessageItem } from "@/lib/workspace-data";
+import { mapAccountSummary, mapConversationSummary, mapMessageItem } from "@/lib/workspace-data";
 import { apiFetch } from "@/lib/api";
 
 interface AdminRouteConfig {
@@ -188,6 +191,9 @@ const mobileChildRoutes = [
   mobileChatRoute,
   mobileMessageDetailRoute,
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.contacts, component: MobileContactsRoute }),
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: "/mobile/contacts/$accountId/$wxid", component: MobileContactProfileRoute }),
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: "/mobile/conversations/$conversationId/members", component: MobileGroupMembersRoute }),
+  createRoute({ getParentRoute: () => mobileConsoleRoute, path: "/mobile/conversations/$conversationId/manage", component: MobileConversationManageRoute }),
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.admin, component: MobileAdminHomePage }),
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.me, component: MobileMeRoute }),
   createRoute({ getParentRoute: () => mobileConsoleRoute, path: mobileRoutes.settings, component: MobileSettingsRoute }),
@@ -425,6 +431,9 @@ function MobileChatRoute() {
     <MobileChatPage
       conversationId={conversationId}
       onBack={() => void navigate({ to: mobileRoutes.conversations })}
+      onOpenContact={(wxid, accountId) => { if (accountId) void navigate({ to: mobileRoutes.contactProfile(accountId, wxid) }); }}
+      onOpenManagement={() => void navigate({ to: mobileRoutes.conversationManage(conversationId) })}
+      onOpenGroupMembers={() => void navigate({ to: mobileRoutes.groupMembers(conversationId) })}
       onShowMessageDetail={(message) => void navigate({ to: mobileRoutes.messageDetail(conversationId, message.id) })}
     />
   );
@@ -452,7 +461,35 @@ function MobileMessageDetailRoute() {
 
 function MobileContactsRoute() {
   const navigate = useNavigate();
-  return <MobileContactsPage onOpenConversation={(conversationId) => void navigate({ to: mobileRoutes.conversation(conversationId) })} />;
+  return <MobileContactsPage onOpenConversation={(conversationId) => void navigate({ to: mobileRoutes.conversation(conversationId) })} onOpenContact={(accountId, wxid) => void navigate({ to: mobileRoutes.contactProfile(accountId, wxid) })} onOpenGroupMembers={(conversationId) => void navigate({ to: mobileRoutes.groupMembers(conversationId) })} />;
+}
+
+function MobileContactProfileRoute() {
+  const navigate = useNavigate();
+  const { accountId, wxid } = useParams({ strict: false }) as { accountId?: string; wxid?: string };
+  if (!accountId || !wxid) return <Navigate to={mobileRoutes.contacts} replace />;
+  return <MobileContactProfilePage accountId={accountId} wxid={wxid} onBack={() => void navigate({ to: mobileRoutes.contacts })} onOpenConversation={(conversationId) => void navigate({ to: mobileRoutes.conversation(conversationId) })} />;
+}
+
+function MobileGroupMembersRoute() {
+  const navigate = useNavigate();
+  const { conversationId } = useParams({ strict: false }) as { conversationId?: string };
+  const workspaceQuery = useWorkbenchWorkspaceQuery();
+  if (!conversationId) return <Navigate to={mobileRoutes.conversations} replace />;
+  const conversation = (workspaceQuery.data?.conversations ?? []).map(mapConversationSummary).find((item) => item.id === conversationId);
+  return <MobileGroupMembersPage conversation={conversation} onBack={() => void navigate({ to: mobileRoutes.conversation(conversationId) })} onOpenContact={(wxid) => { const accountId = conversation?.raw.accountId; if (accountId) void navigate({ to: mobileRoutes.contactProfile(accountId, wxid) }); }} />;
+}
+
+function MobileConversationManageRoute() {
+  const navigate = useNavigate();
+  const { conversationId } = useParams({ strict: false }) as { conversationId?: string };
+  const workspaceQuery = useWorkbenchWorkspaceQuery();
+  if (!conversationId) return <Navigate to={mobileRoutes.conversations} replace />;
+  const conversations = (workspaceQuery.data?.conversations ?? []).map(mapConversationSummary);
+  const accounts = (workspaceQuery.data?.accounts ?? []).map(mapAccountSummary);
+  const conversation = conversations.find((item) => item.id === conversationId);
+  const account = accounts.find((item) => item.id === conversation?.raw.accountId);
+  return <MobileConversationManagePage conversation={conversation} account={account} apps={workspaceQuery.data?.apps ?? []} onBack={() => void navigate({ to: mobileRoutes.conversation(conversationId) })} />;
 }
 
 function MobileAppsRoute() {

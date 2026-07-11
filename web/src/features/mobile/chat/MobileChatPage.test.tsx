@@ -261,6 +261,21 @@ describe("MobileChatPage", () => {
     ));
   });
 
+  it("聊天设置只提供现有的群成员和会话管理入口", async () => {
+    mockApi([]);
+    const onOpenManagement = vi.fn();
+    const onOpenGroupMembers = vi.fn();
+    renderPage({ onOpenManagement, onOpenGroupMembers });
+    await screen.findByText("暂无消息");
+
+    fireEvent.click(screen.getByRole("button", { name: "聊天设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "群成员" }));
+    expect(onOpenGroupMembers).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "聊天设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "会话管理" }));
+    expect(onOpenManagement).toHaveBeenCalled();
+  });
+
   it("失败的本地消息可长按重试或删除", async () => {
     const fetchMock = mockApi([], { failFirstSend: true });
     renderPage({

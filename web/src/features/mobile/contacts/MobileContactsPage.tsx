@@ -39,7 +39,7 @@ interface BackendGroup {
 interface OpenConversationResponse { id: string }
 interface OutboxTaskResponse { id: string }
 
-export function MobileContactsPage({ onOpenConversation }: { onOpenConversation: (conversationId: string) => void }) {
+export function MobileContactsPage({ onOpenConversation, onOpenContact, onOpenGroupMembers }: { onOpenConversation: (conversationId: string) => void; onOpenContact?: (accountId: string, wxid: string) => void; onOpenGroupMembers?: (conversationId: string) => void }) {
   const accountsQuery = useAccountsQuery();
   const syncContactsMutation = useSyncContactsMutation();
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(() => loadMobileAccountId());
@@ -103,8 +103,8 @@ export function MobileContactsPage({ onOpenConversation }: { onOpenConversation:
     }
   }
 
-  async function handleOpenChat(peerWxid: string, type: OpenConversationType, displayName: string) {
-    if (!selectedAccount || openingChatKey) return;
+  async function openConversation(peerWxid: string, type: OpenConversationType, displayName: string): Promise<string | null> {
+    if (!selectedAccount || openingChatKey) return null;
     const key = `${type}:${peerWxid}`;
     setOpeningChatKey(key);
     try {
@@ -113,12 +113,23 @@ export function MobileContactsPage({ onOpenConversation }: { onOpenConversation:
         body: JSON.stringify({ accountId: selectedAccount.id, peerWxid, type }),
       });
       toast.success(`已打开 ${displayName}`);
-      onOpenConversation(conversation.id);
+      return conversation.id;
     } catch (openError) {
       toast.error(openError instanceof Error ? openError.message : "发起聊天失败");
+      return null;
     } finally {
       setOpeningChatKey(null);
     }
+  }
+
+  async function handleOpenChat(peerWxid: string, type: OpenConversationType, displayName: string) {
+    const conversationId = await openConversation(peerWxid, type, displayName);
+    if (conversationId) onOpenConversation(conversationId);
+  }
+
+  async function handleOpenGroupMembers(group: BackendGroup) {
+    const conversationId = await openConversation(group.wxid, "group", readGroupName(group));
+    if (conversationId) onOpenGroupMembers?.(conversationId);
   }
 
   async function handleSyncGroupMembers(group: BackendGroup) {
@@ -189,10 +200,10 @@ export function MobileContactsPage({ onOpenConversation }: { onOpenConversation:
       {error ? <div className="m-3 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</div> : null}
       {loading ? <div className="p-4 text-sm text-muted-foreground">正在加载通讯录</div> : null}
       {!loading && !error && activeTab === "contacts" ? (
-        contacts.length > 0 ? <div>{contacts.map((contact) => <ContactItem key={contact.id} contact={contact} opening={openingChatKey === `private:${contact.wxid}`} onOpenChat={handleOpenChat} />)}</div> : <EmptyState icon={<Users className="size-8" />} text="暂无联系人" />
+        contacts.length > 0 ? <div>{contacts.map((contact) => <ContactItem key={contact.id} contact={contact} opening={openingChatKey === `private:${contact.wxid}`} onOpenChat={handleOpenChat} onOpenDetail={() => selectedAccount && onOpenContact?.(selectedAccount.id, contact.wxid)} />)}</div> : <EmptyState icon={<Users className="size-8" />} text="暂无联系人" />
       ) : null}
       {!loading && !error && activeTab === "groups" ? (
-        groups.length > 0 ? <div>{groups.map((group) => <GroupItem key={group.id} group={group} opening={openingChatKey === `group:${group.wxid}`} syncing={syncingGroupId === group.id} onOpenChat={handleOpenChat} onSyncMembers={handleSyncGroupMembers} />)}</div> : <EmptyState icon={<Users className="size-8" />} text="暂无群聊" />
+        groups.length > 0 ? <div>{groups.map((group) => <GroupItem key={group.id} group={group} opening={openingChatKey === `group:${group.wxid}`} syncing={syncingGroupId === group.id} onOpenChat={handleOpenChat} onSyncMembers={handleSyncGroupMembers} onOpenMembers={() => void handleOpenGroupMembers(group)} />)}</div> : <EmptyState icon={<Users className="size-8" />} text="暂无群聊" />
       ) : null}
 
       <MobileAccountPicker open={accountPickerOpen} accounts={accounts} selectedAccountId={selectedAccount?.id ?? null} onSelect={selectAccount} onClose={() => setAccountPickerOpen(false)} />
@@ -204,26 +215,26 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
   return <button type="button" role="tab" aria-selected={active} onClick={onClick} className={cn("min-h-9 rounded px-3 text-sm", active ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground")}>{children}</button>;
 }
 
-function ContactItem({ contact, opening, onOpenChat }: { contact: BackendContact; opening: boolean; onOpenChat: (wxid: string, type: OpenConversationType, name: string) => void }) {
+function ContactItem({ contact, opening, onOpenChat, onOpenDetail }: { contact: BackendContact; opening: boolean; onOpenChat: (wxid: string, type: OpenConversationType, name: string) => void; onOpenDetail?: () => void }) {
   const name = readContactName(contact);
   const active = (contact.status ?? "active") === "active";
   return (
     <article data-testid={`contact-${contact.id}`} className={cn("flex min-h-16 items-center gap-3 border-b px-3 py-2", !active && "opacity-50 grayscale")}>
       <Avatar name={name} src={contact.avatarUrl} size={40} />
-      <div className="min-w-0 flex-1"><div className="truncate text-sm font-medium">{name}</div><div className="truncate font-mono text-xs text-muted-foreground">{contact.wxid}</div><div className="text-xs text-muted-foreground">{contact.status ?? "active"}</div></div>
+      <button type="button" aria-label={`查看联系人详情 ${name}`} disabled={!onOpenDetail} onClick={onOpenDetail} className="min-w-0 flex-1 text-left disabled:cursor-default"><div className="truncate text-sm font-medium">{name}</div><div className="truncate font-mono text-xs text-muted-foreground">{contact.wxid}</div><div className="text-xs text-muted-foreground">{contact.status ?? "active"}</div></button>
       <button type="button" aria-label={`发起聊天 ${name}`} disabled={!active || opening} onClick={() => onOpenChat(contact.wxid, "private", name)} className="mobile-icon-button"><MessageCircle className={cn("size-5", opening && "animate-pulse")} /></button>
     </article>
   );
 }
 
-function GroupItem({ group, opening, syncing, onOpenChat, onSyncMembers }: { group: BackendGroup; opening: boolean; syncing: boolean; onOpenChat: (wxid: string, type: OpenConversationType, name: string) => void; onSyncMembers: (group: BackendGroup) => void }) {
+function GroupItem({ group, opening, syncing, onOpenChat, onSyncMembers, onOpenMembers }: { group: BackendGroup; opening: boolean; syncing: boolean; onOpenChat: (wxid: string, type: OpenConversationType, name: string) => void; onSyncMembers: (group: BackendGroup) => void; onOpenMembers?: () => void }) {
   const name = readGroupName(group);
   const active = (group.status ?? "active") === "active";
   const memberCount = group.memberCount ?? group._count?.members ?? 0;
   return (
     <article data-testid={`group-${group.id}`} className={cn("flex min-h-16 items-center gap-3 border-b px-3 py-2", !active && "opacity-50 grayscale")}>
       <Avatar name={name} src={group.avatarUrl} size={40} />
-      <div className="min-w-0 flex-1"><div className="truncate text-sm font-medium">{name}</div><div className="text-xs text-muted-foreground"><span>{memberCount} 人</span> · {group.status ?? "active"}</div></div>
+      <button type="button" aria-label={`查看群成员 ${name}`} disabled={!active || !onOpenMembers || opening} onClick={onOpenMembers} className="min-w-0 flex-1 text-left disabled:cursor-default"><div className="truncate text-sm font-medium">{name}</div><div className="text-xs text-muted-foreground"><span>{memberCount} 人</span> · {group.status ?? "active"}</div></button>
       <button type="button" aria-label={`同步群成员 ${name}`} disabled={!active || syncing} onClick={() => void onSyncMembers(group)} className="mobile-icon-button"><RefreshCcw className={cn("size-5", syncing && "animate-spin")} /></button>
       <button type="button" aria-label={`发起聊天 ${name}`} disabled={!active || opening} onClick={() => onOpenChat(group.wxid, "group", name)} className="mobile-icon-button"><MessageCircle className={cn("size-5", opening && "animate-pulse")} /></button>
     </article>
