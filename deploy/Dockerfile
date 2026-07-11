@@ -18,6 +18,7 @@ COPY web web
 RUN pnpm --filter @gewehub/contracts build
 RUN PRISMA_ENGINES_MIRROR=https://registry.npmmirror.com/-/binary/prisma pnpm --filter @gewehub/server prisma:generate
 RUN pnpm --filter @gewehub/server build
+RUN pnpm --filter @gewehub/server exec tsc -p tsconfig.scripts.json
 ARG VITE_CALLBACK_BASE_URL=https://gewehub.yunzxu.com
 ARG VITE_API_BASE_URL=
 ENV VITE_CALLBACK_BASE_URL=$VITE_CALLBACK_BASE_URL
