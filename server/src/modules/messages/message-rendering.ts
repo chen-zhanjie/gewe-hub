@@ -30,8 +30,13 @@ export function renderMessageMarkdown(envelope: MessageEnvelope): string {
   lines.push(`消息ID: ${envelope.messageId}`);
   lines.push(`会话ID: ${envelope.conversation.id}`);
   lines.push(`会话类型: ${envelope.conversation.type}`);
+  lines.push(`会话微信ID: ${envelope.conversation.wxid}`);
   if (envelope.conversation.name?.trim()) lines.push(`会话名称: ${envelope.conversation.name.trim()}`);
   if (envelope.conversation.remark?.trim()) lines.push(`会话备注: ${envelope.conversation.remark.trim()}`);
+  lines.push(`当前账号ID: ${envelope.account.wxid}`);
+  if (envelope.account.name?.trim()) lines.push(`当前账号名称: ${envelope.account.name.trim()}`);
+  if (envelope.account.remark?.trim()) lines.push(`当前账号备注: ${envelope.account.remark.trim()}`);
+  lines.push(`是否@我: ${envelope.isAtMe ? "是" : "否"}`);
   lines.push(`发送者ID: ${envelope.sender.wxid}`);
   if (envelope.sender.name?.trim()) lines.push(`发送者名称: ${envelope.sender.name.trim()}`);
   if (envelope.sender.remark?.trim()) lines.push(`发送者备注: ${envelope.sender.remark.trim()}`);

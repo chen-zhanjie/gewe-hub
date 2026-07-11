@@ -66,6 +66,7 @@ describe("send 工具", () => {
       appId: "wx_app",
       toWxid: "wxid_target"
     });
+    expect((result.body as { ats?: string }).ats).toBeUndefined();
     const appmsg = String((result.body as { appmsg: string }).appmsg);
     expect(appmsg).toContain("<title>@陈可乐 这个我看过了</title>");
     expect(appmsg).toContain("<type>57</type>");
@@ -77,6 +78,32 @@ describe("send 工具", () => {
     expect(appmsg).toContain("<displayname>陈可乐</displayname>");
     expect(appmsg).not.toContain("<referdesc>");
     expect(appmsg).toContain("&lt;msg&gt;&lt;appmsg");
+  });
+
+  it("文本引用携带 @ 时，向 GeWe appmsg 请求传递 ats", () => {
+    const result = mapSendRequestToGewe({
+      appId: "wx_app",
+      peerWxid: "room@chatroom",
+      type: "text",
+      text: "@木子 请确认",
+      mentions: ["wxid_muzi"],
+      quote: {
+        messageId: "msg_quoted",
+        platformNewMsgId: "5881885265326468660",
+        senderWxid: "wxid_sender",
+        senderName: "木子",
+        sentAt: "2026-07-11T01:51:20.000Z",
+        content: { type: "text", text: "我来了" }
+      }
+    });
+
+    expect(result.path).toBe("/gewe/v2/api/message/postAppMsg");
+    expect(result.body).toMatchObject({
+      appId: "wx_app",
+      toWxid: "room@chatroom",
+      ats: "wxid_muzi"
+    });
+    expect(String((result.body as { appmsg: string }).appmsg)).toContain("<title>@木子 请确认</title>");
   });
 
   it("构建本地消息时保留传入的 mentions", () => {
@@ -121,6 +148,9 @@ describe("send 工具", () => {
     expect(local.renderedText).toBe("这个我看过了: [图片]");
     expect(local.payload.renderedMd).toContain("[上下文]");
     expect(local.payload.renderedMd).toContain("消息ID: msg_9154866412345678");
+    expect(local.payload.renderedMd).toContain("会话微信ID: room@chatroom");
+    expect(local.payload.renderedMd).toContain("当前账号ID: wxid_bot");
+    expect(local.payload.renderedMd).toContain("是否@我: 否");
     expect(local.payload.renderedMd).toContain("[引用]");
     expect(local.payload.renderedMd).toContain("> 引用 陈可乐（消息ID: msg_123）：");
     expect(local.payload.renderedMd).toContain("[正文]\n这个我看过了");

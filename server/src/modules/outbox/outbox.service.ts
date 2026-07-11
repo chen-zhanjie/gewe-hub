@@ -236,6 +236,7 @@ export class OutboxService implements OnModuleInit {
       const result = extractSendResult(geweResponse, sendRequest.id);
       const text = prepared.localContent?.text ?? extractRenderedText(sendRequest.requestPayload, sendRequest.type);
       const quote = extractQuoteMessageNode(sendRequest.requestPayload);
+      const mentions = extractOutboundMentions(sendRequest.requestPayload);
       const existingMessage = sendRequest.message ?? await this.prisma.message.findUnique({
         where: { sendRequestId: sendRequest.id }
       });
@@ -252,6 +253,7 @@ export class OutboxService implements OnModuleInit {
         platformNewMsgId: result.newMsgId,
         platformCreateTime: result.createTime,
         content: prepared.localContent,
+        mentions,
         quote,
         outboundMetadata: { sent: true, deliveryMode: sendRequest.deliveryMode }
       });
@@ -1157,6 +1159,16 @@ function extractRenderedText(requestPayload: Prisma.JsonValue, type: string): st
     return fileName ? `[文件] ${fileName}` : "[文件]";
   }
   return `[${type}]`;
+}
+
+function extractOutboundMentions(requestPayload: Prisma.JsonValue): Array<{ wxid: string; resolved: true }> {
+  const mentions = asRecord(requestPayload)?.mentions;
+  if (!Array.isArray(mentions)) return [];
+  return [...new Set(
+    mentions
+      .map((mention) => asString(mention)?.trim())
+      .filter((mention): mention is string => Boolean(mention))
+  )].map((wxid) => ({ wxid, resolved: true }));
 }
 
 function extractQuoteMessageNode(requestPayload: Prisma.JsonValue): MessageNode | null {

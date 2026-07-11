@@ -609,6 +609,9 @@ describe("GeWe 样本标准化", () => {
     expect(result?.renderedMd).toContain("消息ID: msg_5004026754542010999");
     expect(result?.renderedMd).toContain("会话ID: cvs_wxid_bot_48315023241@chatroom");
     expect(result?.renderedMd).toContain("会话类型: group");
+    expect(result?.renderedMd).toContain("会话微信ID: 48315023241@chatroom");
+    expect(result?.renderedMd).toContain("当前账号ID: wxid_bot");
+    expect(result?.renderedMd).toContain("是否@我: 是");
     expect(result?.renderedMd).toContain("时间: 2026-07-06 11:29");
     expect(result?.renderedMd).toContain("发送者ID: wxid_sender");
     expect(result?.renderedMd).toContain(

@@ -31,11 +31,12 @@ export function mapSendRequestToGewe(input: SendMappingInput) {
     if (input.quote) {
       return {
         path: "/gewe/v2/api/message/postAppMsg",
-        body: {
+        body: compactRecord({
           appId: input.appId,
           toWxid: input.peerWxid,
-          appmsg: buildQuoteAppMsg(input.text ?? "", input.quote, input.peerWxid)
-        }
+          appmsg: buildQuoteAppMsg(input.text ?? "", input.quote, input.peerWxid),
+          ats: formatTextMentions(input.mentions)
+        })
       };
     }
     return {

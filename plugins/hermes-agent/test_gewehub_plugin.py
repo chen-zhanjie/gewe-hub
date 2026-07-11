@@ -99,6 +99,33 @@ def test_delivery_protocol_and_stable_message_ids_are_documented_without_history
     )
 
 
+def test_chenkele_persona_is_concise_distinctive_and_non_mechanical():
+    persona = (PLUGIN_DIR / "skill" / "chenkele-persona" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert len(persona) <= 1800
+    for required in (
+        "风格边界",
+        "简洁",
+        "口语化",
+        "为啥",
+        "怎么说",
+        "你看看是不是",
+        "不机械",
+        "复杂",
+        "转发聊天记录",
+        "用户纠正",
+    ):
+        assert required in persona
+
+    for forbidden in (
+        "刷票",
+        "把车卖了",
+        "年入百万",
+        "故意制造错别字",
+    ):
+        assert forbidden not in persona
+
+
 def test_platform_hint_is_concise_and_describes_only_current_behavior():
     _install_gateway_stubs()
     package = _load_plugin_package("gewehub_plugin_platform_hint_test")
@@ -121,6 +148,11 @@ def test_platform_hint_is_concise_and_describes_only_current_behavior():
         "gewehub_revoke_message",
         "deliveryMode",
         "executionMode",
+        "pure JSON string",
+        "first character must be {",
+        "last character must be }",
+        "no Markdown code fences",
+        "no text before or after",
     ):
         assert required in hint
 
@@ -147,9 +179,12 @@ def test_ai_facing_guidance_defines_discard_final_mentions_and_is_self_contained
     readme = (PLUGIN_DIR / "README.md").read_text(encoding="utf-8")
     combined = "\n".join((root_skill, delivery_skill, readme))
 
-    assert '"deliveryMode": "discard"' in root_skill
-    assert '"type": "text"' in root_skill
+    assert '"deliveryMode":"discard"' in root_skill
+    assert '"type":"text"' in root_skill
     assert '"text":' in root_skill
+    assert "不要使用 Markdown 代码块" in root_skill
+    discard_line = next(line for line in root_skill.splitlines() if '"deliveryMode":"discard"' in line)
+    assert discard_line.startswith('`{"deliveryMode"') and discard_line.endswith('}`')
     assert "工具已发送完整答复" in root_skill
     assert "final" in root_skill
     assert "不发送" in root_skill
@@ -170,6 +205,21 @@ def test_discard_final_json_is_a_valid_standard_message():
         "conversationId": "cvs_1",
         "type": "text",
         "text": "本轮已通过工具完成回复",
+        "deliveryMode": "discard",
+        "executionMode": "sync",
+    }
+
+
+def test_normalize_final_output_accepts_fenced_standard_json_without_sending_the_fence():
+    package = _load_plugin_package("gewehub_plugin_fenced_final_test")
+    content = """```json
+{"deliveryMode":"discard","type":"text","text":"普通闲聊，无需回复"}
+```"""
+
+    assert package.outbound.normalize_final_output("cvs_1", content).payload == {
+        "conversationId": "cvs_1",
+        "type": "text",
+        "text": "普通闲聊，无需回复",
         "deliveryMode": "discard",
         "executionMode": "sync",
     }

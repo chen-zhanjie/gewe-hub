@@ -444,13 +444,14 @@ describe("WorkbenchPage", () => {
     });
   });
 
-  it("引用消息时阻止真实 @，避免 GeWe 静默丢失 ats", async () => {
+  it("引用消息时将真实 @ 与引用消息 ID 一起发送", async () => {
     const fetchMock = mockFetch({
       "/api/accounts": [{ id: "acc_1", wxid: "wxid_bot", nickname: "客服主号", onlineStatus: "online" }],
       "/api/conversations": [{ id: "conv_1", accountId: "acc_1", peerWxid: "room_alpha@chatroom", type: "group", platformRemark: "Alpha 产品群", lastMessageText: "文件", lastMessageAt: "2026-07-06T07:16:37.000Z", status: "active" }],
       "/api/conversations/conv_1/messages?take=50": [{ id: "row_file", messageId: "msg_file", senderWxid: "wxid_sender", isSelf: false, status: "normal", sentAt: "2026-07-06T07:16:37.000Z", renderedText: "[文件] mapping_app.txt", payload: { sender: { wxid: "wxid_sender", name: "陈可乐", isOwner: false }, content: { type: "file", text: "[文件] mapping_app.txt", media: { status: "ready", fileName: "mapping_app.txt" } } }, webhookEvent: { rawPayload: { TypeName: "AddMsg" } }, deliveries: [] }],
       "/api/groups?accountId=acc_1&q=room_alpha%40chatroom": [{ id: "group_1", accountId: "acc_1", wxid: "room_alpha@chatroom", name: "Alpha 产品群", status: "active" }],
       "/api/groups/group_1/members?take=50&skip=0": { items: [{ id: "member_kele", wxid: "wxid_kele", displayName: "可乐", platformRemark: "负责人", status: "active" }], total: 1, take: 50, skip: 0, nextSkip: 0, hasMore: false },
+      "/api/send": { success: true, messageId: "msg_quote_mention_sent" },
     });
 
     renderWorkbenchPage();
@@ -463,7 +464,17 @@ describe("WorkbenchPage", () => {
     fireEvent.change(input, { target: { value: "@", selectionStart: 1, selectionEnd: 1 } });
     fireEvent.click(await screen.findByRole("button", { name: "提及 负责人" }));
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
-    expect(await screen.findByText("引用消息暂不支持真实 @；请取消引用后再发送。")).toBeInTheDocument();
+
+    await waitFor(() => {
+      const sendCall = fetchMock.mock.calls.find(([request]) => String(request).replace("http://localhost", "") === "/api/send");
+      expect(JSON.parse(String(sendCall?.[1]?.body))).toEqual({
+        conversationId: "conv_1",
+        type: "text",
+        text: "@负责人",
+        mentions: ["wxid_kele"],
+        replyToMessageId: "msg_file",
+      });
+    });
   });
 
   it("发送文本后立即插入本地发送中气泡并清空输入", async () => {

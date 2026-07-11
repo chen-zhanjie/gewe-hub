@@ -1222,7 +1222,8 @@ def register(ctx) -> None:
         pii_safe=True,
         platform_hint=(
             "You are replying through GeWeHub. "
-            "Plain final text sends an immediate synchronous reply; use a final JSON object only when structured message parameters are needed. "
+            "Plain final text sends an immediate synchronous reply; use final JSON only when structured message parameters are needed. "
+            "When final uses JSON, return a pure JSON string: the first character must be { and the last character must be }; include no Markdown code fences and no text before or after the JSON object, including labels or explanations. "
             "Use gewehub_send_message for media, HTML, links, mentions, native replies, or messages sent before the final response. "
             "For every ID in mentions, include the matching @nickname in the message text. "
             "Normal delivery uses deliveryMode=immediate and executionMode=sync; use deliveryMode=discard to record without delivery, deliveryMode=confirm for human confirmation, and executionMode=async only when explicitly needed. "

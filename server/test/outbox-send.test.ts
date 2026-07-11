@@ -26,7 +26,8 @@ describe("OutboxService 发送任务", () => {
           requestPayload: {
             conversationId: "conversation_1",
             type: "text",
-            text: "hello"
+            text: "hello",
+            mentions: ["wxid_a", " wxid_b ", "wxid_a", ""]
           },
           geweRequest: {
             path: "/gewe/v2/api/message/postText",
@@ -95,7 +96,13 @@ describe("OutboxService 发送任务", () => {
         platformNewMsgId: "9154866412345678",
         platformCreateTime: "1782932724220",
         type: "text",
-        renderedText: "hello"
+        renderedText: "hello",
+        payload: expect.objectContaining({
+          mentions: [
+            { wxid: "wxid_a", resolved: true },
+            { wxid: "wxid_b", resolved: true }
+          ]
+        })
       }),
       update: expect.objectContaining({
         platformMsgId: "123456",

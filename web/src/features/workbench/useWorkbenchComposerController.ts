@@ -131,11 +131,6 @@ export function useWorkbenchComposerController({
     if (!selectedConversation || !text) return;
 
     const mentions = getEffectiveMentionWxids(mentionDraft);
-    if (quotedMessage && mentions.length > 0) {
-      setSendError("引用消息暂不支持真实 @；请取消引用后再发送。");
-      return;
-    }
-
     setSendError(null);
     const sent = await onSendText(text, {
       mentions,

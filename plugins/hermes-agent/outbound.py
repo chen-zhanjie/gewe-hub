@@ -79,6 +79,10 @@ def standard_response(response: Any) -> dict[str, Any]:
 
 def _json_object(content: str) -> dict[str, Any] | None:
     raw = content.strip()
+    if raw.startswith("```") and raw.endswith("```"):
+        lines = raw.splitlines()
+        if len(lines) >= 3 and lines[0].strip().lower() in {"```", "```json"} and lines[-1].strip() == "```":
+            raw = "\n".join(lines[1:-1]).strip()
     if not (raw.startswith("{") and raw.endswith("}")):
         return None
     try:
