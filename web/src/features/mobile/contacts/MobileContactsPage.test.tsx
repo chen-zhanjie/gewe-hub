@@ -106,6 +106,15 @@ describe("MobileContactsPage", () => {
     expect(screen.queryByLabelText("联系人状态")).not.toBeInTheDocument();
   });
 
+  it("已保存账号失效时回落到首个账号并更新移动端选择", async () => {
+    installLocalStorageMock("missing-account");
+    mockApi();
+    renderPage();
+
+    expect(await screen.findByText("林晴")).toBeInTheDocument();
+    expect(window.localStorage.setItem).toHaveBeenCalledWith("gewehub.mobile.accountId", "acc-1");
+  });
+
   it("切换当前账号后重新加载该账号范围内的联系人和群", async () => {
     const fetchMock = mockApi();
     renderPage();

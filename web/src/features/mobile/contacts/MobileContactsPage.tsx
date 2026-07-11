@@ -60,11 +60,11 @@ export function MobileContactsPage({ onOpenConversation }: { onOpenConversation:
   const selectedAccountSummary = accounts.find((account) => account.id === selectedAccount?.id);
 
   useEffect(() => {
-    if (!selectedAccount && backendAccounts[0]) {
-      setSelectedAccountId(backendAccounts[0].id);
-      storeMobileAccountId(backendAccounts[0].id);
-    }
-  }, [backendAccounts, selectedAccount]);
+    const fallbackAccount = backendAccounts[0];
+    if (!fallbackAccount || backendAccounts.some((account) => account.id === selectedAccountId)) return;
+    setSelectedAccountId(fallbackAccount.id);
+    storeMobileAccountId(fallbackAccount.id);
+  }, [backendAccounts, selectedAccountId]);
 
   useEffect(() => {
     if (!selectedAccount) {
