@@ -1,6 +1,6 @@
 # GeWeHub 移动端适配 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 在现有 Web 应用中交付 `/mobile/*` 移动端展示层，严格复用现有业务能力，并保持桌面端无回归。
 
@@ -9,6 +9,8 @@
 **Tech Stack:** React 19、TypeScript、TanStack Router、TanStack Query、Tailwind CSS、Radix primitives、Vitest、Testing Library、Vite。
 
 **Requirements:** `docs/superpowers/specs/2026-07-11-移动端适配-PRD.md`
+
+**实施状态：** 已完成。Web 全量测试 55/55、287/287 通过；TypeScript、生产构建和三档移动视口检查通过。
 
 ---
 
@@ -82,7 +84,7 @@ web/src/routes/app-router-architecture.test.ts # 路由与懒加载断言
 - Create: `web/src/features/mobile/mobile-selection-storage.test.ts`
 - Modify: `web/src/routes/app-router-architecture.test.ts`
 
-- [ ] **Step 1: 写失败测试，约束 `/mobile` 路径和独立 storage key**
+- [x] **Step 1: 写失败测试，约束 `/mobile` 路径和独立 storage key**
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -97,23 +99,23 @@ it("uses a mobile-only account selection key", () => {
 
 在路由架构测试中断言源码包含 `/mobile`、`/mobile/conversations`、`/mobile/contacts`、`/mobile/admin`、`/mobile/me`。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `pnpm --filter @gewehub/web test -- mobile-selection-storage.test.ts app-router-architecture.test.ts`
 
 Expected: FAIL，模块或移动端路由常量尚不存在。
 
-- [ ] **Step 3: 实现路径、导航元数据和独立选择持久化**
+- [x] **Step 3: 实现路径、导航元数据和独立选择持久化**
 
 定义 `mobileRoutes`，所有路径以 `/mobile` 开头；定义四个 Tab 元数据；storage key 使用 `gewehub.mobile.accountId`，并在不可用 localStorage 时安全降级。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `pnpm --filter @gewehub/web test -- mobile-selection-storage.test.ts app-router-architecture.test.ts`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/features/mobile web/src/routes/app-router-architecture.test.ts
@@ -133,7 +135,7 @@ git commit -m "feat(web): add mobile navigation foundations"
 - Modify: `web/src/styles.css`
 - Modify: `web/src/style-architecture.test.ts`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 测试：
 
@@ -144,23 +146,23 @@ git commit -m "feat(web): add mobile navigation foundations"
 - 当前 Tab 有 `aria-current="page"`；
 - 样式源码包含 safe-area top/bottom 和 `100dvh`。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `pnpm --filter @gewehub/web test -- MobileAppShell.test.tsx style-architecture.test.ts app-router-architecture.test.ts`
 
 Expected: FAIL，移动端壳和路由尚不存在。
 
-- [ ] **Step 3: 实现最小路由与移动端壳**
+- [x] **Step 3: 实现最小路由与移动端壳**
 
 移动端认证继续使用 `useAuthMeQuery`、`useLoginMutation`、`useLogoutMutation`。桌面 ConsoleRoute 保持不变。MobileShell 使用 `min-height: 100dvh`，底部导航补 `safe-area-inset-bottom`。
 
-- [ ] **Step 4: 运行测试与类型检查**
+- [x] **Step 4: 运行测试与类型检查**
 
 Run: `pnpm --filter @gewehub/web test -- MobileAppShell.test.tsx style-architecture.test.ts app-router-architecture.test.ts && pnpm --filter @gewehub/web typecheck`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/features/mobile web/src/routes/app-router.tsx web/src/styles.css web/src/style-architecture.test.ts
@@ -176,7 +178,7 @@ git commit -m "feat(web): add mobile shell and routes"
 - Create: `web/src/features/mobile/mobile-action-capabilities.test.ts`
 - Modify: `web/src/features/workbench/MessageFlow.tsx`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖：
 
@@ -187,23 +189,23 @@ git commit -m "feat(web): add mobile shell and routes"
 - 已撤回消息不出现撤回；
 - Action Sheet 具备 dialog 语义、遮罩关闭、Escape 关闭和安全区。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `pnpm --filter @gewehub/web test -- mobile-action-capabilities.test.ts MobileActionSheet.test.tsx MessageFlow.test.tsx`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现纯函数和通用抽屉**
+- [x] **Step 3: 实现纯函数和通用抽屉**
 
 只抽取当前 `MessageFlow`、`ConversationList` 已有动作规则，不增加复制和转发。桌面端继续使用原 hover/ContextMenu，但消费同一动作能力判定。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `pnpm --filter @gewehub/web test -- mobile-action-capabilities.test.ts MobileActionSheet.test.tsx MessageFlow.test.tsx WorkbenchConversationList.test.tsx`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/features/mobile web/src/features/workbench/MessageFlow.tsx
@@ -220,27 +222,27 @@ git commit -m "feat(web): add shared mobile action capabilities"
 - Create: `web/src/features/mobile/conversations/MobileConversationsPage.test.tsx`
 - Modify: `web/src/routes/app-router.tsx`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 使用现有工作台测试数据覆盖：当前账号、搜索、置顶分区、未读数、会话选择、账号切换、长按操作、空态、搜索无结果和断线提示。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `pnpm --filter @gewehub/web test -- MobileConversationsPage.test.tsx`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现页面**
+- [x] **Step 3: 实现页面**
 
 复用 `useWorkbenchWorkspaceQuery`、`filterConversationsForAccount`、`useConversationUnreadState`、`useWorkbenchConversationActions` 和现有映射函数。长按通过 Pointer Events 定时器触发，移动或取消时清理定时器，同时提供可访问的“更多”按钮作为替代入口。
 
-- [ ] **Step 4: 运行相关回归**
+- [x] **Step 4: 运行相关回归**
 
 Run: `pnpm --filter @gewehub/web test -- MobileConversationsPage.test.tsx WorkbenchConversationList.test.tsx WorkbenchRealtimeEvents.test.tsx`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/features/mobile/conversations web/src/routes/app-router.tsx
@@ -256,27 +258,27 @@ git commit -m "feat(web): add mobile conversation list"
 - Create: `web/src/features/mobile/chat/MobileChatPage.test.tsx`
 - Modify: `web/src/routes/app-router.tsx`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖：历史加载、日期分隔、消息左右布局、群发送者、加载更早、新消息按钮、头像详情、长按动作、本地失败重试/删除、held 人工发送、撤回确认和无消息状态。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `pnpm --filter @gewehub/web test -- MobileChatPage.test.tsx`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现消息页**
+- [x] **Step 3: 实现消息页**
 
 复用 `useWorkbenchMessagesController`、`buildMessageTimeline`、`MessageNodeView`、撤回和人工发送控制器。移动端消息布局单独实现，不修改标准消息节点内容语义。
 
-- [ ] **Step 4: 运行消息回归**
+- [x] **Step 4: 运行消息回归**
 
 Run: `pnpm --filter @gewehub/web test -- MobileChatPage.test.tsx MessageFlow.test.tsx WorkbenchMessageArea.test.tsx WorkbenchLocalSendStatus.test.tsx`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/features/mobile/chat web/src/routes/app-router.tsx
@@ -291,27 +293,27 @@ git commit -m "feat(web): add mobile chat message flow"
 - Create: `web/src/features/mobile/chat/MobileComposer.test.tsx`
 - Modify: `web/src/features/mobile/chat/MobileChatPage.tsx`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖文本发送、换行、引用清除、群成员 `@` 候选、图片/文件/语音文件选择、录音状态、待发送附件确认/删除，以及软键盘下输入区仍位于可见区域的样式断言。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `pnpm --filter @gewehub/web test -- MobileComposer.test.tsx`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现移动输入区**
+- [x] **Step 3: 实现移动输入区**
 
 复用 `useWorkbenchComposerController`、`mention-draft`、`useVoiceRecorder`、`MessageComposerBars` 的数据语义。隐藏文件 input 继续使用 Web 能力；不添加拍照入口。
 
-- [ ] **Step 4: 运行发送回归**
+- [x] **Step 4: 运行发送回归**
 
 Run: `pnpm --filter @gewehub/web test -- MobileComposer.test.tsx WorkbenchComposer.test.tsx WorkbenchComposerHtml.test.tsx WorkbenchSendResponse.test.tsx`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/features/mobile/chat
@@ -327,27 +329,27 @@ git commit -m "feat(web): add mobile message composer"
 - Create: `web/src/features/mobile/chat/MobileComplexSendPages.test.tsx`
 - Modify: `web/src/routes/app-router.tsx`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖现有字段与行为：视频和可选封面；链接 URL、解析、标题、描述、缩略图；HTML 内容/文件/地址三种来源以及标题、描述、缩略图。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `pnpm --filter @gewehub/web test -- MobileComplexSendPages.test.tsx`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现独立页面并连接现有控制器**
+- [x] **Step 3: 实现独立页面并连接现有控制器**
 
 页面返回聊天时保留会话 ID；发送成功返回聊天；发送失败保留表单和错误信息。
 
-- [ ] **Step 4: 运行回归**
+- [x] **Step 4: 运行回归**
 
 Run: `pnpm --filter @gewehub/web test -- MobileComplexSendPages.test.tsx WorkbenchComposerHtml.test.tsx WorkbenchComposer.test.tsx`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/features/mobile/chat web/src/routes/app-router.tsx
@@ -361,27 +363,27 @@ git commit -m "feat(web): add mobile complex send pages"
 - Create: `web/src/features/mobile/contacts/MobileContactsPage.test.tsx`
 - Modify: `web/src/routes/app-router.tsx`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖当前账号范围、联系人/群 Tab、搜索、现有状态筛选、同步通讯录、联系人发起聊天、群发起聊天、同步群成员、非 active 灰显和空态。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `pnpm --filter @gewehub/web test -- MobileContactsPage.test.tsx`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现列表**
+- [x] **Step 3: 实现列表**
 
 复用账号管理查询和现有 open conversation、sync contacts、sync group members 动作。移动端使用列表卡片，不使用 DataTable。
 
-- [ ] **Step 4: 运行回归**
+- [x] **Step 4: 运行回归**
 
 Run: `pnpm --filter @gewehub/web test -- MobileContactsPage.test.tsx AccountsPage.test.tsx`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/features/mobile/contacts web/src/routes/app-router.tsx
@@ -397,27 +399,27 @@ git commit -m "feat(web): add mobile contacts and groups"
 - Create: `web/src/features/mobile/contacts/MobileContactSurfaces.test.tsx`
 - Modify: `web/src/routes/app-router.tsx`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 联系人详情只断言现有只读字段和打开私聊；群成员覆盖搜索、同步、加载更多、备注和详情；会话管理覆盖备注、应用绑定、过滤、防抖、最大等待、保存与解绑确认。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `pnpm --filter @gewehub/web test -- MobileContactSurfaces.test.tsx`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现页面**
+- [x] **Step 3: 实现页面**
 
 复用联系人 profile query 和 `useWorkbenchConversationSurfaceController`。不得添加联系人编辑、群管理或虚构投递统计。
 
-- [ ] **Step 4: 运行工作台回归**
+- [x] **Step 4: 运行工作台回归**
 
 Run: `pnpm --filter @gewehub/web test -- MobileContactSurfaces.test.tsx WorkbenchDetailPanel.test.tsx WorkbenchPage.test.tsx`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/features/mobile/contacts web/src/features/mobile/conversations web/src/routes/app-router.tsx
@@ -431,27 +433,27 @@ git commit -m "feat(web): add mobile contact and conversation details"
 - Create: `web/src/features/mobile/chat/MobileMessageDetailPage.test.tsx`
 - Modify: `web/src/routes/app-router.tsx`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖概览、标准 JSON、原始 payload、投递记录、复制、上一条/下一条和跳转推送日志。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `pnpm --filter @gewehub/web test -- MobileMessageDetailPage.test.tsx`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现详情页**
+- [x] **Step 3: 实现详情页**
 
 复用消息详情 query、JsonViewer、CopyButton、StatusBadge 和 TimeText。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `pnpm --filter @gewehub/web test -- MobileMessageDetailPage.test.tsx WorkbenchDetailPanel.test.tsx`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/features/mobile/chat web/src/routes/app-router.tsx
@@ -467,27 +469,27 @@ git commit -m "feat(web): add mobile message detail"
 - Create: `web/src/features/mobile/admin/MobileAdminHomePage.test.tsx`
 - Modify: `web/src/routes/app-router.tsx`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 断言管理页只包含当前七个管理模块；“我的”包含管理员、GeWe 状态、微信账号切换、接入设置和退出；设置页只包含现有三个状态、回调前缀、复制和一键设置回调。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `pnpm --filter @gewehub/web test -- MobileAdminHomePage.test.tsx`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现页面**
+- [x] **Step 3: 实现页面**
 
 复用现有 settings query 和认证 mutation，不增加在线编辑 Key。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `pnpm --filter @gewehub/web test -- MobileAdminHomePage.test.tsx SettingsPage.test.tsx`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/features/mobile/admin web/src/features/mobile/me web/src/routes/app-router.tsx
@@ -506,27 +508,27 @@ git commit -m "feat(web): add mobile admin home and settings"
 - Create: `web/src/features/mobile/admin/MobileResources.test.tsx`
 - Modify: `web/src/routes/app-router.tsx`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 应用覆盖列表、新增、编辑、绑定、重置 Token 和停用；账号覆盖在线摘要、资料刷新、通讯录、编辑、新增和停用。强确认规则沿用现有名称/wxid 输入。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `pnpm --filter @gewehub/web test -- MobileResources.test.tsx`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现卡片列表和详情表单**
+- [x] **Step 3: 实现卡片列表和详情表单**
 
 抽取或复用现有 admin query/mutation；不在移动页面内复制 `apiFetch` 请求协议。
 
-- [ ] **Step 4: 运行回归**
+- [x] **Step 4: 运行回归**
 
 Run: `pnpm --filter @gewehub/web test -- MobileResources.test.tsx AppsPage.test.tsx AccountsPage.test.tsx`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/features/mobile/admin web/src/routes/app-router.tsx
@@ -543,27 +545,27 @@ git commit -m "feat(web): add mobile app and account management"
 - Create: `web/src/features/mobile/admin/MobileDeliverySurfaces.test.tsx`
 - Modify: `web/src/routes/app-router.tsx`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖现有状态筛选、搜索、刷新、分页、messageId 定位、详情、打开会话、重投、撤回和取消重试。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `pnpm --filter @gewehub/web test -- MobileDeliverySurfaces.test.tsx`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现卡片列表与独立详情**
+- [x] **Step 3: 实现卡片列表与独立详情**
 
 保留 URL search 状态。JSON 使用 JsonViewer；确认动作沿用现有文案与 mutation。
 
-- [ ] **Step 4: 运行回归**
+- [x] **Step 4: 运行回归**
 
 Run: `pnpm --filter @gewehub/web test -- MobileDeliverySurfaces.test.tsx AdminPagesOperations.test.tsx`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/features/mobile/admin web/src/routes/app-router.tsx
@@ -579,27 +581,27 @@ git commit -m "feat(web): add mobile delivery and send records"
 - Create: `web/src/features/mobile/admin/MobileOperations.test.tsx`
 - Modify: `web/src/routes/app-router.tsx`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 HTML 页面覆盖筛选、搜索、链接、复制、发送详情和归档；观测覆盖健康摘要、四个指标、失败任务搜索、详情和重试。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `pnpm --filter @gewehub/web test -- MobileOperations.test.tsx`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现页面**
+- [x] **Step 3: 实现页面**
 
 公开 `/h/:token` 不注册到移动端壳；关联发送请求跳转统一发送详情。
 
-- [ ] **Step 4: 运行回归**
+- [x] **Step 4: 运行回归**
 
 Run: `pnpm --filter @gewehub/web test -- MobileOperations.test.tsx HtmlPagesPage.test.tsx AdminPagesStage3.test.tsx`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/src/features/mobile/admin web/src/routes/app-router.tsx
@@ -613,19 +615,19 @@ git commit -m "feat(web): add mobile html pages and observability"
 - Modify: `docs/superpowers/plans/2026-07-11-移动端适配-implementation.md`
 - Modify: tests found incomplete during audit
 
-- [ ] **Step 1: 运行 Web 全量测试**
+- [x] **Step 1: 运行 Web 全量测试**
 
 Run: `pnpm --filter @gewehub/web test`
 
 Expected: 全部 PASS。
 
-- [ ] **Step 2: 运行类型、构建和仓库级关键检查**
+- [x] **Step 2: 运行类型、构建和仓库级关键检查**
 
 Run: `pnpm --filter @gewehub/web typecheck && pnpm --filter @gewehub/web build && pnpm --filter @gewehub/web lint`
 
 Expected: 全部退出码 0。
 
-- [ ] **Step 3: 启动应用并进行移动视口检查**
+- [x] **Step 3: 启动应用并进行移动视口检查**
 
 在 375×812、390×844、430×932 视口检查：
 
@@ -638,11 +640,11 @@ Expected: 全部退出码 0。
 - 每个管理列表和详情；
 - 无页面横向溢出。
 
-- [ ] **Step 4: 对照 PRD 逐条审计**
+- [x] **Step 4: 对照 PRD 逐条审计**
 
 逐项确认 PRD 第 11 节 P0、P1 和质量门槛有直接测试、代码或运行截图证据。发现缺口时先补实现和测试，不以“已有类似页面”代替验证。
 
-- [ ] **Step 5: 更新文档状态并提交**
+- [x] **Step 5: 更新文档状态并提交**
 
 将 PRD 状态更新为“已实现”，计划勾选所有实际完成项，并提交：
 
